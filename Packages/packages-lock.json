@@ -7,12 +7,12 @@
       "dependencies": {},
       "hash": "73a63b7f672b88f7e9992f6917eb458a8cbb6fa9"
     },
-    "com.cysharp.zlinq": {
-      "version": "https://github.com/Cysharp/ZLinq.git?path=src/ZLinq.Unity/Assets/ZLinq.Unity",
+    "com.github-glitchenzo.nugetforunity": {
+      "version": "https://github.com/GlitchEnzo/NuGetForUnity.git?path=/src/NuGetForUnity",
       "depth": 0,
       "source": "git",
       "dependencies": {},
-      "hash": "c6d15be4efecc0afca628fd194f8f62ee0b4bb15"
+      "hash": "34432703a177c97631a4eb1d908f086037c67969"
     },
     "com.unity.2d.animation": {
       "version": "11.0.0",
