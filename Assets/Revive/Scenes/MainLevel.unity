@@ -2075,7 +2075,7 @@ PrefabInstance:
     - target: {fileID: 759855279148308545, guid: 9edcf7e494cf3e640b18cb7495fb179a,
         type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1137535785635986062, guid: 9edcf7e494cf3e640b18cb7495fb179a,
         type: 3}
@@ -2110,8 +2110,38 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 1135989009887641804, guid: 9edcf7e494cf3e640b18cb7495fb179a,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1967243809}
   m_SourcePrefab: {fileID: 100100000, guid: 9edcf7e494cf3e640b18cb7495fb179a, type: 3}
+--- !u!1 &1967243808 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 1135989009887641804, guid: 9edcf7e494cf3e640b18cb7495fb179a,
+    type: 3}
+  m_PrefabInstance: {fileID: 1967243807}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1967243809
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1967243808}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e33837e88136f4aedab2a816faefebff, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  <ReferencePlane>k__BackingField: {fileID: 139856175}
+  <AutoFocus>k__BackingField: 1
+  <FocusDistance>k__BackingField: 10
+  <BokehStrength>k__BackingField: 2
+  <MaxBlurRadius>k__BackingField: 2
+  <BoundaryFade>k__BackingField: 0.3
+  <DownsampleMode>k__BackingField: 1
+  <BokehMode>k__BackingField: 1
 --- !u!1 &2043279810
 GameObject:
   m_ObjectHideFlags: 0
