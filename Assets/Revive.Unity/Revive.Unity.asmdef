@@ -1,17 +1,14 @@
 {
-    "name": "Revive",
+    "name": "Revive.Unity",
     "rootNamespace": "",
     "references": [
         "GUID:36299c85af6d93640b17a5a87d80108a",
-        "GUID:25cf0751e5c713445b8fecddac062865",
-        "GUID:02650bbac8118a04f9180ab423fe60c4",
-        "GUID:4a1cb1490dc4df8409b2580d6b44e75e",
-        "GUID:8f27f7a0f8da9854cb7c86f15d58fe82",
-        "GUID:8a258d69670d9a54d943dd0e57ffea8a"
+        "GUID:eec0964c48f6f4e40bc3ec2257ccf8c5",
+        "GUID:84651a3751eca9349aac36a66bba901b"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
