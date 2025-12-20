@@ -1,4 +1,5 @@
 ﻿using System;
+using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
 using Revive.Core.Pool;
 using Revive.Core.Translation;
@@ -18,8 +19,6 @@ namespace Revive
             _framework = new Framework();
             
             TranslationManager.Instance.RegisterProvider(new UnityTranslationProvider());
-            
-            
         }
 
         private void Update()

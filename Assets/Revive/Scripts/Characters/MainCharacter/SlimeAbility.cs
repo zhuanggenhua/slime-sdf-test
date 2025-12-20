@@ -8,7 +8,7 @@ namespace Revive
     /// <summary>
     /// The Slime(Temp) Character Ability
     /// </summary>
-    public class MainCharacter : CharacterAbility
+    public class SlimeAbility : CharacterAbility
     {
         /// <summary>
         /// The list of feets transforms
