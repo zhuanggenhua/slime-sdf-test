@@ -45,7 +45,7 @@ GameObject:
   - component: {fileID: 143932895876366992}
   - component: {fileID: 54182602704540828}
   - component: {fileID: 114060530881921866}
-  - component: {fileID: 114839196621103566}
+  - component: {fileID: 287339008747583278}
   - component: {fileID: 114691065578444412}
   - component: {fileID: 114524877107183236}
   - component: {fileID: 114701691098604866}
@@ -210,7 +210,7 @@ MonoBehaviour:
   SlidingSpeed: 15
   SlidingSpeedControl: 0.4
   SlidingDirectionControl: 1
---- !u!114 &114839196621103566
+--- !u!114 &287339008747583278
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -219,7 +219,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1167761570092420}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5fe81ad80cb743b408fa90b048ad597f, type: 3}
+  m_Script: {fileID: 11500000, guid: 6bed9457252a48809a0599b891f038ee, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   CharacterDimension: 0
