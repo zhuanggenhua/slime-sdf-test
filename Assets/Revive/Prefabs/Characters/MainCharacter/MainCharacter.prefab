@@ -358,7 +358,7 @@ MonoBehaviour:
   BlockingWeaponStates: 
   JumpProportionalToPress: 1
   MinimumPressTime: 0.4
-  JumpForce: 2500
+  JumpForce: 800
   JumpHeight: 2
   CanJumpOnTooSteepSlopes: 1
   ResetJumpsOnTooSteepSlopes: 0
@@ -723,7 +723,7 @@ MeshRenderer:
   m_RenderingLayerMask: 4294967295
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 54a1638915d40f4429c5323171ac1a95, type: 2}
+  - {fileID: 2100000, guid: 6a21a2082c2104c4da6a2234dd0c626e, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
