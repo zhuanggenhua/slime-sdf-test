@@ -1533,6 +1533,12 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.x
       value: 35
       objectReference: {fileID: 0}
+    - target: {fileID: 1902734146310548296, guid: 9edcf7e494cf3e640b18cb7495fb179a,
+        type: 3}
+      propertyPath: sharedProfile
+      value: 
+      objectReference: {fileID: 11400000, guid: 9fcea0c0a584c9448a3da6c06fb76ddb,
+        type: 2}
     - target: {fileID: 2023957200243324068, guid: 9edcf7e494cf3e640b18cb7495fb179a,
         type: 3}
       propertyPath: CameraDistance
