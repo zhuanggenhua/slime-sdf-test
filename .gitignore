@@ -80,3 +80,6 @@ crashlytics-build.properties
 
 # NuGet for Unity Packages
 /[Aa]ssets/[Pp]ackages/*
+
+# Contributers Private Assets
+/[Aa]ssets/[Pp]rivate/*
