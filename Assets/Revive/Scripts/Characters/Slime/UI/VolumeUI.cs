@@ -1,22 +1,23 @@
+using MoreMountains.Tools;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Slime
+namespace Revive.Slime
 {
     /// <summary>
-    /// 体积UI - 显示史莱姆当前体积状态和警告信息
+    /// 体积UI - 通过 MMEventManager 监听 SlimeVolumeChangeEvent 更新进度条
     /// </summary>
-    public class VolumeUI : MonoBehaviour
+    public class VolumeUI : MonoBehaviour, MMEventListener<SlimeVolumeChangeEvent>
     {
         [Header("【引用组件】")]
         
-        [Tooltip("体积滑动条组件")]
-        [SerializeField] private Slider volumeSlider;
+        [Tooltip("MMProgressBar 进度条（推荐，复用 TopDown UI）")]
+        [SerializeField] private MMProgressBar progressBar;
         
-        [Tooltip("体积文本显示组件")]
+        [Tooltip("体积文本显示组件（可选）")]
         [SerializeField] private Text volumeText;
         
-        [Tooltip("填充图像组件 - 用于颜色变化")]
+        [Tooltip("填充图像组件 - 用于颜色变化（可选）")]
         [SerializeField] private Image fillImage;
         
         [Header("【颜色配置】")]
@@ -41,40 +42,40 @@ namespace Slime
         [SerializeField, Range(0f, 0.5f), DefaultValue(0.3f)] 
         private float warningThreshold = 0.3f;
 
-        private void Start()
+        private void OnEnable()
         {
-            if (VolumeManager.Instance != null)
-            {
-                VolumeManager.Instance.OnVolumeChanged += OnVolumeChanged;
-                UpdateUI(VolumeManager.Instance.VolumePercent);
-            }
+            // 注册全局事件监听
+            this.MMEventStartListening<SlimeVolumeChangeEvent>();
         }
 
-        private void OnDestroy()
+        private void OnDisable()
         {
-            if (VolumeManager.Instance != null)
-            {
-                VolumeManager.Instance.OnVolumeChanged -= OnVolumeChanged;
-            }
+            this.MMEventStopListening<SlimeVolumeChangeEvent>();
         }
 
-        private void OnVolumeChanged(float percent)
+        /// <summary>
+        /// MMEventManager 事件回调
+        /// </summary>
+        public void OnMMEvent(SlimeVolumeChangeEvent volumeEvent)
         {
-            UpdateUI(percent);
+            UpdateUI(volumeEvent.CurrentVolume, volumeEvent.MinVolume, volumeEvent.MaxVolume, volumeEvent.VolumePercent);
         }
 
-        private void UpdateUI(float percent)
+        private void UpdateUI(int current, int min, int max, float percent)
         {
-            if (volumeSlider != null)
+            // 更新 MMProgressBar
+            if (progressBar != null)
             {
-                volumeSlider.value = percent;
+                progressBar.UpdateBar(current, min, max);
             }
             
+            // 更新文本
             if (volumeText != null)
             {
                 volumeText.text = $"{percent * 100:F0}%";
             }
             
+            // 更新颜色
             if (fillImage != null)
             {
                 if (percent <= dangerThreshold)
@@ -89,14 +90,6 @@ namespace Slime
                 {
                     fillImage.color = normalColor;
                 }
-            }
-        }
-
-        private void Update()
-        {
-            if (VolumeManager.Instance != null)
-            {
-                UpdateUI(VolumeManager.Instance.VolumePercent);
             }
         }
         

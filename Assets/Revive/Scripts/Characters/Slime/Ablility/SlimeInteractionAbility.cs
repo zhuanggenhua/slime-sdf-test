@@ -1,9 +1,8 @@
 using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
-using Slime;
 using UnityEngine;
 
-namespace Revive
+namespace Revive.Slime
 {
     /// <summary>
     /// 史莱姆交互能力 - 处理 Emit/Recall/SwitchInstance 输入
@@ -31,7 +30,16 @@ namespace Revive
         protected override void Initialization()
         {
             base.Initialization();
-            Debug.Log($"[SlimeInteraction] Init: InputManager={_inputManager != null}, SlimePBF={SlimePBF != null}");
+
+            if (SlimePBF == null)
+            {
+                SlimePBF = GetComponentInChildren<Slime_PBF>();
+            }
+
+            if (SlimePBF == null)
+            {
+                Debug.LogWarning("[SlimeInteractionAbility] SlimePBF is null and no Slime_PBF component was found on the same GameObject.", this);
+            }
         }
 
         public override void ProcessAbility()

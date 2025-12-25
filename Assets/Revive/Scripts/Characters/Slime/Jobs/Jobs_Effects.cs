@@ -3,7 +3,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-namespace Slime
+namespace Revive.Slime
 {
     public class Effects
     {
@@ -129,6 +129,8 @@ namespace Slime
         {
             [ReadOnly] public NativeHashMap<int3, int> GridLut;
             [ReadOnly] public NativeArray<int> GridID;
+            [ReadOnly] public NativeList<ParticleController> Controllers;
+            [ReadOnly] public NativeArray<ParticleController> SourceControllers;
             public NativeArray<Particle> Particles;
             public float3 MinPos;
 
@@ -136,26 +138,36 @@ namespace Slime
             {
                 Particle p = Particles[index];
                 
-                // 主体粒子（BodyState=0）保持ID=0，不参与CCA重分配
-                if (p.BodyState == 0)
+                // 场景水珠跳过CCA，ClusterId 保持为 0
+                if (p.Type == ParticleType.SceneDroplet || p.SourceId >= 0)
                 {
-                    p.ID = 0;
+                    p.ClusterId = 0;
                     Particles[index] = p;
                     return;
                 }
                 
-                // 分离粒子（BodyState=1）正常进行CCA分配
-                int3 coord = (int3)math.floor((p.Position - MinPos) / PBF_Utils.CellSize);
+                // 自由飞行的粒子跳过CCA，保持原有 ClusterId
+                // 这样发射的粒子在 FreeFrames 期间不会被重新分组到主体
+                if (p.FreeFrames > 0)
+                {
+                    return;
+                }
+                
+                // 主体粒子和分离粒子进行CCA分配
+                // 这样可以通过 ClusterId 判断粒子是否与主体连通
+                // ClusterId = CCA组件ID + 1（0保留给无效/未分配）
+                float3 worldPos = Simulation_PBF.GetWorldPosition(p, Controllers, SourceControllers);
+                int3 coord = (int3)math.floor((worldPos - MinPos) / PBF_Utils.CellSize);
                 int3 key = coord >> 2;
                 if (GridLut.ContainsKey(key))
                 {
                     int offset = GridLut[key];
                     int rawId = GridID[offset + GetLocalIndex(coord & 3)];
-                    p.ID = rawId >= 0 ? (rawId + 1) : 0;
+                    p.ClusterId = rawId >= 0 ? (rawId + 1) : 0;
                 }
                 else
                 {
-                    p.ID = 0;
+                    p.ClusterId = 0;
                 }
                 Particles[index] = p;
             }
@@ -262,35 +274,57 @@ namespace Slime
             public float3 Pos;
             public float3 Dir;
             public float3 MinPos;
+            public float MaxRadius; // 最大搜索距离（控制器半径）
             
             public void Execute()
             {
                 float3 cur = Pos;
-                float oldValue = 0;
-                int3 oldCoord = int3.zero;
-                for (int i = 0; i < 20; i++)
+                float step = PBF_Utils.CellSize * 0.5f; // 0.25，更细的步长
+                float maxDist = math.max(MaxRadius * 2f, 15f); // 至少搜索15单位或2倍半径
+                int maxSteps = (int)(maxDist / step) + 1;
+                
+                float oldValue = Threshold + 1f; // 初始假设在表面内（高密度）
+                float3 oldPos = cur;
+                bool foundSurface = false;
+                
+                for (int i = 0; i < maxSteps; i++)
                 {
                     int3 coord = (int3)math.floor((cur - MinPos) / PBF_Utils.CellSize);
-                    if (math.all(coord == oldCoord)) continue;
-                    oldCoord = coord;
                     int3 key = coord >> 2;
+                    
                     if (GridLut.ContainsKey(key))
                     {
                         int offset = GridLut[key];
                         float curValue = Grid[offset + GetLocalIndex(coord & 3)];
-                        if (curValue < Threshold)
+                        
+                        // 检测穿越等值面：从高密度（>=Threshold）到低密度（<Threshold）
+                        if (curValue < Threshold && oldValue >= Threshold)
                         {
-                            cur = math.lerp(cur - Dir * 0.5f, cur, (Threshold - oldValue) / (curValue - oldValue));
+                            // 线性插值找精确交点，clamp防止外插
+                            float denom = oldValue - curValue;
+                            float t = math.clamp((oldValue - Threshold) / denom, 0f, 1f);
+                            cur = math.lerp(oldPos, cur, t);
+                            foundSurface = true;
                             break;
                         }
                         oldValue = curValue;
                     }
                     else
+                    {
+                        // 离开网格区域，如果之前在表面内则当前位置就是边界
+                        if (oldValue >= Threshold)
+                        {
+                            foundSurface = true;
+                        }
                         break;
+                    }
                     
-                    cur += Dir * 0.5f;
+                    oldPos = cur;
+                    cur += Dir * step;
                 }
-                Result[0] = cur;
+                
+                // 如果没找到表面，返回 NaN 让调用方处理
+                Result[0] = foundSurface ? cur : new float3(float.NaN, float.NaN, float.NaN);
             }
 
             private int GetLocalIndex(int3 coord)
@@ -469,6 +503,42 @@ namespace Slime
             private int GetLocalIndex(int3 coord)
             {
                 return coord.x + 4 * (coord.y + 4 * coord.z);
+            }
+        }
+        
+        /// <summary>
+        /// 网格投票汇总结构
+        /// </summary>
+        public struct VoteResult
+        {
+            public int NewCompId;
+            public int WinningStableId;
+            public int WinningCount;
+            public int TotalCount;
+            public float Ratio;
+        }
+        
+        /// <summary>
+        /// 将稳定ID写回网格的Job
+        /// </summary>
+        [BurstCompile]
+        public struct WriteStableIdToGridJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<int> GridID;              // 本帧CCA组件ID
+            [ReadOnly] public NativeArray<int> CompToStableId;      // 组件ID -> 稳定ID映射
+            public NativeArray<int> GridStableId;                   // 输出：网格稳定ID
+            
+            public void Execute(int index)
+            {
+                int compId = GridID[index];
+                if (compId >= 0 && compId < CompToStableId.Length)
+                {
+                    GridStableId[index] = CompToStableId[compId];
+                }
+                else
+                {
+                    GridStableId[index] = 0; // 无效区域归属主体
+                }
             }
         }
     }

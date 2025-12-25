@@ -1,7 +1,8 @@
 using UnityEngine;
 using UnityEditor;
+using Revive.Slime;
 
-namespace Slime
+namespace Revive.Slime.Editor
 {
     /// <summary>
     /// ChineseLabel特性的自定义绘制器 - 在Inspector中显示中文标签

@@ -1,17 +1,41 @@
 using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-namespace Slime
+namespace Revive.Slime
 {
     public struct Particle 
     {
+        /// <summary>
+        /// 位置：所有粒子统一使用模拟坐标（内部坐标，InvScale=10）
+        /// </summary>
         public float3 Position;
-        public int ID;           // CCA临时ID，仅用于当前帧控制器匹配
-        public int BodyState;    // 持久状态：0=主体, 1=分离, 2=休眠
-        public int SourceId;     // 水滴源ID：-1=主体/无源, >=0=场景水滴源索引
+        public ParticleType Type;  // 粒子类型
+        public int ControllerId;   // 所属控制器ID（0=主体，1+=分离组）
+        public int StableId;       // 分离团块稳定ID（0=主体，1+=分离团块）
+        public int SourceId;       // 场景水珠源ID（-1=非场景水珠）
+        public int ClusterId;      // CCA cluster id
+        public int FreeFrames;     // 发射倒计时（仅Emitted类型使用）
+        public int FramesOutsideMain; // 连续离开主体的帧数（用于延迟分离判定）
+        
+        /// <summary>
+        /// 是否可以合并到主体
+        /// </summary>
+        public bool CanMergeToMain()
+        {
+            return Type == ParticleType.Separated;
+        }
+        
+        /// <summary>
+        /// 是否是活跃粒子（参与物理模拟）
+        /// </summary>
+        public bool IsActive()
+        {
+            return Type != ParticleType.Dormant;
+        }
     }
     
     public struct ParticleController
@@ -20,6 +44,10 @@ namespace Slime
         public float Radius;
         public float3 Velocity;
         public float Concentration;
+        public int ParticleCount;      // 当前帧归属的粒子数
+        public int FramesWithoutParticles; // 无粒子归属的帧数（用于延迟删除）
+        public bool IsValid;           // 是否有效（未被删除）
+        public float GroundY;          // 该控制器位置的地面高度（模拟坐标）
     }
     
     /// <summary>
@@ -29,8 +57,9 @@ namespace Slime
     {
         public const int Ground = 0;     // 普通地面/障碍物
         public const int Climbable = 1;  // 可攀爬表面
-        public const int Bouncy = 2;     // 弹性表面
+        public const int Water = 2;      // 水体
         public const int Sticky = 3;     // 粘性表面
+        public const int JumpPad = 4;    // 弹跳平台
     }
     
     public struct MyBoxCollider
@@ -54,6 +83,9 @@ namespace Slime
         public const float CellSize = 0.5f * h;
         public const float Scale = 0.1f;
         public const float InvScale = 10f;
+        
+        /// <summary>CCA连通组件判定阈值：网格密度高于此值才被视为有效单元</summary>
+        public const float CCAThreshold = 1e-4f;
     
         public struct Int2Comparer : IComparer<int2>
         {
@@ -128,6 +160,15 @@ namespace Slime
                 Hashes[i] = math.int2(hash, i);
             }
         }
+        
+        /// <summary>
+        /// 获取粒子模拟坐标（所有粒子统一使用模拟坐标，直接返回Position）
+        /// 注意：返回的是模拟坐标，转换世界坐标需要 * PBF_Utils.Scale
+        /// </summary>
+        public static float3 GetWorldPosition(Particle p, NativeList<ParticleController> controllers, NativeArray<ParticleController> sourceControllers)
+        {
+            return p.Position;
+        }
 
         [BurstCompile]
         public struct BuildLutJob : IJob
@@ -179,9 +220,10 @@ namespace Slime
         [BurstCompile]
         public struct ApplyForceJob : IJobParallelFor
         {
-            [ReadOnly] public NativeList<ParticleController> Controllers;
-            [ReadOnly] public NativeArray<ParticleController> SourceControllers;
             [ReadOnly] public NativeArray<Particle> Ps;
+            [ReadOnly] public NativeArray<ParticleController> Controllers;
+            [ReadOnly] public NativeArray<ParticleController> SourceControllers;
+            [ReadOnly] public NativeArray<int> StableIdToSlot;
             [WriteOnly] public NativeArray<Particle> PsNew;
             public NativeArray<float3> Velocity;
             public float3 Gravity;
@@ -189,37 +231,61 @@ namespace Slime
             public float PredictStep;
             public float VelocityDamping;
             public float VerticalOffset;
+            public bool EnableRecall;
+            [ReadOnly] public NativeArray<byte> RecallEligibleStableIds;
+            public bool UseRecallEligibleStableIds;
+            public float3 MainCenter; // 主体控制器中心，用于分离粒子排除指向主体的凝聚力分量
+            public float3 MainVelocity; // 主体控制器速度，用于计算相对速度
+            public float MaxDeformDistXZ; // 水平形变上限（模拟坐标）
+            public float MaxDeformDistY;  // 垂直形变上限（模拟坐标）
 
             public void Execute(int i)
             {
                 Particle p = Ps[i];
+                
+                // 递减自由态倒计时并处理状态转换
+                if (p.FreeFrames > 0)
+                {
+                    p.FreeFrames--;
+                    if (p.FreeFrames == 0 && p.Type == ParticleType.Emitted)
+                    {
+                        // 发射粒子飞行结束后变成分离粒子，由 CCA 控制成为独立小史莱姆
+                        p.Type = ParticleType.Separated;
+                    }
+                }
+
+                // 【关键】自由飞行粒子：只受重力影响，不受速度衰减和控制器影响
+                if (p.FreeFrames > 0)
+                {
+                    float3 freeVel = Velocity[i] + Gravity * DeltaTime; // 无衰减，只加重力
+                    p.Position += freeVel * PredictStep;
+                    PsNew[i] = p;
+                    Velocity[i] = freeVel;
+                    return;
+                }
 
                 var velocity = Velocity[i] * VelocityDamping + Gravity * DeltaTime;
                 
-                // 根据 BodyState 选择控制器：
-                // - BodyState=0（主体）：始终使用 Controllers[0]
-                // - BodyState=1（分离）：使用分离组 ID 对应的控制器（ID>=1）
-                //   但如果 ID=0 说明刚发射还没被分配，跳过控制器让它自由飞行
-                int controllerIndex = (p.BodyState == 0) ? 0 : p.ID;
-                
-                // 分离粒子（BodyState=1）不使用主体控制器（ID=0 -> Controllers[0]）
-                // 只有 ID>=1 时才使用对应的分离组控制器
-                if (p.BodyState == 1 && controllerIndex == 0)
+                int controllerIndex = 0;
+                if (p.Type != ParticleType.MainBody)
                 {
-                    // 分离粒子 ID=0（刚发射或CCA分配的0），不受主体控制器影响，自由飞行
+                    int sid = p.StableId;
+                    if (sid >= 0 && sid < StableIdToSlot.Length)
+                        controllerIndex = StableIdToSlot[sid];
+                    else
+                        controllerIndex = -1;
                 }
-                else if (p.BodyState == 1 && p.SourceId >= 0)
+                
+                // 场景水珠使用 SourceControllers
+                if (p.Type == ParticleType.SceneDroplet && p.SourceId >= 0)
                 {
-                    // 场景水珠使用 SourceControllers（紧凑索引，不再用 100+SourceId）
                     if (p.SourceId < SourceControllers.Length)
                     {
                         ParticleController cl = SourceControllers[p.SourceId];
-                        if (cl.Concentration > 0) // 有效控制器
+                        if (cl.Concentration > 0)
                         {
                             float3 toCenter = cl.Center - p.Position;
                             float len = math.length(toCenter);
-                            
-                            // 场景水珠只有聚集力，没有速度跟随
                             if (len > 0.1f)
                             {
                                 velocity += cl.Concentration * DeltaTime * math.min(1, len) *
@@ -228,35 +294,168 @@ namespace Slime
                         }
                     }
                 }
+                // 主体和分离粒子使用 Controllers
                 else if (controllerIndex >= 0 && controllerIndex < Controllers.Length)
                 {
                     ParticleController cl = Controllers[controllerIndex];
-                    float verticalOffsetFactor = (p.BodyState == 0) ? VerticalOffset : 0f;
+                    float verticalOffsetFactor = (p.Type == ParticleType.MainBody) ? VerticalOffset : 0f;
                     float3 toCenter = cl.Center + new float3(0, cl.Radius * verticalOffsetFactor, 0) - p.Position;
                     float len = math.length(toCenter);
+                    bool isSeparated = (p.Type == ParticleType.Separated || p.Type == ParticleType.Emitted);
+                    bool inFreeState = p.FreeFrames > 0; // 自由飞行状态，不受控制器影响
+                    bool enableRecall = EnableRecall;
 
-                    if (len < cl.Radius)
+                    int stableId = p.StableId;
+                    bool canRecallThisController = !UseRecallEligibleStableIds ||
+                                                   (stableId > 0 && stableId < RecallEligibleStableIds.Length && RecallEligibleStableIds[stableId] != 0);
+
+                    bool enableRecallThisController = enableRecall && canRecallThisController;
+
+                    // 分离粒子召回：enableRecall=true 且在控制器半径外时触发
+                    // 自由飞行状态的粒子不受召回影响
+                    if (enableRecallThisController && isSeparated && !inFreeState && len >= cl.Radius)
                     {
-                        // 方案B：速度跟随只影响水平分量(xz)，不影响竖直分量(y)
-                        // 这样分离团既能被召回（水平朝主体飞），又能正常下落（重力不被抵消）
-                        float lerpFactor = math.lerp(1, len * 0.1f, cl.Concentration * 0.002f);
-                        if (p.BodyState == 1)
+                        // ControllerId=0 的分离粒子：计算指向主体的召回方向
+                        if (controllerIndex == 0)
                         {
+                            float3 dirToMain = math.normalizesafe(toCenter);
+                            // 召回速度：距离远时快，接近边缘时慢（防止冲过头）
+                            // 使用固定的fadeDistance，不依赖主体大小
+                            float distFromEdge = len - cl.Radius; // 距离边缘的距离
+                            float maxRecallSpeed = 12f;  // 远距离时的速度
+                            float minRecallSpeed = 2f;   // 接近边缘时的速度
+                            float fadeDistance = 15f;    // 固定值：在15单位内逐渐减速
+                            float speedFactor = math.saturate(distFromEdge / fadeDistance);
+                            float recallSpeed = math.lerp(minRecallSpeed, maxRecallSpeed, speedFactor);
+                            
                             float originalY = velocity.y;
-                            velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
-                            velocity.y = originalY; // 恢复竖直分量，让重力正常作用
+                            velocity = dirToMain * recallSpeed;
+                            velocity.y = math.max(originalY, velocity.y);
                         }
                         else
                         {
-                            velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                            // 分离组控制器：直接应用控制器的召回速度。
+                            // 注意：避障台阶上抬速度写在 cl.Velocity.y，如果这里强行保留原Y会导致“上台阶”完全无效。
+                            float originalY = velocity.y;
+                            velocity = cl.Velocity;
+                            velocity.y = math.max(originalY, cl.Velocity.y);
                         }
-                        
-                        // 向心力只作用于主体粒子，分离粒子不需要向心力（它们通过 PBF 约束保持凝聚）
-                        if (p.BodyState == 0)
+                    }
+                    else if (len < cl.Radius)
+                    {
+                        // 自由飞行状态的粒子：完全跳过控制器的速度跟随和向心力
+                        if (inFreeState)
                         {
+                            // 不做任何处理，保持粒子原有速度
+                        }
+                        // 分离粒子对主体控制器(index=0)在非召回模式：只保留重力，不向主体凝聚
+                        else if (isSeparated && controllerIndex == 0 && !enableRecallThisController)
+                        {
+                            // ControllerId=0 表示 CCA 还没分配分离组控制器
+                            // 不做额外处理，保留重力效果（已在上面应用：velocity = Velocity[i] * VelocityDamping + Gravity * DeltaTime）
+                            // 分离粒子靠自身重力下落，等待 CCA 分配分离组控制器后再凝聚
+                        }
+                        // 分离粒子对分离组控制器(index>0)在非召回模式：速度跟随 + 凝聚力（原版）
+                        else if (isSeparated && controllerIndex > 0 && !enableRecallThisController)
+                        {
+                            // 速度跟随：让粒子跟随组的整体运动
+                            float lerpFactor = math.lerp(1, len * 0.1f, cl.Concentration * 0.002f);
+                            float originalY = velocity.y;
+                            velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                            velocity.y = originalY; // 保留Y分量
+                            
+                            // 原版凝聚力
                             float3 attraction = cl.Concentration * DeltaTime * math.min(1, len) *
                                                 math.normalizesafe(toCenter);
+                            if (attraction.y > 0f)
+                            {
+                                float upDVMax = math.abs(Gravity.y) * DeltaTime * 0.5f; // 允许最多抵消50%重力
+                                attraction.y = math.min(attraction.y, upDVMax);
+                            }
                             velocity += attraction;
+                        }
+                        else
+                        {
+                            // 原版：速度跟随，分离粒子保留Y分量
+                            float lerpFactor = math.lerp(1, len * 0.1f, cl.Concentration * 0.002f);
+                            
+                            // 分离粒子在召回时（控制器有速度）：更强跟随控制器
+                            bool hasRecallVel = enableRecallThisController && math.lengthsq(cl.Velocity) > 0.1f;
+                            if (isSeparated && hasRecallVel)
+                            {
+                                // 召回时使用更低的 lerpFactor，让粒子更跟随控制器
+                                lerpFactor = math.min(lerpFactor, 0.3f);
+                                velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                                // 召回时不保留原始Y，让粒子能跟随向上的召回速度
+                            }
+                            else if (isSeparated)
+                            {
+                                // 分离组控制器(index>0)：应用速度跟随保持凝聚
+                                float originalY = velocity.y;
+                                velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                                velocity.y = originalY;
+                            }
+                            else
+                            {
+                                velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                            }
+                            
+                            // 原版：向心力
+                            // 召回模式：所有粒子都应用向心力
+                            // 非召回模式：分离粒子对主体控制器(index=0)不应用，防止被吸回
+                            if (!isSeparated || controllerIndex > 0 || enableRecallThisController)
+                            {
+                                float3 attraction = cl.Concentration * DeltaTime * math.min(1, len) *
+                                                    math.normalizesafe(toCenter);
+                                if (isSeparated && controllerIndex > 0 && !enableRecallThisController && attraction.y > 0f)
+                                {
+                                    float upDVMax = math.abs(Gravity.y) * DeltaTime * 0.5f;
+                                    attraction.y = math.min(attraction.y, upDVMax);
+                                }
+                                velocity += attraction;
+                            }
+                        }
+                    }
+                }
+
+                // 【P3 预测式软限制-椭球约束】预测粒子下一帧位置，若会超出椭球边界则提前消除外扩速度
+                // XZ 方向用 MaxDeformDistXZ，Y 方向用 MaxDeformDistY
+                // 【关键】使用相对速度，避免影响整体移动；使用预测位置而非当前位置进行判断
+                if (p.Type == ParticleType.MainBody && MaxDeformDistXZ > 0 && MaxDeformDistY > 0)
+                {
+                    // 预测下一帧位置（相对于预测的控制器中心）
+                    float3 predictedMainCenter = MainCenter + MainVelocity * PredictStep;
+                    float3 predictedPos = p.Position + velocity * PredictStep;
+                    float3 d_pred = predictedPos - predictedMainCenter; // 预测位置相对于预测中心的偏移
+                    
+                    // 椭球归一化距离: r = sqrt((dx/a)^2 + (dy/b)^2 + (dz/a)^2)
+                    float3 normalized_pred = new float3(
+                        d_pred.x / MaxDeformDistXZ, 
+                        d_pred.y / MaxDeformDistY, 
+                        d_pred.z / MaxDeformDistXZ
+                    );
+                    float r_pred = math.length(normalized_pred);
+                    
+                    // 【预测式】如果预测位置会超出边界，提前消除外扩速度
+                    if (r_pred > 1f)
+                    {
+                        // 椭球表面的梯度方向（基于预测位置，指向外部法线）
+                        float3 gradient = new float3(
+                            d_pred.x / (MaxDeformDistXZ * MaxDeformDistXZ),
+                            d_pred.y / (MaxDeformDistY * MaxDeformDistY),
+                            d_pred.z / (MaxDeformDistXZ * MaxDeformDistXZ)
+                        );
+                        float3 outwardDir = math.normalizesafe(gradient); // 指向椭球外的法线
+                        
+                        // 【关键】使用相对速度判断是否远离中心
+                        // 只消除粒子相对于控制器的"扩张"速度，保留整体移动速度
+                        float3 relativeVel = velocity - MainVelocity;
+                        float outwardVel = math.dot(relativeVel, outwardDir); // 相对于控制器的远离速度
+                        
+                        if (outwardVel > 0)
+                        {
+                            // 消除相对远离椭球的分量，保留切线方向和整体移动
+                            velocity -= outwardDir * outwardVel;
                         }
                     }
                 }
@@ -266,7 +465,9 @@ namespace Slime
                 Velocity[i] = velocity;
             }
         }
-
+        /// <summary>
+        /// 简化版 Lambda 计算 Job - 不检查 FreeFrames，用于水珠等简单场景
+        /// </summary>
         [BurstCompile]
         public struct ComputeLambdaJob : IJobParallelFor
         {
@@ -282,6 +483,7 @@ namespace Slime
                 float rho = 0.0f;
                 float3 grad_i = float3.zero;
                 float sigmaGrad = 0.0f;
+                
                 for (int dz = -1; dz <= 1; ++dz)
                 for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx)
@@ -296,11 +498,11 @@ namespace Slime
 
                         float3 dir = pos - PosPredict[j];
                         float r2 = math.lengthsq(dir);
-                        if (r2 > PBF_Utils.h2) continue;
+                        if (r2 > PBF_Utils.h2 || r2 < 1e-10f) continue;
 
                         float r = math.sqrt(r2);
                         rho += PBF_Utils.SmoothingKernelPoly6(r2) / TargetDensity;
-                        float3 grad_j = PBF_Utils.DerivativeSpikyPow3(r) / TargetDensity * math.normalize(dir);
+                        float3 grad_j = PBF_Utils.DerivativeSpikyPow3(r) / TargetDensity * math.normalizesafe(dir);
                         sigmaGrad += math.lengthsq(grad_j);
                         grad_i += grad_j;
                     }
@@ -311,28 +513,39 @@ namespace Slime
                 Lambda[i] = -c / (sigmaGrad + 1e-5f);
             }
         }
-
+        
+        /// <summary>
+        /// 带 FreeFrames 检查的 Lambda 计算 Job - 用于主体粒子，排除发射粒子与主体的交互
+        /// </summary>
         [BurstCompile]
-        public struct ComputeDeltaPosJob : IJobParallelFor
+        public struct ComputeLambdaJobWithFreeFrames : IJobParallelFor
         {
             [ReadOnly] public NativeHashMap<int, int2> Lut;
             [ReadOnly] public NativeArray<float3> PosPredict;
-            [ReadOnly] public NativeArray<float> Lambda;
+            [ReadOnly] public NativeArray<Particle> Particles; // 用于检查 FreeFrames
             [ReadOnly] public NativeArray<int2> Hashes;
-            [ReadOnly] public NativeArray<Particle> PsOriginal;
-            [WriteOnly] public NativeArray<Particle> PsNew;
+            [WriteOnly] public NativeArray<float> Lambda;
             public float TargetDensity;
-            private const float TensileDq = 0.25f * PBF_Utils.h;
-            private const float TensileK = 0.1f;
 
             public void Execute(int i)
             {
-                float3 position = PosPredict[i];
-                float3 dp = float3.zero;
-                float W_dp = PBF_Utils.SmoothingKernelPoly6(TensileDq * TensileDq);
-
-                float lambda = Lambda[i];
-                int3 coord = PBF_Utils.GetCoord(position);
+                float3 pos = PosPredict[i];
+                int3 coord = PBF_Utils.GetCoord(pos);
+                float rho = 0.0f;
+                float3 grad_i = float3.zero;
+                float sigmaGrad = 0.0f;
+                
+                // 当前粒子是否在自由飞行（发射中）
+                int originalIdx = Hashes[i].y;
+                bool iAmFree = Particles[originalIdx].FreeFrames > 0;
+                
+                // 【关键】自由飞行粒子完全不参与 PBF 交互，让它们能自由飞出
+                if (iAmFree)
+                {
+                    Lambda[i] = 0;
+                    return;
+                }
+                
                 for (int dz = -1; dz <= 1; ++dz)
                 for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx)
@@ -344,13 +557,213 @@ namespace Slime
                     {
                         if (i == j)
                             continue;
+                        
+                        // 跳过自由飞行粒子（它们不参与任何 PBF 交互）
+                        int originalJ = Hashes[j].y;
+                        if (Particles[originalJ].FreeFrames > 0) continue;
+
+                        float3 dir = pos - PosPredict[j];
+                        float r2 = math.lengthsq(dir);
+                        if (r2 > PBF_Utils.h2 || r2 < 1e-10f) continue;
+
+                        float r = math.sqrt(r2);
+                        rho += PBF_Utils.SmoothingKernelPoly6(r2) / TargetDensity;
+                        float3 grad_j = PBF_Utils.DerivativeSpikyPow3(r) / TargetDensity * math.normalizesafe(dir);
+                        sigmaGrad += math.lengthsq(grad_j);
+                        grad_i += grad_j;
+                    }
+                }
+
+                sigmaGrad += math.dot(grad_i, grad_i);
+                float c = math.max(-0.2f, rho / TargetDensity - 1.0f);
+                Lambda[i] = -c / (sigmaGrad + 1e-5f);
+            }
+        }
+
+        /// <summary>
+        /// 简化版位置修正Job - 只输出位置，不需要 Controllers 等参数
+        /// 供水珠等简单场景使用
+        /// </summary>
+        [BurstCompile]
+        public struct TopDown : IJobParallelFor
+        {
+            [ReadOnly] public NativeHashMap<int, int2> Lut;
+            [ReadOnly] public NativeArray<float3> PosPredictIn;
+            [WriteOnly] public NativeArray<float3> PosPredictOut;
+            [ReadOnly] public NativeArray<float> Lambda;
+            public float TargetDensity;
+            
+            private const float TensileDq = 0.25f * PBF_Utils.h;
+            private const float TensileK = 0.1f;
+            
+            public void Execute(int i)
+            {
+                float3 pos = PosPredictIn[i];
+                float3 dp = float3.zero;
+                float W_dq = PBF_Utils.SmoothingKernelPoly6(TensileDq * TensileDq);
+                float lambda_i = Lambda[i];
+                
+                int3 coord = PBF_Utils.GetCoord(pos);
+                
+                for (int dz = -1; dz <= 1; ++dz)
+                for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
+                    if (!Lut.ContainsKey(key)) continue;
+                    
+                    int2 range = Lut[key];
+                    for (int j = range.x; j < range.y; j++)
+                    {
+                        if (i == j) continue;
+                        
+                        float3 diff = pos - PosPredictIn[j];
+                        float r2 = math.lengthsq(diff);
+                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        
+                        float r = math.sqrt(r2);
+                        float3 grad = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(diff);
+                        
+                        // 表面张力修正
+                        float corr = PBF_Utils.SmoothingKernelPoly6(r2) / W_dq;
+                        corr = -TensileK * corr * corr * corr * corr;
+                        
+                        dp += (lambda_i + Lambda[j] + corr) * grad;
+                    }
+                }
+                
+                PosPredictOut[i] = pos - dp / TargetDensity;
+            }
+        }
+
+        /// <summary>
+        /// 公共凝聚力Job - 适用于水珠等需要向目标点凝聚的场景
+        /// 包含：凝聚力、速度阻尼、重力
+        /// </summary>
+        [BurstCompile]
+        public struct ApplyCohesionWithPositionJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float3> TargetCenters;  // 每个粒子的目标中心
+            [ReadOnly] public NativeArray<float3> Positions;      // 当前位置
+            [NativeDisableParallelForRestriction]
+            public NativeSlice<float3> Velocities;  // 使用 Slice 支持切片操作
+            public float CohesionStrength;
+            public float CohesionRadius;
+            public float VelocityDamping;
+            public float3 Gravity;
+            public float DeltaTime;
+            public float VerticalCohesionScale;  // 向下凝聚力缩放（0.3 = 30%）
+            
+            public void Execute(int i)
+            {
+                float3 pos = Positions[i];
+                float3 targetCenter = TargetCenters[i];
+                float3 vel = Velocities[i];
+                
+                // 1. 速度阻尼，让粒子趋于静止
+                vel *= VelocityDamping;
+                
+                // 2. 重力
+                vel += Gravity * DeltaTime;
+                
+                // 3. 凝聚力（如果有有效目标）
+                if (math.lengthsq(targetCenter) > 0.001f)  // 有效目标
+                {
+                    float3 toTarget = targetCenter - pos;
+                    float dist = math.length(toTarget);
+                    
+                    if (dist > 0.1f)
+                    {
+                        // 距离越远，凝聚力越强（但有上限）
+                        float factor = math.saturate(dist / CohesionRadius);
+                        float3 cohesion = CohesionStrength * DeltaTime * factor * math.normalizesafe(toTarget);
+                        
+                        // 减弱向下的凝聚力，保留向上的（对抗重力）
+                        if (cohesion.y < 0)
+                            cohesion.y *= VerticalCohesionScale;
+                        
+                        vel += cohesion;
+                    }
+                }
+                
+                Velocities[i] = vel;
+            }
+        }
+
+        /// <summary>
+        /// 带 FreeFrames 检查的位置修正 Job - 用于主体粒子，排除发射粒子与主体的交互
+        /// </summary>
+        [BurstCompile]
+        public struct ComputeDeltaPosJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeHashMap<int, int2> Lut;
+            [ReadOnly] public NativeArray<float3> PosPredict;
+            [ReadOnly] public NativeArray<float> Lambda;
+            [ReadOnly] public NativeArray<int2> Hashes;
+            [ReadOnly] public NativeArray<Particle> PsOriginal; // 排序后的粒子数组
+            [WriteOnly] public NativeArray<Particle> PsNew;
+            [WriteOnly] public NativeArray<float3> ClampDelta; // 【P4】输出钳制位移量，用于速度回算修正
+            public float TargetDensity;
+            public float MaxDeformDistXZ; // 水平形变上限（模拟坐标）
+            public float MaxDeformDistY;  // 垂直形变上限（模拟坐标）
+            public float3 MainCenter; // 主体控制器中心
+            private const float TensileDq = 0.25f * PBF_Utils.h;
+            private const float TensileK = 0.1f;
+
+            public void Execute(int i)
+            {
+                float3 position = PosPredict[i];
+                float3 dp = float3.zero;
+                float W_dp = PBF_Utils.SmoothingKernelPoly6(TensileDq * TensileDq);
+
+                float lambda = Lambda[i];
+                int3 coord = PBF_Utils.GetCoord(position);
+                
+                // 当前粒子是否在自由飞行（发射中）
+                int originalIdx = Hashes[i].y;
+                Particle originalP = PsOriginal[originalIdx];
+                bool iAmFree = originalP.FreeFrames > 0;
+                
+                // 【关键】自由飞行粒子完全不参与 PBF 交互，直接输出原位置
+                if (iAmFree)
+                {
+                    PsNew[i] = new Particle
+                    {
+                        Position = position, // 不修正位置
+                        Type = originalP.Type,
+                        ControllerId = originalP.ControllerId,
+                        StableId = originalP.StableId,
+                        SourceId = originalP.SourceId,
+                        ClusterId = originalP.ClusterId,
+                        FreeFrames = originalP.FreeFrames,
+                        FramesOutsideMain = originalP.FramesOutsideMain,
+                    };
+                    ClampDelta[i] = float3.zero; // 【P4】无钳制
+                    return;
+                }
+                
+                for (int dz = -1; dz <= 1; ++dz)
+                for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
+                    if (!Lut.ContainsKey(key)) continue;
+                    int2 range = Lut[key];
+                    for (int j = range.x; j < range.y; j++)
+                    {
+                        if (i == j)
+                            continue;
+                        
+                        // 跳过自由飞行粒子（它们不参与任何 PBF 交互）
+                        int originalJ = Hashes[j].y;
+                        if (PsOriginal[originalJ].FreeFrames > 0) continue;
 
                         float3 dir = position - PosPredict[j];
                         float r2 = math.dot(dir, dir);
-                        if (r2 >= PBF_Utils.h2) continue;
+                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
 
                         float r = math.sqrt(r2);
-                        float3 w_spiky = PBF_Utils.SpikyKernelPow3(r) * math.normalize(dir);
+                        float3 w_spiky = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(dir);
                         float corr = PBF_Utils.SmoothingKernelPoly6(r2) / W_dp;
                         float s_corr = -TensileK * corr * corr * corr * corr;
                         dp += (lambda + Lambda[j] + s_corr) * w_spiky;
@@ -359,16 +772,89 @@ namespace Slime
 
                 dp /= TargetDensity;
 
-                int originalIndex = Hashes[i].y;
-                Particle originalP = PsOriginal[originalIndex];
+                float3 newPos = position - dp;
+                float3 clampDelta = float3.zero; // 【P4】记录钳制位移量
+                
+                // 【形变上限-椭球约束】主体粒子超出椭球边界时，将位置拉回边界
+                if (originalP.Type == ParticleType.MainBody && MaxDeformDistXZ > 0 && MaxDeformDistY > 0)
+                {
+                    float3 d = newPos - MainCenter; // 从中心指向粒子
+                    // 椭球归一化距离: r = sqrt((dx/a)^2 + (dy/b)^2 + (dz/a)^2)
+                    float3 normalized = new float3(d.x / MaxDeformDistXZ, d.y / MaxDeformDistY, d.z / MaxDeformDistXZ);
+                    float r = math.length(normalized);
+                    
+                    if (r > 1f)
+                    {
+                        // 将位置拉回到椭球边界: p = center + d / r
+                        float3 clampedPos = MainCenter + d / r;
+                        clampDelta = clampedPos - newPos; // 【P4】钳制造成的位移
+                        newPos = clampedPos;
+                    }
+                }
 
+                ClampDelta[i] = clampDelta; // 【P4】输出钳制位移量
                 PsNew[i] = new Particle
                 {
-                    Position = position - dp,
-                    ID = originalP.ID,
-                    BodyState = originalP.BodyState,
+                    Position = newPos,
+                    Type = originalP.Type,
+                    ControllerId = originalP.ControllerId,
+                    StableId = originalP.StableId,
                     SourceId = originalP.SourceId,
+                    ClusterId = originalP.ClusterId,
+                    FreeFrames = originalP.FreeFrames,
+                    FramesOutsideMain = originalP.FramesOutsideMain,
                 };
+            }
+        }
+
+        /// <summary>
+        /// 简化版位置修正 Job - 用于水珠等独立粒子系统，不检查 FreeFrames
+        /// </summary>
+        [BurstCompile]
+        public struct ComputeDeltaPosJobSimple : IJobParallelFor
+        {
+            [ReadOnly] public NativeHashMap<int, int2> Lut;
+            [ReadOnly] public NativeArray<float3> PosPredictIn;
+            [WriteOnly] public NativeArray<float3> PosPredictOut;
+            [ReadOnly] public NativeArray<float> Lambda;
+            public float TargetDensity;
+            private const float TensileDq = 0.25f * PBF_Utils.h;
+            private const float TensileK = 0.1f;
+
+            public void Execute(int i)
+            {
+                float3 position = PosPredictIn[i];
+                float3 dp = float3.zero;
+                float W_dp = PBF_Utils.SmoothingKernelPoly6(TensileDq * TensileDq);
+
+                float lambda = Lambda[i];
+                int3 coord = PBF_Utils.GetCoord(position);
+
+                for (int dz = -1; dz <= 1; ++dz)
+                for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
+                    if (!Lut.ContainsKey(key)) continue;
+                    int2 range = Lut[key];
+                    for (int j = range.x; j < range.y; j++)
+                    {
+                        if (i == j) continue;
+
+                        float3 dir = position - PosPredictIn[j];
+                        float r2 = math.dot(dir, dir);
+                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
+
+                        float r = math.sqrt(r2);
+                        float3 w_spiky = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(dir);
+                        float corr = PBF_Utils.SmoothingKernelPoly6(r2) / W_dp;
+                        float s_corr = -TensileK * corr * corr * corr * corr;
+                        dp += (lambda + Lambda[j] + s_corr) * w_spiky;
+                    }
+                }
+
+                dp /= TargetDensity;
+                PosPredictOut[i] = position - dp;
             }
         }
 
@@ -376,27 +862,37 @@ namespace Slime
         public struct UpdateJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<MyBoxCollider> Colliders;
-            public int ColliderCount; // 实际有效碰撞体数量
+            [ReadOnly] public NativeList<ParticleController> Controllers; // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
+            public int ColliderCount;
             [ReadOnly] public NativeArray<float3> PosOld;
-            [WriteOnly] public NativeArray<float3> Velocity;
+            [ReadOnly] public NativeArray<float3> ClampDelta; // 【P4】ComputeDeltaPosJob 输出的钳制位移量
             public NativeArray<Particle> Ps;
-            public float MaxVelocity;
+            public NativeArray<float3> Velocity;
             public float DeltaTime;
-            public float MinGroundY; // 动态地面高度（基于控制器位置）
+            public float MaxVelocity;
+            public float FallbackGroundY; // 后备地面高度（当控制器无效时使用）
+            public float MaxDeformDistXZ; // 水平形变上限（模拟坐标）
+            public float MaxDeformDistY;  // 垂直形变上限（模拟坐标）
+            public float3 MainCenter; // 主体控制器中心（模拟坐标）
+            public float3 MainVelocity; // 主体控制器速度，用于计算相对速度
+            public bool EnableCollisionDeformLimit; // 是否在碰撞后应用形变上限
+            public bool EnableP4VelocityConsistency; // 【P4开关】是否启用速度一致化（排除钳制位移）
 
             public void Execute(int i)
             {
                 Particle p = Ps[i];
                 float3 posOld = PosOld[i];
                 
-                // 动态地面限制：防止粒子掉到控制器以下太远
-                p.Position.y = math.max(MinGroundY, p.Position.y);
+                // 所有粒子统一使用模拟坐标（内部坐标）
+                float3 simPos = p.Position;
                 
-                // 只遍历有效的碰撞体（近场缓存）
+                // 碰撞检测（Colliders 也是模拟坐标，包含地面碰撞体）
+                // 记录碰撞轴，用于后续速度衰减
+                bool3 collisionAxes = false;
                 for (int c = 0; c < ColliderCount; c++)
                 {
                     MyBoxCollider box = Colliders[c];
-                    float3 dir = p.Position - box.Center;
+                    float3 dir = simPos - box.Center;
                     float3 vec = math.abs(dir);
                     
                     if (math.all(vec < box.Extent))
@@ -405,20 +901,201 @@ namespace Slime
                         int axis = 0;
                         if (remain.y < remain[axis]) axis = 1;
                         if (remain.z < remain[axis]) axis = 2;
-                        
-                        // 推出碰撞体
-                        p.Position[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
+                        simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
+                        collisionAxes[axis] = true;
                     }
                 }
                 
-                float3 vel = (p.Position - posOld) / DeltaTime;
-                Velocity[i] = math.min(MaxVelocity, math.length(vel)) * math.normalizesafe(vel);
+                // 【改进】只对主体粒子（ControllerId == 0）应用 GroundY 钳制
+                // 分离团依靠碰撞体限制，避免因控制器中心射线护动导致粒子被错误抬高
+                if (p.Type == ParticleType.MainBody)
+                {
+                    float groundY = FallbackGroundY;
+                    if (Controllers.Length > 0)
+                    {
+                        groundY = Controllers[0].GroundY;
+                    }
+                    
+                    // 地面限制：防止主体粒子穿透地面
+                    if (simPos.y < groundY)
+                    {
+                        simPos.y = groundY;
+                        collisionAxes.y = true;
+                    }
+                }
+                
+                // 更新位置（模拟坐标）
+                p.Position = simPos;
+                
+                // 【关键】自由飞行粒子完全跳过速度重算和碰撞衰减，保持原速度
+                // 否则发射速度会被位置差重算或碰撞衰减削减掉
+                if (p.FreeFrames > 0)
+                {
+                    bool hadCollision = collisionAxes.x || collisionAxes.y || collisionAxes.z;
+                    if (hadCollision)
+                    {
+                        p.FreeFrames = 0;
+                        if (p.Type == ParticleType.Emitted)
+                            p.Type = ParticleType.Separated;
+                    }
+                    else
+                    {
+                        // 保持原速度不变，不应用任何衰减
+                        // 碰撞只修正位置（已在上面完成），不衰减速度
+                        Velocity[i] = Velocity[i]; // 保持原速度
+                        Ps[i] = p;
+                        return;
+                    }
+                }
+                
+                // 【P4】速度重算：排除钳制位移，只用物理位移
+                // simPos = posOld + 物理位移 + 钳制位移
+                // 我们只要物理位移：(simPos - clampDelta) - posOld
+                float3 clampDelta = EnableP4VelocityConsistency ? ClampDelta[i] : float3.zero;
+                float3 velCalc = (simPos - clampDelta - posOld) / DeltaTime;
+                
+                // 【关键修复】碰撞时衰减碰撞轴方向的速度，防止落地炸开
+                const float normalCollisionDamping = 0.1f;
+                if (collisionAxes.x) velCalc.x *= normalCollisionDamping;
+                if (collisionAxes.y) velCalc.y *= normalCollisionDamping;
+                if (collisionAxes.z) velCalc.z *= normalCollisionDamping;
+                
+                // 【形变上限-椭球约束】碰撞后应用椭球形变上限，防止落地时过度扩展
+                // 【关键】使用相对速度，避免影响整体移动
+                if (EnableCollisionDeformLimit && p.Type == ParticleType.MainBody && MaxDeformDistXZ > 0 && MaxDeformDistY > 0)
+                {
+                    float3 d = simPos - MainCenter; // 从中心指向粒子
+                    // 椭球归一化距离: r = sqrt((dx/a)^2 + (dy/b)^2 + (dz/a)^2)
+                    float3 normalized = new float3(d.x / MaxDeformDistXZ, d.y / MaxDeformDistY, d.z / MaxDeformDistXZ);
+                    float r = math.length(normalized);
+                    
+                    if (r > 1f)
+                    {
+                        // 椭球表面的梯度方向（指向外部法线）
+                        float3 gradient = new float3(
+                            d.x / (MaxDeformDistXZ * MaxDeformDistXZ),
+                            d.y / (MaxDeformDistY * MaxDeformDistY),
+                            d.z / (MaxDeformDistXZ * MaxDeformDistXZ)
+                        );
+                        float3 outwardDir = math.normalizesafe(gradient); // 指向椭球外的法线
+                        
+                        // 【关键修复】使用相对速度判断是否远离中心
+                        float3 relativeVel = velCalc - MainVelocity;
+                        float outwardVel = math.dot(relativeVel, outwardDir); // 相对于控制器的远离速度
+                        
+                        if (outwardVel > 0)
+                        {
+                            // 消除相对远离椭球的分量，保留整体移动
+                            velCalc -= outwardDir * outwardVel;
+                        }
+                    }
+                }
+                
+                // 【关键】自由飞行粒子不受速度限制，否则发射速度会被截断
+                if (p.FreeFrames == 0)
+                {
+                    velCalc = math.min(MaxVelocity, math.length(velCalc)) * math.normalizesafe(velCalc);
+                }
+                Velocity[i] = velCalc;
                 Ps[i] = p;
+            }
+        }
+
+        /// <summary>
+        /// 把排序后的粒子数据映射回原始索引
+        /// 排序是为了空间哈希加速邻域查询，但 Control() 等逻辑需要原始索引
+        /// </summary>
+        [BurstCompile]
+        public struct UnshuffleJob : IJob
+        {
+            [ReadOnly] public NativeArray<int2> Hashes;
+            [ReadOnly] public NativeArray<Particle> PsUpdated;  // 从UpdateJob更新后的数据
+            [ReadOnly] public NativeArray<float3> VelocitySorted;
+            [WriteOnly] public NativeArray<Particle> PsOriginal;
+            [WriteOnly] public NativeArray<float3> VelocityOriginal;
+
+            public void Execute()
+            {
+                for (int i = 0; i < Hashes.Length; i++)
+                {
+                    int originalIndex = Hashes[i].y;
+                    var updatedParticle = PsUpdated[i];  // 使用UpdateJob更新后的粒子
+                    
+                    // 保护SourceId：只有场景水珠才能有非负SourceId
+                    if (updatedParticle.SourceId >= 0 && updatedParticle.Type != ParticleType.SceneDroplet)
+                    {
+                        updatedParticle.SourceId = -1;
+                    }
+                    
+                    PsOriginal[originalIndex] = updatedParticle;
+                    VelocityOriginal[originalIndex] = VelocitySorted[i];
+                }
             }
         }
 
         [BurstCompile]
         public struct ApplyViscosityJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeHashMap<int, int2> Lut;
+            [ReadOnly] public NativeArray<float3> PosPredict;
+            [ReadOnly] public NativeArray<float3> VelocityR;
+            [ReadOnly] public NativeArray<Particle> Particles; // 原始索引的粒子数组
+            [ReadOnly] public NativeArray<int2> Hashes; // 用于获取原始索引
+            [WriteOnly] public NativeArray<float3> VelocityW;
+            public float ViscosityStrength;
+            public float TargetDensity;
+            public float DeltaTime;
+
+            public void Execute(int i)
+            {
+                float3 vel = VelocityR[i];
+                
+                // 【关键修复】使用 Hashes 获取原始索引，因为 Particles 是原始索引数组
+                int originalIdx = Hashes[i].y;
+                
+                // 【关键】自由飞行粒子不参与粘性计算，保持原速度
+                if (Particles[originalIdx].FreeFrames > 0)
+                {
+                    VelocityW[i] = vel;
+                    return;
+                }
+                
+                float3 pos = PosPredict[i];
+                int3 coord = PBF_Utils.GetCoord(pos);
+                float3 viscosityForce = float3.zero;
+                for (int dz = -1; dz <= 1; ++dz)
+                for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
+                    if (!Lut.ContainsKey(key)) continue;
+                    int2 range = Lut[key];
+                    for (int j = range.x; j < range.y; j++)
+                    {
+                        if (i == j)
+                            continue;
+                        
+                        // 跳过自由飞行粒子（使用原始索引）
+                        int originalJ = Hashes[j].y;
+                        if (Particles[originalJ].FreeFrames > 0) continue;
+
+                        float3 dir = pos - PosPredict[j];
+                        float r2 = math.lengthsq(dir);
+                        if (r2 > PBF_Utils.h2) continue;
+
+                        viscosityForce += (VelocityR[j] - vel) * PBF_Utils.SmoothingKernelPoly6(r2);
+                    }
+                }
+
+                VelocityW[i] = vel + viscosityForce / TargetDensity * ViscosityStrength * DeltaTime;
+            }
+        }
+        
+        /// <summary>
+        /// 简化版粘性 Job - 用于水珠等独立粒子系统，不检查 FreeFrames
+        /// </summary>
+        [BurstCompile]
+        public struct ApplyViscosityJobSimple : IJobParallelFor
         {
             [ReadOnly] public NativeHashMap<int, int2> Lut;
             [ReadOnly] public NativeArray<float3> PosPredict;

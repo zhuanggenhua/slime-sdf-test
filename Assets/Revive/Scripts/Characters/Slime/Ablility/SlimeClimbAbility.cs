@@ -1,9 +1,8 @@
 using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
-using Slime;
 using UnityEngine;
 
-namespace Revive
+namespace Revive.Slime
 {
     /// <summary>
     /// 史莱姆攀爬能力 - 检测可攀爬表面，修改移动速度实现攀爬
@@ -32,8 +31,6 @@ namespace Revive
         [Range(0.1f, 2f)]
         public float ClimbSpeedMultiplier = 1f;
 
-        protected TopDownController3D _controller3D;
-        protected CharacterMovement _characterMovement;
         protected Collider _selfCollider;
         protected bool _isClimbing;
         protected Vector3 _climbNormal;
@@ -49,8 +46,6 @@ namespace Revive
         protected override void Initialization()
         {
             base.Initialization();
-            _controller3D = _controller as TopDownController3D;
-            _characterMovement = _character?.FindAbility<CharacterMovement>();
             _selfCollider = gameObject.GetComponentInChildren<Collider>();
         }
 
@@ -67,12 +62,6 @@ namespace Revive
             bool wasClimbing = _isClimbing;
             Vector3 moveDir = _controller3D.CurrentDirection.normalized;
             float verticalInput = _inputManager != null ? _inputManager.PrimaryMovement.y : 0f;
-            
-            // DEBUG: 每秒输出一次输入状态
-            if (Time.frameCount % 60 == 0)
-            {
-                Debug.Log($"[SlimeClimb] moveDir={moveDir}, verticalInput={verticalInput}, selfCollider={_selfCollider != null}");
-            }
             
             DetectClimbableSurface(moveDir);
 
@@ -102,15 +91,7 @@ namespace Revive
             float maxSurfaceDist = _isClimbing ? Mathf.Max(ClimbDetachDistance, ClimbContactDistance) : ClimbContactDistance;
             float searchRadius = Mathf.Max(ClimbDetectDistance, maxSurfaceDist);
             
-            int count = Physics.OverlapSphereNonAlloc(queryCenter, searchRadius, _climbOverlapHits, ClimbableLayers);
-            
-            // DEBUG: 每秒输出一次检测结果
-            if (Time.frameCount % 60 == 0)
-            {
-                Debug.Log($"[SlimeClimb] 检测: center={queryCenter}, radius={searchRadius}, hitCount={count}");
-            }
-            
-            int climbableCount = 0;
+            int count = UnityEngine.Physics.OverlapSphereNonAlloc(queryCenter, searchRadius, _climbOverlapHits, ClimbableLayers);
             for (int i = 0; i < count; i++)
             {
                 var col = _climbOverlapHits[i];
@@ -120,8 +101,6 @@ namespace Revive
                 var info = col.GetComponentInParent<SlimeColliderInfo>();
                 if (info == null || info.colliderType != SlimeColliderInfo.ColliderType.Climbable)
                     continue;
-                
-                climbableCount++;
 
                 Vector3 wallPoint = col.ClosestPoint(queryCenter);
                 Vector3 selfPoint = queryCenter;
@@ -130,13 +109,6 @@ namespace Revive
 
                 Vector3 delta = selfPoint - wallPoint;
                 float dist = delta.magnitude;
-                
-                // DEBUG: 输出每个 Climbable 碰撞体的详细信息
-                if (Time.frameCount % 60 == 0)
-                {
-                    Debug.Log($"[SlimeClimb] Climbable '{col.name}': dist={dist:F3}, maxSurfaceDist={maxSurfaceDist:F3}");
-                }
-                
                 if (dist > maxSurfaceDist)
                     continue;
 
@@ -148,13 +120,6 @@ namespace Revive
                 normal /= Mathf.Sqrt(normalSqr);
                 
                 float dot = Vector3.Dot(moveDir, normal);
-                
-                // DEBUG: 输出角度检查
-                if (Time.frameCount % 60 == 0)
-                {
-                    Debug.Log($"[SlimeClimb] Climbable '{col.name}': normal={normal}, dot={dot:F3} (需要<=0.35)");
-                }
-                
                 if (dot > 0.35f)
                     continue;
 
@@ -167,19 +132,12 @@ namespace Revive
                 }
             }
 
-            // DEBUG: 输出可攀爬碰撞体数量
-            if (Time.frameCount % 60 == 0 && climbableCount > 0)
-            {
-                Debug.Log($"[SlimeClimb] 找到 {climbableCount} 个 Climbable 碰撞体, bestInfo={bestInfo != null}");
-            }
-
             if (bestInfo == null)
             {
                 _isClimbing = false;
                 return;
             }
 
-            Debug.Log($"[SlimeClimb] 开始攀爬! normal={bestNormal}, dist={bestDist:F3}");
             _isClimbing = true;
             _climbNormal = bestNormal;
             _climbInfo = bestInfo;
@@ -236,13 +194,14 @@ namespace Revive
             MMAnimatorExtensions.UpdateAnimatorBool(_animator, _climbingAnimationParameter, _isClimbing, _character._animatorParameters, _character.RunAnimatorSanityChecks);
         }
 
-        protected virtual void OnDisable()
+        protected override void OnDisable()
         {
             if (_isClimbing)
             {
                 OnClimbEnd();
                 _isClimbing = false;
             }
+            base.OnDisable();
         }
     }
 }

@@ -24,12 +24,14 @@
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-            // matches the structure of our data on the CPU side
+            // matches the structure of our data on the CPU side (32 bytes)
             struct Particle {
-                float3 x;
-                int ID;
-                int BodyState;
-                int SourceId;
+                float3 x;       // Position
+                int Type;       // ParticleType
+                int ID;         // ControllerId
+                int SourceId;   // SourceId
+                int ClusterId;  // ClusterId
+                int FreeFrames; // FreeFrames
             };
 
             struct a2v {

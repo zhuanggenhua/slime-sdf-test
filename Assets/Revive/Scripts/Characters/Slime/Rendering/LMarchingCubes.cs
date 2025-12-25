@@ -7,7 +7,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Slime
+namespace Revive.Slime
 {
     public class LMarchingCubes : System.IDisposable
     {

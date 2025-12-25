@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Slime
+namespace Revive.Slime
 {
     /// <summary>
     /// 场景水珠源 - 预先放置在场景中的独立水珠
@@ -23,6 +23,30 @@ namespace Slime
         [ChineseLabel("生成半径"), Tooltip("初始粒子分布的球形半径")]
         [Range(0.5f, 5f), DefaultValue(1f)]
         public float spawnRadius = 1f;
+
+        [Header("【物理参数】")]
+        [ChineseLabel("凝聚力强度"), Tooltip("粒子向中心凝聚的力度")]
+        [Range(1f, 100f), DefaultValue(30f)]
+        public float cohesionStrength = 30f;
+
+        [ChineseLabel("凝聚半径"), Tooltip("凝聚力作用的最大半径")]
+        [Range(1f, 20f), DefaultValue(10f)]
+        public float cohesionRadius = 10f;
+
+        [ChineseLabel("速度阻尼"), Tooltip("速度衰减系数，越大越慢")]
+        [Range(0.9f, 1f), DefaultValue(0.99f)]
+        public float velocityDamping = 0.99f;
+
+        [ChineseLabel("垂直凝聚缩放"), Tooltip("向下凝聚力的缩放（<1削弱）")]
+        [Range(0f, 2f), DefaultValue(0.5f)]
+        public float verticalCohesionScale = 0.5f;
+
+        [ChineseLabel("启用粘性"), Tooltip("启用粘性可维持形状")]
+        public bool enableViscosity = true;
+
+        [ChineseLabel("粘性强度"), Tooltip("粘性强度，越大形状越稳定（与主体一致=10）")]
+        [Range(0f, 100f), DefaultValue(10f)]
+        public float viscosityStrength = 10f;
 
         [Header("【激活配置（Streaming）】")]
         [ChineseLabel("激活半径"), Tooltip("玩家进入此范围时激活水珠")]

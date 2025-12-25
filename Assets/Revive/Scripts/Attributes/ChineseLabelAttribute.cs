@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Slime
+namespace Revive
 {
     /// <summary>
     /// 中文标签特性 - 让字段在Inspector中显示中文名称

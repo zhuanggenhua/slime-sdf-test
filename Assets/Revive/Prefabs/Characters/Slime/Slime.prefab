@@ -14,9 +14,10 @@ GameObject:
   - component: {fileID: 5021390047149982154}
   - component: {fileID: 4314440034181312206}
   - component: {fileID: 1401347937689228787}
-  - component: {fileID: 1470542477019744586}
+  - component: {fileID: 1489706517887540671}
   - component: {fileID: 8512902080114408108}
   - component: {fileID: -904217351616132870}
+  - component: {fileID: -8990146840772306320}
   - component: {fileID: 8866674475157012359}
   m_Layer: 10
   m_Name: Slime
@@ -34,7 +35,7 @@ Transform:
   m_GameObject: {fileID: 2164855269287153525}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.52, y: 0.25, z: 0}
+  m_LocalPosition: {x: -0.52, y: 0.2, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -58,13 +59,13 @@ CharacterController:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Height: 0.25
-  m_Radius: 0.25
+  m_Height: 0.2
+  m_Radius: 0.15
   m_SlopeLimit: 45
   m_StepOffset: 0.3
   m_SkinWidth: 0.08
   m_MinMoveDistance: 0.001
-  m_Center: {x: 0, y: 0.15, z: 0}
+  m_Center: {x: 0, y: 0.2, z: 0}
 --- !u!54 &8435007094971076137
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -120,17 +121,17 @@ MonoBehaviour:
   AddedForce: {x: 0, y: 0, z: 0}
   FreeMovement: 1
   InputMoveDirection: {x: 0, y: 0, z: 0}
-  UpdateMode: 0
+  UpdateMode: 1
   VelocityTransferMethod: 2
   ObstaclesLayerMask:
     serializedVersion: 2
     m_Bits: 1254144
-  GroundedRaycastLength: 5
+  GroundedRaycastLength: 3
   MinimumGroundedDistance: 0.2
   GroundedComputationMode: 1
   GroundNormalHeightThreshold: 0.2
   ImpactFalloff: 5
-  MaximumFallSpeed: 9.8
+  MaximumFallSpeed: 10
   SlopeSpeedMultiplier:
     serializedVersion: 2
     m_Curve:
@@ -222,14 +223,14 @@ MonoBehaviour:
   WalkSpeed: 2
   ShouldSetMovement: 1
   IdleThreshold: 0.05
-  Acceleration: 2
-  Deceleration: 2
+  Acceleration: 100
+  Deceleration: 100
   InterpolateMovementSpeed: 0
   WalkParticles: []
   TouchTheGroundParticles: []
   TouchTheGroundSfx: []
   SlimePBF: {fileID: 0}
---- !u!114 &1470542477019744586
+--- !u!114 &1489706517887540671
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -238,7 +239,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 2164855269287153525}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c752f2958a762a144a00333487ac892f, type: 3}
+  m_Script: {fileID: 11500000, guid: b6d1a1defebd3374fb81c0dca7ef1d8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   AbilityStartSfx: {fileID: 0}
@@ -251,15 +252,19 @@ MonoBehaviour:
   BlockingConditionStates: 
   BlockingWeaponStates: 
   JumpProportionalToPress: 0
-  MinimumPressTime: 0.4
-  JumpForce: 40
-  JumpHeight: 0.6
+  MinimumPressTime: 0.1
+  JumpForce: 400
+  JumpHeight: 0.8
   CanJumpOnTooSteepSlopes: 1
   ResetJumpsOnTooSteepSlopes: 0
-  NumberOfJumps: 5
+  NumberOfJumps: 1
   NumberOfJumpsLeft: 0
   JumpStartFeedback: {fileID: 0}
   JumpStopFeedback: {fileID: 0}
+  JumpImpulse: 4
+  _debugSceneLabel: 1
+  _debugOnlyWhenPlaying: 1
+  _debugWorldOffset: {x: 0, y: 2, z: 0}
 --- !u!114 &8512902080114408108
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -313,6 +318,25 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   ClimbSpeedMultiplier: 1
+--- !u!114 &-8990146840772306320
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 529b7b02b3e5cb14cad207748729173e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  initialMainVolume: 2504
+  minVolume: 500
+  maxVolume: 4096
+  updateIntervalFrames: 10
+  currentVolume: 0
+  volumePercent: 0
+  storedVolume: 0
 --- !u!114 &8866674475157012359
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -325,9 +349,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1dbb46c4fe7af244b5efa823decee93, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  bubbleSpeed: 0.1
   viscosityStrength: 10
   concentration: 50
+  baseSpeed: 1
+  maxDeformDistXZ: 1
+  maxDeformDistY: 3
+  enableCollisionDeformLimit: 1
+  enableVelocityConsistency: 1
   gravity: -5
   threshold: 2
   useAnisotropic: 1
@@ -336,22 +364,40 @@ MonoBehaviour:
   targetDensity: 1.5
   velocityDamping: 0.99
   maxVelocity: 30
-  verticalOffset: 0.05
-  emitSpeed: 30
+  manualThreshold: 1
+  verticalThreshold: 3
+  faceHeightFactor: 0.2
+  verticalOffset: 0.2
+  emitSpeed: 1
   emitAngleThreshold: 0.7
-  emitCooldown: 0.1
-  emitBatchSize: 25
-  coreRadius: 15
+  emitCooldown: 0.5
+  emitBatchSize: 80
+  coreRadius: 20
   maxParticles: 4096
-  activeParticles: 800
+  activeParticles: 2504
   recallMaxSpeed: 20
   recallMinSpeed: 2
   recallSlowdownDist: 30
+  recallAvoidance: 1
+  recallStepMaxHeight: 5
+  recallStepUpSpeed: 8
+  recallSlideWeight: 0.8
+  recallObstacleCheckDist: 3
+  recallHeightCompensation: 1
   mainRadiusScale: 1.2
   separatedRadiusScale: 0.6
   mainOverlapThreshold: 0.8
-  maxDetachedGroups: 8
-  emitSurfaceThreshold: 0.8
+  mainRadiusShrinkRate: 0.99
+  enableAutoSeparate: 1
+  minSeparateClusterSize: 30
+  separatedFadeOutParticleThreshold: 30
+  separatedFadeOutConfirmFrames: 10
+  separatedFadeOutFrames: 20
+  separateDelayFrames: 10
+  emitFreeFrames: 120
+  enableDistanceCulling: 1
+  maxParticleDistance: 200
+  distanceCullingInterval: 10
   faceMesh: {fileID: -2432090755550338912, guid: da95e641ecf8e56498a856ac1f5b5587,
     type: 3}
   faceMat: {fileID: 2100000, guid: 24cdfa6d5af709a48bb6b12867e8e7d2, type: 2}
@@ -360,7 +406,7 @@ MonoBehaviour:
   particleMat: {fileID: 2100000, guid: 8692fec3cd971cf4d8d8af04a82826ff, type: 2}
   bubblesMat: {fileID: 2100000, guid: d3ad7e9b0d79bbc4587fd6d464617cba, type: 2}
   trans: {fileID: 840677875511296776}
-  velocityController: {fileID: 5021390047149982154}
+  _slimeVolume: {fileID: -8990146840772306320}
   renderMode: 1
   blockNum: 0
   bubblesNum: 0
@@ -379,6 +425,7 @@ MonoBehaviour:
   colliderQueryRadius: 20
   colliderRefreshInterval: 3
   gridDebug: 0
-  componentDebug: 0
+  componentDebug: 1
   colliderCollectDebug: 0
+  ccaDebug: 0
   startupProfileDebug: 0

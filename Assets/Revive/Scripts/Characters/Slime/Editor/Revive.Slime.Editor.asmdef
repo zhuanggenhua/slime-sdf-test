@@ -1,0 +1,19 @@
+{
+    "name": "Revive.Slime.Editor",
+    "rootNamespace": "Revive.Slime.Editor",
+    "references": [
+        "GUID:36299c85af6d93640b17a5a87d80108a",
+        "Revive"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

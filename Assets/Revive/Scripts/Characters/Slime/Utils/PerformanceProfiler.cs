@@ -4,7 +4,7 @@ using System.Diagnostics;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
-namespace Slime
+namespace Revive.Slime
 {
     /// <summary>
     /// 性能分析器 - 用于定位卡顿原因
@@ -54,6 +54,14 @@ namespace Slime
         private static double _totalFrameTime = 0;
         private static double _maxFrameTime = 0;
         private static int _slowFrameCount = 0;
+
+        private const int EndWithoutBeginWarningIntervalFrames = 120;
+        private const int SlowFrameDetailLogIntervalFrames = 30;
+
+        private static readonly Dictionary<string, int> _endWithoutBeginLastWarningFrame = new Dictionary<string, int>();
+        private static int _lastSlowFrameDetailLogProfilerFrame = -999999;
+        private static int _lastSlowFrameDetailSignature = 0;
+        private static bool _wasSlowFrameLastProfilerFrame = false;
         
         // 当前帧的阶段执行顺序
         private static List<string> _currentFrameStages = new List<string>();
@@ -102,6 +110,14 @@ namespace Slime
             
             if (!_stages.TryGetValue(stageName, out var data))
             {
+                int currentFrame = Time.frameCount;
+                if (_endWithoutBeginLastWarningFrame.TryGetValue(stageName, out int lastWarnFrame) &&
+                    currentFrame - lastWarnFrame < EndWithoutBeginWarningIntervalFrames)
+                {
+                    return;
+                }
+
+                _endWithoutBeginLastWarningFrame[stageName] = currentFrame;
                 Debug.LogWarning($"[Profiler] End() 调用了未 Begin() 的阶段: {stageName}");
                 return;
             }
@@ -156,10 +172,17 @@ namespace Slime
                 _slowFrameCount++;
             
             // 输出详细日志
-            if (VerboseMode || (LogOnlySlowFrames && isSlowFrame))
+            if (VerboseMode)
             {
                 OutputFrameDetails(frameTime, isSlowFrame);
             }
+            else if (LogOnlySlowFrames && isSlowFrame)
+            {
+                if (ShouldLogSlowFrameDetails(frameTime))
+                    OutputFrameDetails(frameTime, true);
+            }
+
+            _wasSlowFrameLastProfilerFrame = isSlowFrame;
             
             // 定期输出汇总
             if (_frameCount % SummaryInterval == 0)
@@ -174,10 +197,14 @@ namespace Slime
         public static void Reset()
         {
             _stages.Clear();
+            _endWithoutBeginLastWarningFrame.Clear();
             _frameCount = 0;
             _totalFrameTime = 0;
             _maxFrameTime = 0;
             _slowFrameCount = 0;
+            _lastSlowFrameDetailLogProfilerFrame = -999999;
+            _lastSlowFrameDetailSignature = 0;
+            _wasSlowFrameLastProfilerFrame = false;
             _currentFrameStages.Clear();
             _activeStages.Clear();
         }
@@ -190,7 +217,7 @@ namespace Slime
             if (_frameCount == 0) return;
             
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"========== 性能分析汇总 (最近 {_frameCount} 帧) ==========");
+            sb.AppendLine($"========== 性能分析汇总 (累计 {_frameCount} 帧) ==========");
             sb.AppendLine($"帧时间: 平均={_totalFrameTime / _frameCount:F2}ms, 最大={_maxFrameTime:F2}ms");
             sb.AppendLine($"卡顿帧: {_slowFrameCount} ({100f * _slowFrameCount / _frameCount:F1}%)");
             sb.AppendLine("各阶段耗时:");
@@ -203,9 +230,11 @@ namespace Slime
             {
                 if (kvp.Value.CallCount == 0) continue;
                 
-                double avgMs = kvp.Value.TotalMs / kvp.Value.CallCount;
-                string marker = avgMs > StageTimeWarningThreshold ? " ★慢★" : "";
-                sb.AppendLine($"  [{kvp.Key}]: 平均={avgMs:F2}ms, 最大={kvp.Value.MaxMs:F2}ms, 调用={kvp.Value.CallCount}次{marker}");
+                double avgPerCallMs = kvp.Value.TotalMs / kvp.Value.CallCount;
+                double avgPerFrameMs = kvp.Value.TotalMs / _frameCount;
+                double callsPerFrame = (double)kvp.Value.CallCount / _frameCount;
+                string marker = kvp.Value.MaxMs > StageTimeWarningThreshold ? " ★慢★" : "";
+                sb.AppendLine($"  [{kvp.Key}]: 总计={kvp.Value.TotalMs:F1}ms, 每帧={avgPerFrameMs:F2}ms, 单次均值={avgPerCallMs:F2}ms, 最大={kvp.Value.MaxMs:F2}ms, 调用={kvp.Value.CallCount}次({callsPerFrame:F2}/帧){marker}");
             }
             
             sb.AppendLine("================================================");
@@ -215,6 +244,43 @@ namespace Slime
         #endregion
         
         #region 私有方法
+
+        private static bool ShouldLogSlowFrameDetails(double frameTime)
+        {
+            int signature = CalculateFrameSignature(frameTime);
+            bool isTransition = !_wasSlowFrameLastProfilerFrame;
+            bool isIntervalElapsed = _frameCount - _lastSlowFrameDetailLogProfilerFrame >= SlowFrameDetailLogIntervalFrames;
+            bool isDifferent = signature != _lastSlowFrameDetailSignature;
+
+            if (isTransition || isIntervalElapsed || isDifferent)
+            {
+                _lastSlowFrameDetailLogProfilerFrame = _frameCount;
+                _lastSlowFrameDetailSignature = signature;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int CalculateFrameSignature(double frameTime)
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = (hash * 31) ^ (int)(frameTime * 10);
+
+                foreach (var stageName in _currentFrameStages)
+                {
+                    if (_stages.TryGetValue(stageName, out var data) && data.CurrentMs > 0)
+                    {
+                        hash = (hash * 31) ^ stageName.GetHashCode();
+                        hash = (hash * 31) ^ (int)(data.CurrentMs * 10);
+                    }
+                }
+
+                return hash;
+            }
+        }
         
         private static void OutputFrameDetails(double frameTime, bool isSlowFrame)
         {
@@ -225,7 +291,7 @@ namespace Slime
             else
                 sb.Append("[帧详情] ");
             
-            sb.Append($"帧#{Time.frameCount} 总耗时={frameTime:F2}ms | ");
+            sb.Append($"帧#{Time.frameCount}({_frameCount}) 总耗时={frameTime:F2}ms | ");
             
             foreach (var stageName in _currentFrameStages)
             {

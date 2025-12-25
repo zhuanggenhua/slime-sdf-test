@@ -3,14 +3,52 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-namespace Slime
+namespace Revive.Slime
 {
     public class Reconstruction
     {
+        /// <summary>
+        /// 渲染专用 HashJob - 直接使用 Position（已是世界坐标）
+        /// </summary>
+        [BurstCompile]
+        public struct HashRenderJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<Particle> Ps;
+            [WriteOnly] public NativeArray<int2> Hashes;
+
+            public void Execute(int i)
+            {
+                // Ps 已经是世界坐标，直接使用 Position
+                float3 worldPos = Ps[i].Position;
+                int3 gridPos = PBF_Utils.GetCoord(worldPos);
+                int hash = PBF_Utils.GetKey(gridPos);
+                Hashes[i] = math.int2(hash, i);
+            }
+        }
+        
+        /// <summary>
+        /// 渲染专用 ShuffleJob - 按排序后的哈希重排粒子数组
+        /// </summary>
+        [BurstCompile]
+        public struct ShuffleRenderJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<int2> Hashes;
+            [ReadOnly] public NativeArray<Particle> PsRaw;
+            [WriteOnly] public NativeArray<Particle> PsShuffled;
+
+            public void Execute(int i)
+            {
+                int originalIndex = Hashes[i].y;
+                PsShuffled[i] = PsRaw[originalIndex];
+            }
+        }
+        
         [BurstCompile]
         public struct CalcBoundsJob : IJob
         {
             [ReadOnly] public NativeArray<Particle> Ps;
+            [ReadOnly] public NativeList<ParticleController> Controllers;
+            [ReadOnly] public NativeArray<ParticleController> SourceControllers;
             [WriteOnly] public NativeArray<float3> Bounds;
             public int ActiveCount; // 只计算活跃粒子的边界
 
@@ -21,10 +59,13 @@ namespace Slime
                 int count = ActiveCount > 0 ? ActiveCount : Ps.Length;
                 for (int i = 0; i < count; ++i)
                 {
-                    // 跳过休眠粒子（BodyState=2）
-                    if (Ps[i].BodyState == 2) continue;
-                    min = math.min(min, Ps[i].Position);
-                    max = math.max(max, Ps[i].Position);
+                    // 跳过休眠粒子
+                    if (Ps[i].Type == ParticleType.Dormant) continue;
+                    // Ps 已经是世界坐标（由 ConvertToWorldPositionsForRendering 转换）
+                    // 直接使用 Position，不再调用 GetWorldPosition
+                    float3 worldPos = Ps[i].Position;
+                    min = math.min(min, worldPos);
+                    max = math.max(max, worldPos);
                 }
 
                 Bounds[0] = min;

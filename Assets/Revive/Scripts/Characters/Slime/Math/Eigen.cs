@@ -1,6 +1,6 @@
 using Unity.Mathematics;
 
-namespace Slime
+namespace Revive.Slime
 {
     public class Eigen
     {
