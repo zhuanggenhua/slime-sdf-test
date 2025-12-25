@@ -83,3 +83,4 @@ crashlytics-build.properties
 
 # Contributers Private Assets
 /[Aa]ssets/[Pp]rivate/*
+/[Aa]ssets/[Pp]rivate.meta
