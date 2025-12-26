@@ -7,6 +7,7 @@ openspec/
 .windsurf/
 AGENTS.md
 .utmp/
+/.worktrees
 /[Ll]ibrary/
 /[Tt]emp/
 /[Oo]bj/
