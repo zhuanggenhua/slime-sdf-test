@@ -30,7 +30,8 @@ namespace Revive.Slime
         /// <summary>
         /// 休眠粒子 - 不参与模拟的备用粒子
         /// </summary>
-        Dormant = 4
+        Dormant = 4,
+        FadingOut = 5
     }
 
     // ImprovedParticle 已删除，统一使用 Particle（定义在 Jobs_Simulation_PBF.cs）

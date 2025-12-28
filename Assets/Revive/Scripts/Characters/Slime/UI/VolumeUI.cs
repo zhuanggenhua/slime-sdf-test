@@ -99,8 +99,7 @@ namespace Revive.Slime
         [ContextMenu("重置参数为默认值")]
         public void ResetToDefaults()
         {
-            int count = ConfigResetHelper.ResetToDefaults(this);
-            Debug.Log($"[VolumeUI] 已重置 {count} 个参数为默认值");
+            ConfigResetHelper.ResetToDefaults(this);
         }
     }
 }

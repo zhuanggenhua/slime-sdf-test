@@ -84,6 +84,11 @@ namespace Revive.Slime
             public void Execute(int i)
             {
                 Particle p = Ps[i];
+                if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                {
+                    MeanPos[i] = p;
+                    return;
+                }
                 float3 pos = p.Position;
                 int3 coord = PBF_Utils.GetCoord(pos);
                 float rho = 0.0f;
@@ -124,6 +129,11 @@ namespace Revive.Slime
 
             public void Execute(int i)
             {
+                if (Ps[i].Type == ParticleType.Dormant || Ps[i].Type == ParticleType.FadingOut)
+                {
+                    GMatrix[i] = float4x4.identity;
+                    return;
+                }
                 float3 pos = Ps[i].Position;
                 int3 coord = PBF_Utils.GetCoord(pos);
 
@@ -206,6 +216,8 @@ namespace Revive.Slime
                 for (int i = 0; i < count; ++i)
                 {
                     var p = Ps[i];
+                    if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                        continue;
                     int3 coord = (int3)math.floor((p.Position - MinPos) / PBF_Utils.CellSize);
                     int3 blockMin = (coord - 2) >> 2;
                     int3 blockMax = (coord + 2) >> 2;
@@ -255,7 +267,7 @@ namespace Revive.Slime
         }
 
         [BurstCompile]
-        public struct DensitySplatColoredJob : IJobParallelFor
+        public unsafe struct DensitySplatColoredJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<Particle> Ps;
             [ReadOnly] public NativeArray<float4x4> GMatrix;
@@ -272,7 +284,9 @@ namespace Revive.Slime
                 int3 basePos = PBF_Utils.GetCoord(MinPos);
                 int3 blockMin = (block * 2) + basePos;
                 int3 blockMax = (block * 2 + 1) + basePos;
-                var tempBlock = new NativeArray<float>(8 * 8 * 8, Allocator.Temp);
+                float* tempBlock = stackalloc float[8 * 8 * 8];
+                for (int t = 0; t < 8 * 8 * 8; t++)
+                    tempBlock[t] = 0f;
                 int3 tempBlockMin = block * 4 - 2;
 
                 for (int z = blockMin.z; z <= blockMax.z; ++z)
@@ -286,6 +300,8 @@ namespace Revive.Slime
                     for (int j = range.x; j < range.y; j++)
                     {
                         Particle p = Ps[j];
+                        if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                            continue;
                         float3 relativePos = p.Position - MinPos;
                         int3 centerCoord = (int3)math.floor(relativePos / PBF_Utils.CellSize);
                         for (int dz = -2; dz <= 2; ++dz)
@@ -328,8 +344,6 @@ namespace Revive.Slime
                         Grid[offset + GetLocalIndex(coord)] += tempBlock[GetTempIndex(localCoord)];
                     }
                 }
-
-                tempBlock.Dispose();
             }
 
             private int GetLocalIndex(int3 coord)
@@ -358,6 +372,8 @@ namespace Revive.Slime
                 for (int i = 0; i < Ps.Length; ++i)
                 {
                     Particle p = Ps[i];
+                    if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                        continue;
                     float3 relativePos = p.Position - MinPos;
                     int3 centerCoord = (int3)math.floor(relativePos / PBF_Utils.CellSize);
                     for (int dz = -2; dz <= 2; ++dz)
@@ -391,7 +407,7 @@ namespace Revive.Slime
         }
 
         [BurstCompile]
-        public struct DensityProjectionParallelJob : IJobParallelFor
+        public unsafe struct DensityProjectionParallelJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<Particle> Ps;
             [ReadOnly] public NativeArray<float4x4> GMatrix;
@@ -412,7 +428,9 @@ namespace Revive.Slime
                 int3 blockMin = (block * 2) + basePos;
                 // int3 blockMax = (block * 2 + 1) + basePos;
 
-                var blockTemp = new NativeArray<float>(PBF_Utils.GridSize, Allocator.Temp);
+                float* blockTemp = stackalloc float[PBF_Utils.GridSize];
+                for (int t = 0; t < PBF_Utils.GridSize; t++)
+                    blockTemp[t] = 0f;
 
                 var offset = GridLut[block];
                 for (int z = -1; z < 3; ++z)
@@ -426,6 +444,8 @@ namespace Revive.Slime
                     for (int j = range.x; j < range.y; j++)
                     {
                         Particle p = Ps[j];
+                        if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                            continue;
                         float3 relativePos = p.Position - MinPos;
                         for (int gz = math.max(0, z * 2 - 2); gz < math.min(4, z * 2 + 4); ++gz)
                         for (int gy = math.max(0, y * 2 - 2); gy < math.min(4, y * 2 + 4); ++gy)
@@ -449,8 +469,6 @@ namespace Revive.Slime
 
                 for (int j = 0; j < PBF_Utils.GridSize; j++)
                     Grid[offset + j] = blockTemp[j];
-
-                blockTemp.Dispose();
             }
 
             private int GetLocalIndex(int x, int y, int z)
@@ -460,7 +478,7 @@ namespace Revive.Slime
         }
 
         [BurstCompile]
-        public struct GridBlurJob : IJobParallelFor
+        public unsafe struct GridBlurJob : IJobParallelFor
         {
             [ReadOnly] public NativeArray<int3> Keys;
             [ReadOnly] public NativeHashMap<int3, int> GridLut;
@@ -476,7 +494,9 @@ namespace Revive.Slime
                 if (!GridLut.ContainsKey(key))
                     return;
 
-                var block = new NativeArray<float>(6 * 6 * 6, Allocator.Temp);
+                float* block = stackalloc float[6 * 6 * 6];
+                for (int t = 0; t < 6 * 6 * 6; t++)
+                    block[t] = 0f;
 
                 int3 minCoord = key * 4 - 1;
                 for (int dz = -1; dz <= 1; ++dz)
@@ -516,8 +536,6 @@ namespace Revive.Slime
 
                     GridWrite[offset + j] = sum / weight;
                 }
-
-                block.Dispose();
             }
 
             private static int3 GetLocalCoord(int index)

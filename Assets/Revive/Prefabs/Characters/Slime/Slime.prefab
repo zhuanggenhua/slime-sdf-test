@@ -19,6 +19,8 @@ GameObject:
   - component: {fileID: -904217351616132870}
   - component: {fileID: -8990146840772306320}
   - component: {fileID: 8866674475157012359}
+  - component: {fileID: -2123262804303764400}
+  - component: {fileID: -3952848528767816114}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -287,6 +289,7 @@ MonoBehaviour:
   BlockingConditionStates: 
   BlockingWeaponStates: 
   SlimePBF: {fileID: 8866674475157012359}
+  CarrySlot: {fileID: 0}
   UseShootForEmit: 1
   UseSecondaryShootForRecall: 1
   UseSwitchCharacterForSwitch: 1
@@ -318,6 +321,10 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   ClimbSpeedMultiplier: 1
+  ClimbEnterIntoWallDot: 0.05
+  ClimbEnterDirectionMemory: 0.3
+  ClimbSlideSpeedMultiplier: 0.5
+  ClimbVerticalAcceleration: 20
 --- !u!114 &-8990146840772306320
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -332,7 +339,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   initialMainVolume: 2504
   minVolume: 500
-  maxVolume: 4096
+  maxVolume: 2600
   updateIntervalFrames: 10
   currentVolume: 0
   volumePercent: 0
@@ -351,42 +358,42 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   viscosityStrength: 10
   concentration: 50
-  baseSpeed: 1
+  baseSpeed: 1.5
   maxDeformDistXZ: 1
-  maxDeformDistY: 3
+  maxDeformDistY: 2.5
   enableCollisionDeformLimit: 1
   enableVelocityConsistency: 1
   gravity: -5
   threshold: 2
   useAnisotropic: 1
-  deltaTime: 0.02
   predictStep: 0.02
   targetDensity: 1.5
   velocityDamping: 0.99
   maxVelocity: 30
-  manualThreshold: 1
-  verticalThreshold: 3
   faceHeightFactor: 0.2
   verticalOffset: 0.2
   emitSpeed: 1
   emitAngleThreshold: 0.7
-  emitCooldown: 0.5
-  emitBatchSize: 80
+  emitCooldown: 0.2
+  emitBatchSize: 50
   coreRadius: 20
-  maxParticles: 4096
+  maxParticles: 16384
   activeParticles: 2504
-  recallMaxSpeed: 20
-  recallMinSpeed: 2
-  recallSlowdownDist: 30
+  recallMaxSpeed: 2
+  recallMinSpeed: 0.1
+  recallSlowdownDist: 3
   recallAvoidance: 1
-  recallStepMaxHeight: 5
-  recallStepUpSpeed: 8
+  recallStepMaxHeight: 2
+  recallStepTriggerAdvance: 0.1
+  recallHeightCompPercent: 0.2
+  recallStepJumpSpeedScale: 1
+  recallStepMaxUpSpeed: 3
   recallSlideWeight: 0.8
-  recallObstacleCheckDist: 3
-  recallHeightCompensation: 1
-  mainRadiusScale: 1.2
+  recallObstacleCheckDist: 0.3
+  recallObstacleKeepDistanceMargin: 0.1
+  mainRadiusScale: 1.1
   separatedRadiusScale: 0.6
-  mainOverlapThreshold: 0.8
+  mainOverlapThreshold: 0.6
   mainRadiusShrinkRate: 0.99
   enableAutoSeparate: 1
   minSeparateClusterSize: 30
@@ -418,14 +425,59 @@ MonoBehaviour:
     x: 0
     y: 0
     z: 0
-  colliderLayers:
+  mainColliderCacheCapacity: 64
+  mainColliderQueryRadius: 20
+  worldStaticColliderLayers:
     serializedVersion: 2
-    m_Bits: 512
-  maxNearbyColliders: 64
-  colliderQueryRadius: 20
-  colliderRefreshInterval: 3
+    m_Bits: 0
+  worldDynamicColliderLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  dropletColliderCacheCapacity: 128
+  dropletColliderQueryRadius: 20
   gridDebug: 0
   componentDebug: 1
-  colliderCollectDebug: 0
+  fadeDebug: 0
+  colliderCollectDebug: 1
   ccaDebug: 0
   startupProfileDebug: 0
+  recallAvoidanceGizmos: 0
+--- !u!114 &-2123262804303764400
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8f5f1e6c8f6a4cbb8c1a1e0baf2fbb5b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AbilityStartSfx: {fileID: 0}
+  AbilityInProgressSfx: {fileID: 0}
+  AbilityStopSfx: {fileID: 0}
+  AbilityStartFeedbacks: {fileID: 0}
+  AbilityStopFeedbacks: {fileID: 0}
+  AbilityPermitted: 1
+  BlockingMovementStates: 
+  BlockingConditionStates: 
+  BlockingWeaponStates: 
+--- !u!114 &-3952848528767816114
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0eac5206b55348cb8dbb1cb1addf41c8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  CenterAnchor: {fileID: 0}
+  PreferSlimePbfCentroid: 1
+  HeldAnchorOffset: {x: 0, y: 0, z: 0}
+  DisableHeldColliders: 1
+  DisableGravityWhileHeld: 0
+  PostThrowIgnorePlayerCollisionSeconds: 0.1

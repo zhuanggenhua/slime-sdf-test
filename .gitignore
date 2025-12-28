@@ -2,12 +2,7 @@
 #
 # Get latest from https://github.com/github/gitignore/blob/main/Unity.gitignore
 #
-WARP.md
-openspec/
-.windsurf/
-AGENTS.md
 .utmp/
-/.worktrees
 /[Ll]ibrary/
 /[Tt]emp/
 /[Oo]bj/
@@ -81,3 +76,14 @@ crashlytics-build.properties
 
 # NuGet for Unity Packages
 /[Aa]ssets/[Pp]ackages/*
+
+# AI Config
+WARP.md
+openspec/
+.windsurf/
+AGENTS.md
+.claude/
+
+# Contributers Private Assets
+/[Aa]ssets/[Pp]rivate/*
+/[Aa]ssets/[Pp]rivate.meta

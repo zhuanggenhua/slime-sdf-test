@@ -3,8 +3,8 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
-using UnityEngine.Profiling;
-
+using UnityEngine.Profiling; 
+ 
 namespace Revive.Slime
 {
     /// <summary>
@@ -12,6 +12,7 @@ namespace Revive.Slime
     /// </summary>
     public class Slime_PBF : MonoBehaviour
     {
+        // ...
         [System.Serializable]
         public enum RenderMode
         {
@@ -37,20 +38,20 @@ namespace Revive.Slime
         private float viscosityStrength = 10f;
         
         [ChineseLabel("聚集强度"), Tooltip("控制粒子向中心聚集的力度，值越大史莱姆越紧密")]
-        [SerializeField, Range(0.1f, 100), DefaultValue(30f)] 
-        private float concentration = 30f;
+        [SerializeField, Range(0.1f, 100), DefaultValue(50f)] 
+        private float concentration = 50f;
         
         [ChineseLabel("基准速度(世界)"), Tooltip("当前参数对应的基准速度，高于此速度时动态增强聚集力")]
-        [SerializeField, Range(0.5f, 5f), DefaultValue(1f)]
-        private float baseSpeed = 1f;
+        [SerializeField, Range(0.5f, 5f), DefaultValue(1.5f)]
+        private float baseSpeed = 1.5f;
         
         [ChineseLabel("水平形变上限(世界)"), Tooltip("XZ方向粒子距离中心的最大距离，0=禁用")]
         [SerializeField, Range(0f, 2f), DefaultValue(1f)]
         private float maxDeformDistXZ = 1f;
         
         [ChineseLabel("垂直形变上限(世界)"), Tooltip("Y方向粒子距离中心的最大距离，通常比水平更小以防止落地散开")]
-        [SerializeField, Range(0f, 5f), DefaultValue(4f)]
-        private float maxDeformDistY = 4f;
+        [SerializeField, Range(0f, 5f), DefaultValue(2.5f)]
+        private float maxDeformDistY = 2.5f;
         
         [ChineseLabel("碰撞形变限制"), Tooltip("碰撞后是否应用形变上限，防止落地时过度扩展")]
         [SerializeField, DefaultValue(true)]
@@ -70,16 +71,14 @@ namespace Revive.Slime
         
         [ChineseLabel("各向异性渲染"), Tooltip("启用后表面更平滑但性能耗费更高")]
         [SerializeField, DefaultValue(true)] 
-        private bool useAnisotropic = true;
+        private bool useAnisotropic = false;
         
         #endregion
         
         #region 【模拟参数】
         
         [ChineseHeader("模拟参数")]
-        [ChineseLabel("时间步长"), Tooltip("物理模拟的时间步长")]
-        [SerializeField, Range(0.01f, 0.05f), DefaultValue(0.02f)]
-        private float deltaTime = 0.02f;
+        private float deltaTime => Time.fixedDeltaTime;
         
         [ChineseLabel("预测步长"), Tooltip("位置预测的时间步长")]
         [SerializeField, Range(0.01f, 0.05f), DefaultValue(0.02f)]
@@ -97,21 +96,13 @@ namespace Revive.Slime
         [SerializeField, Range(10f, 100f), DefaultValue(30f)]
         private float maxVelocity = 30f;
         
-        [ChineseLabel("速度阈值"), Tooltip("超过此速度的部分用刚体补偿，低于此速度用流体形变")]
-        [SerializeField, Range(0.5f, 5.0f), DefaultValue(1.8f)]
-        private float manualThreshold = 1.8f;
-        
-        [ChineseLabel("垂直阈值"), Tooltip("垂直方向速度超过此值才触发刚体补偿（世界坐标）")]
-        [SerializeField, Range(1.0f, 10.0f), DefaultValue(4.5f)]
-        private float verticalThreshold = 4.5f;
-        
         [ChineseLabel("脸部高度系数"), Tooltip("脸/眼睛在史莱姆表面的垂直位置，相对于半径的比例")]
         [SerializeField, Range(0f, 0.9f), DefaultValue(0.2f)]
         private float faceHeightFactor = 0.2f;
         
         [ChineseLabel("垂直偏移"), Tooltip("控制中心的垂直偏移系数，让史莱姆更立体")]
-        [SerializeField, Range(0f, 0.5f), DefaultValue(0.05f)]
-        private float verticalOffset = 0.05f;
+        [SerializeField, Range(0f, 0.5f), DefaultValue(0.2f)]
+        private float verticalOffset = 0.2f;
         
         #endregion
         
@@ -127,8 +118,8 @@ namespace Revive.Slime
         private float emitAngleThreshold = 0.7f;
         
         [ChineseLabel("发射冷却"), Tooltip("两次发射之间的最小间隔（秒）")]
-        [SerializeField, Range(0.05f, 1f), DefaultValue(0.15f)]
-        private float emitCooldown = 0.15f;
+        [SerializeField, Range(0.05f, 1f), DefaultValue(0.2f)]
+        private float emitCooldown = 0.2f;
         
         [ChineseLabel("发射批量"), Tooltip("单次发射的粒子数量")]
         [SerializeField, Range(1, 200), DefaultValue(50)]
@@ -146,8 +137,8 @@ namespace Revive.Slime
         
         [ChineseHeader("控制器参数")]
         [ChineseLabel("核心范围"), Tooltip("此范围内的粒子被认为是主体")]
-        [SerializeField, Range(5f, 30f), DefaultValue(15f)]
-        private float coreRadius = 15f;
+        [SerializeField, Range(5f, 30f), DefaultValue(20f)]
+        private float coreRadius = 20f;
         
         #endregion
         
@@ -167,49 +158,57 @@ namespace Revive.Slime
         #region 【召回参数】
         
         [ChineseHeader("召回参数")]
-        [ChineseLabel("召回最大速度"), Tooltip("远距离时的召回速度")]
-        [SerializeField, Range(10f, 40f), DefaultValue(20f)]
-        private float recallMaxSpeed = 20f;
+        [ChineseLabel("召回最大速度"), Tooltip("远距离时的召回速度（米/秒，世界坐标）")]
+        [SerializeField, Range(0.5f, 10f), DefaultValue(5f)]
+        private float recallMaxSpeed = 5f;
         
-        [ChineseLabel("召回最小速度"), Tooltip("靠近主体时的召回速度")]
-        [SerializeField, Range(1f, 10f), DefaultValue(2f)]
-        private float recallMinSpeed = 2f;
+        [ChineseLabel("召回最小速度"), Tooltip("靠近主体时的召回速度（米/秒，世界坐标）")]
+        [SerializeField, Range(0.1f, 5f), DefaultValue(0.5f)]
+        private float recallMinSpeed = 0.5f;
         
-        [ChineseLabel("减速开始距离"), Tooltip("开始从最大速度减速到最小速度的距离")]
-        [SerializeField, Range(10f, 60f), DefaultValue(30f)]
-        private float recallSlowdownDist = 30f;
+        [ChineseLabel("减速开始距离"), Tooltip("开始从最大速度减速到最小速度的距离（米，世界坐标）")]
+        [SerializeField, Range(0.5f, 10f), DefaultValue(3f)]
+        private float recallSlowdownDist = 3f;
         
         [ChineseHeader("召回避障")]
         [ChineseLabel("启用避障"), Tooltip("召回时自动绕开障碍物")]
         [SerializeField, DefaultValue(true)]
         private bool recallAvoidance = true;
         
-        [ChineseLabel("台阶最大高度"), Tooltip("可自动跨越的台阶高度（模拟坐标）")]
-        [SerializeField, Range(1f, 10f), DefaultValue(5f)]
-        private float recallStepMaxHeight = 5f;
-        
-        [ChineseLabel("台阶上抬速度"), Tooltip("跨越台阶时的向上速度")]
-        [SerializeField, Range(1f, 10f), DefaultValue(4f)]
-        private float recallStepUpSpeed = 4f;
+        [ChineseLabel("台阶最大高度"), Tooltip("可自动跨越的台阶高度（米，世界坐标）")]
+        [SerializeField, Range(0f, 10f), DefaultValue(3f)]
+        private float recallStepMaxHeight = 3f;
+
+        [ChineseLabel("台阶提前触发距离"), Tooltip("距离障碍物此距离内判定为台阶可起跳（米，世界坐标）")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.1f)]
+        private float recallStepTriggerAdvance = 0.1f;
+
+        [ChineseLabel("台阶高度补偿百分比"), Tooltip("在实际台阶高度基础上额外上抬的百分比")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.2f)]
+        private float recallHeightCompPercent = 0.2f;
+
+        [ChineseLabel("台阶起跳速度倍率"), Tooltip("基于物理高度计算的起跳速度再乘以该倍率")]
+        [SerializeField, Range(0.2f, 3f), DefaultValue(1f)]
+        private float recallStepJumpSpeedScale = 1f;
+
+        [ChineseLabel("台阶最大上抬速度"), Tooltip("台阶跳跃时向上速度上限（米/秒，世界坐标）")]
+        [SerializeField, Range(0.1f, 20f), DefaultValue(3f)]
+        private float recallStepMaxUpSpeed = 3f;
         
         [ChineseLabel("贴墙滑动权重"), Tooltip("沿障碍物表面滑动的权重")]
         [SerializeField, Range(0f, 1f), DefaultValue(0.8f)]
         private float recallSlideWeight = 0.8f;
         
-        [ChineseLabel("障碍检测距离"), Tooltip("前方检测障碍物的距离（模拟坐标）")]
-        [SerializeField, Range(1f, 10f), DefaultValue(3f)]
-        private float recallObstacleCheckDist = 3f;
+        [ChineseLabel("障碍检测距离"), Tooltip("前方检测障碍物的距离（米，世界坐标）")]
+        [SerializeField, Range(0.1f, 5f), DefaultValue(0.3f)]
+        private float recallObstacleCheckDist = 0.3f;
 
-        [ChineseLabel("投影保持距离边距"), Tooltip("召回被墙阻挡时，目标点在墙前额外保持的距离（模拟坐标）")]
-        [SerializeField, Range(0f, 2f), DefaultValue(0.2f)]
-        private float recallObstacleKeepDistanceMargin = 0.2f;
-        
-        [ChineseLabel("高度差补偿系数"), Tooltip("主体比分离组高时，额外向上力 = 高度差 × 此系数")]
-        [SerializeField, Range(0.1f, 3f), DefaultValue(1f)]
-        private float recallHeightCompensation = 1f;
-        
+        [ChineseLabel("投影保持距离边距"), Tooltip("召回被墙阻挡时，目标点在墙前额外保持的距离（米，世界坐标）")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.1f)]
+        private float recallObstacleKeepDistanceMargin = 0.1f;
+
         #endregion
-        
+
         #region 【CCA控制器参数】
         
         [ChineseHeader("CCA控制器参数")]
@@ -278,9 +277,6 @@ namespace Revive.Slime
         
         #endregion
         
-        // 启动耗时调试用
-        private double startupT0;
-        
         #region 【渲染资源】
         
         [ChineseHeader("渲染资源")]
@@ -333,28 +329,39 @@ namespace Revive.Slime
         
         [Tooltip("边界最大点")]
         public float3 maxPos;
+
+        public Vector3 MainBodyCentroidWorld => _mainBodyCentroidWorld;
+
+        private Vector3 _mainBodyCentroidWorld;
         
         #endregion
         
-        #region 【碰撞体采集设置】
+        #region 【碰撞体查询设置】
         
-        [ChineseHeader("碰撞体采集设置（近场缓存）")]
-        [ChineseLabel("碰撞体Layer筛选"), Tooltip("只采集指定Layer的碰撞器")]
-        [SerializeField]
-        private LayerMask colliderLayers = ~0;  // 默认所有Layer
-        
-        [ChineseLabel("最大碰撞体数"), Tooltip("近场缓存的最大碰撞体容量，越大开销越高")]
+        [ChineseHeader("碰撞体查询设置（索引缓存）")]
+        [ChineseLabel("主体缓存容量"), Tooltip("主体PBF使用的碰撞体缓存容量（由索引查询填充），越大开销越高")]
         [SerializeField, Range(16, 128), DefaultValue(64)]
-        private int maxNearbyColliders = 64;
+        private int mainColliderCacheCapacity = 64;
         
-        [ChineseLabel("查询半径"), Tooltip("以史莱姆为中心查询碰撞体的半径（世界坐标）")]
+        [ChineseLabel("主体查询半径"), Tooltip("以史莱姆为中心进行索引查询的半径（米，世界坐标）")]
         [SerializeField, Range(5f, 50f), DefaultValue(20f)]
-        private float colliderQueryRadius = 20f;
+        private float mainColliderQueryRadius = 20f;
         
-        [ChineseLabel("刷新间隔帧数"), Tooltip("每N帧刷新一次近场碰撞体，值越小越及时但开销越高")]
-        [SerializeField, Range(1, 10), DefaultValue(3)]
-        private int colliderRefreshInterval = 3;
+        [SerializeField]
+        private LayerMask worldStaticColliderLayers;
         
+        [SerializeField]
+        private LayerMask worldDynamicColliderLayers;
+
+        private int ColliderQueryMask => (worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers.value : ~0) | worldDynamicColliderLayers.value;
+        
+        [Header("Droplet Collider Query (Independent Cache)")]
+        [SerializeField, Range(16, 512), DefaultValue(128)]
+        private int dropletColliderCacheCapacity = 128;
+        
+        [SerializeField, Range(5f, 80f), DefaultValue(20f)]
+        private float dropletColliderQueryRadius = 20f;
+
         #endregion
         
         #region 【调试设置】
@@ -363,17 +370,14 @@ namespace Revive.Slime
         [Tooltip("显示网格调试信息")]
         public bool gridDebug;
         
-        [Tooltip("显示组件调试信息（史莱姆分离检测）")]
-        public bool componentDebug;
-
-        [Tooltip("输出碰撞体采集调试信息（会产生大量日志，影响启动性能）")]
+        [Tooltip("显示近场碰撞体线框")]
         public bool colliderCollectDebug;
         
         [Tooltip("显示CCA组件边界盒")]
         public bool ccaDebug;
 
-        [Tooltip("输出启动分段耗时（一次性），用于定位点击Play卡顿原因")]
-        public bool startupProfileDebug;
+        [Tooltip("显示召回避障 SphereCast 调试线框")]
+        public bool recallAvoidanceGizmos;
         
         #endregion
         
@@ -395,24 +399,49 @@ namespace Revive.Slime
         private NativeArray<float3> _clampDelta; // 【P4】钳制位移量，用于速度回算修正
         private NativeArray<float3> _velocityBuffer;
         private NativeArray<float3> _velocityTempBuffer;
+        private NativeArray<int2> _renderHashesBuffer;
         
         // PBF物理系统（封装了_lut, _hashes, _posPredict, _lambdaBuffer等缓冲区）
-        private Physics.PBFSystem _pbfSystem;
+        private PBFSystem _pbfSystem;
         
         // 渲染专用缓冲区（独立于物理）
         private NativeHashMap<int, int2> _renderLut; // 渲染专用邻域表
         private NativeArray<float4x4> _covBuffer;
         private NativeArray<MyBoxCollider> _colliderBuffer;
         private int _currentColliderCount; // 当前有效碰撞体数量
-        private int _colliderRefreshTimer; // 碰撞体刷新计时器
-        private Collider[] _overlapResults; // Physics.OverlapSphereNonAlloc 的结果缓冲
-        
+        private RaycastHit[] _raycastHits;
+        private RaycastHit[] _sphereCastHits;
+
+        private int _dbgRecallSphereCastFrame;
+        private Vector3 _dbgRecallSphereOriginW;
+        private Vector3 _dbgRecallSphereDirW;
+        private float _dbgRecallSphereRadiusW;
+        private float _dbgRecallSphereCastDistW;
+        private bool _dbgRecallSphereHitRaw;
+        private bool _dbgRecallSphereHitFinal;
+        private bool _dbgRecallSphereHitFilteredByNormal;
+        private Vector3 _dbgRecallSphereHitPointW;
+        private Vector3 _dbgRecallSphereHitNormalW;
+
+        private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
+
+        private NativeArray<MyBoxCollider> _dropletColliderBuffer;
+        private int _currentDropletColliderCount;
+        private readonly HashSet<int> _dropletColliderInstanceIds = new HashSet<int>(256);
+
         private NativeArray<float3> _boundsBuffer;
         private NativeArray<float> _gridBuffer;
         private NativeArray<float> _gridTempBuffer;
         private NativeHashMap<int3, int> _gridLut;
+        private NativeArray<float> _dropletGridBuffer;
+        private NativeArray<float> _dropletGridTempBuffer;
+        private NativeHashMap<int3, int> _dropletGridLut;
+        private NativeArray<int> _dropletGridIDBuffer;
         private NativeArray<int4> _blockBuffer;
         private NativeArray<int> _blockColorBuffer;
+
+        private NativeArray<int4> _dropletBlockBuffer;
+        private NativeArray<int> _dropletBlockColorBuffer;
         
         private NativeArray<Effects.Bubble> _bubblesBuffer;
         private NativeList<int> _bubblesPoolBuffer;
@@ -435,6 +464,7 @@ namespace Revive.Slime
         private DropletSubsystem _dropletSubsystem;
 
         private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
+        private NativeParallelMultiHashMap<int, int> _mergeAbsorbLut;
         private NativeArray<int> _autoSeparateClusterCounts;
         private NativeArray<float3> _autoSeparateClusterCenters;
         
@@ -445,15 +475,19 @@ namespace Revive.Slime
         private float3 _velocityY = float3.zero;
         private Bounds _bounds;
         private Vector3 _velocity = Vector3.zero;
-        private float3 _v_soft; // 限速后的流体驱动速度（内部坐标）
-        private float3 _prevVelocitySim; // 上帧速度（模拟坐标），用于折返检测
-        private bool _thresholdTriggered; // 阈值是否触发，用于决定控制器Velocity
         private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
         private float _lastMainRadius; // 用于 mainRadius 防抖
         private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
 
         private LMarchingCubes _marchingCubes;
         private Mesh _mesh;
+
+        private LMarchingCubes _marchingCubesDroplet;
+        private Mesh _dropletMesh;
+        private Bounds _dropletBounds;
+
+        private Camera _cachedMainCamera;
+        private UnityEngine.Plane[] _cachedFrustumPlanes;
         
         private bool _connect;
         private float _connectStartTime;
@@ -469,6 +503,7 @@ namespace Revive.Slime
         private int[] _controllerFadePerFrame;
         private int[] _controllerFadeBudget;
 
+        private float[] _controllerStepJumpTargetCenterY;
 
         // Job System 批处理大小
         private const int batchCount = 64;
@@ -489,10 +524,13 @@ namespace Revive.Slime
 
             
             // 初始化碰撞体缓冲区（必须在Awake中，避免FixedUpdate先于Start执行）
-            _colliderBuffer = new NativeArray<MyBoxCollider>(maxNearbyColliders, Allocator.Persistent);
-            _overlapResults = new Collider[maxNearbyColliders];
+            _colliderBuffer = new NativeArray<MyBoxCollider>(mainColliderCacheCapacity, Allocator.Persistent);
+            _raycastHits = new RaycastHit[16];
+            _sphereCastHits = new RaycastHit[16];
             _currentColliderCount = 0;
-            _colliderRefreshTimer = 0;
+
+            _dropletColliderBuffer = new NativeArray<MyBoxCollider>(dropletColliderCacheCapacity, Allocator.Persistent);
+            _currentDropletColliderCount = 0;
 
             _boundsBuffer = new NativeArray<float3>(2, Allocator.Persistent);
 
@@ -508,34 +546,11 @@ namespace Revive.Slime
         {
             if (!PrepareRecallEligibleControllers())
             {
-                if (componentDebug)
-                    Debug.Log("[Recall] 无可召回目标");
                 return;
             }
 
             _connect = true;
             _connectStartTime = Time.time;
-            if (componentDebug)
-            {
-                int eligibleCount = 0;
-                int sampleCount = 0;
-                string sample = string.Empty;
-                if (_recallEligibleStableIds.IsCreated)
-                {
-                    for (int i = 1; i < _recallEligibleStableIds.Length; i++)
-                    {
-                        if (_recallEligibleStableIds[i] == 0)
-                            continue;
-                        eligibleCount++;
-                        if (sampleCount < 8)
-                        {
-                            sample = sampleCount == 0 ? i.ToString() : sample + "," + i;
-                            sampleCount++;
-                        }
-                    }
-                }
-                Debug.Log($"[Recall] 启动CCA融合回收 eligible={eligibleCount} sample={sample}");
-            }
         }
 
         private bool PrepareRecallEligibleControllers()
@@ -566,7 +581,7 @@ namespace Revive.Slime
                 var p = _particles[i];
                 if (p.SourceId >= 0)
                     continue;
-                if (p.Type != ParticleType.Separated)
+                if (p.Type != ParticleType.Separated && p.Type != ParticleType.Emitted)
                     continue;
                 if (p.FreeFrames > 0)
                     continue;
@@ -575,13 +590,16 @@ namespace Revive.Slime
                     continue;
                 if (sid < 0 || sid >= _recallEligibleStableIds.Length)
                     continue;
-                _recallEligibleStableIds[sid] = 1;
+                if (_recallEligibleStableIds[sid] == 0)
+                {
+                    GetOrCreateControllerIdForStableId(sid);
+                    _recallEligibleStableIds[sid] = 1;
+                }
                 hasAny = true;
             }
 
             return hasAny;
         }
-        
         public void SwitchInstance()
         {
             for (int i = 0; i < _slimeInstances.Length; i++)
@@ -611,6 +629,7 @@ namespace Revive.Slime
                 mainCenter = (float3)(trans.position * PBF_Utils.InvScale);
 
             int controllerCount = _controllerBuffer.Length;
+
             if (_controllerSmallSeparatedFrames == null || _controllerSmallSeparatedFrames.Length < controllerCount)
                 _controllerSmallSeparatedFrames = new int[controllerCount];
             if (_controllerFadeRemainingFrames == null || _controllerFadeRemainingFrames.Length < controllerCount)
@@ -642,6 +661,27 @@ namespace Revive.Slime
                         {
                             _controllerFadeRemainingFrames[c] = separatedFadeOutFrames;
                             _controllerFadePerFrame[c] = math.max(1, (count + separatedFadeOutFrames - 1) / separatedFadeOutFrames);
+
+                            for (int i = 0; i < activeParticles; i++)
+                            {
+                                var p = _particles[i];
+                                if (p.SourceId >= 0)
+                                    continue;
+                                if (p.FreeFrames > 0)
+                                    continue;
+                                if (p.ControllerId != c)
+                                    continue;
+
+                                if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant || p.Type == ParticleType.SceneDroplet)
+                                    continue;
+
+                                p.Type = ParticleType.FadingOut;
+                                p.ClusterId = 0;
+                                _particles[i] = p;
+
+                                if (_velocityBuffer.IsCreated && i < _velocityBuffer.Length)
+                                    _velocityBuffer[i] = float3.zero;
+                            }
                         }
                     }
                     else
@@ -673,9 +713,98 @@ namespace Revive.Slime
                     continue;
                 int cid = p.ControllerId;
                 if (cid <= 0 || cid >= controllerCount)
+                {
+                    if (p.Type != ParticleType.FadingOut)
+                        continue;
+
+                    ParticleStateManager.SetDormant(ref p);
+                    _particles[i] = p;
+
+                    if (i < activeParticles - 1)
+                    {
+                        ParticleStateManager.SwapParticles(ref _particles, i, activeParticles - 1);
+                        var tempVel = _velocityBuffer[i];
+                        _velocityBuffer[i] = _velocityBuffer[activeParticles - 1];
+                        _velocityBuffer[activeParticles - 1] = tempVel;
+                    }
+
+                    activeParticles--;
+
+                    if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
+                    {
+                        float3 offset = new float3(
+                            UnityEngine.Random.value - 0.5f,
+                            UnityEngine.Random.value - 0.5f,
+                            UnityEngine.Random.value - 0.5f
+                        ) * (PBF_Utils.h * 0.5f);
+
+                        _particles[activeParticles] = new Particle
+                        {
+                            Position = mainCenter + offset,
+                            Type = ParticleType.MainBody,
+                            ControllerId = 0,
+                            StableId = 0,
+                            SourceId = -1,
+                            ClusterId = 0,
+                            FreeFrames = 0,
+                            FramesOutsideMain = 0,
+                        };
+                        _velocityBuffer[activeParticles] = float3.zero;
+                        activeParticles++;
+                    }
+
+                    if (i < activeParticles)
+                        i++;
                     continue;
+                }
+
                 if (_controllerFadeBudget[cid] <= 0)
+                {
+                    if (p.Type != ParticleType.FadingOut)
+                        continue;
+                    if (_controllerFadeRemainingFrames[cid] > 0)
+                        continue;
+
+                    ParticleStateManager.SetDormant(ref p);
+                    _particles[i] = p;
+
+                    if (i < activeParticles - 1)
+                    {
+                        ParticleStateManager.SwapParticles(ref _particles, i, activeParticles - 1);
+                        var tempVel = _velocityBuffer[i];
+                        _velocityBuffer[i] = _velocityBuffer[activeParticles - 1];
+                        _velocityBuffer[activeParticles - 1] = tempVel;
+                    }
+
+                    activeParticles--;
+
+                    if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
+                    {
+                        float3 offset = new float3(
+                            UnityEngine.Random.value - 0.5f,
+                            UnityEngine.Random.value - 0.5f,
+                            UnityEngine.Random.value - 0.5f
+                        ) * (PBF_Utils.h * 0.5f);
+
+                        _particles[activeParticles] = new Particle
+                        {
+                            Position = mainCenter + offset,
+                            Type = ParticleType.MainBody,
+                            ControllerId = 0,
+                            StableId = 0,
+                            SourceId = -1,
+                            ClusterId = 0,
+                            FreeFrames = 0,
+                            FramesOutsideMain = 0,
+                        };
+                        _velocityBuffer[activeParticles] = float3.zero;
+                        activeParticles++;
+                    }
+
+                    if (i < activeParticles)
+                        i++;
                     continue;
+                }
 
                 ParticleStateManager.SetDormant(ref p);
                 _particles[i] = p;
@@ -713,6 +842,9 @@ namespace Revive.Slime
                     _velocityBuffer[activeParticles] = float3.zero;
                     activeParticles++;
                 }
+
+                if (i < activeParticles)
+                    i++;
             }
 
             for (int c = 1; c < controllerCount; c++)
@@ -732,14 +864,6 @@ namespace Revive.Slime
         
         void Start()
         {
-            double startupPrev = 0;
-            if (startupProfileDebug)
-            {
-                startupT0 = Time.realtimeSinceStartupAsDouble;
-                startupPrev = startupT0;
-                Debug.Log("[Startup] Slime_PBF.Start begin");
-            }
-
             // 使用 maxParticles 替代 PBF_Utils.Num
             _particles = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
             _particlesRenderBuffer = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
@@ -749,8 +873,6 @@ namespace Revive.Slime
             if (_slimeVolume != null)
             {
                 initialMainCount = Mathf.Min(_slimeVolume.initialMainVolume, maxParticles);
-                if (startupProfileDebug)
-                    Debug.Log($"[Slime_PBF] 初始主体粒子数: {initialMainCount} / {maxParticles}");
             }
             // 主体粒子分区为[0-8191]，最大8192个
             initialMainCount = Mathf.Min(initialMainCount, 8192);
@@ -807,40 +929,6 @@ namespace Revive.Slime
             
             // === 【初始化诊断】输出粒子分布信息 ===
             {
-                float3 minPos = new float3(float.MaxValue, float.MaxValue, float.MaxValue);
-                float3 maxPos = new float3(float.MinValue, float.MinValue, float.MinValue);
-                int mainBodyCount = 0, dormantCount = 0;
-                
-                for (int pi = 0; pi < _particles.Length; pi++)
-                {
-                    var p = _particles[pi];
-                    if (p.Type == ParticleType.MainBody)
-                    {
-                        mainBodyCount++;
-                        minPos = math.min(minPos, p.Position);
-                        maxPos = math.max(maxPos, p.Position);
-                    }
-                    else if (p.Type == ParticleType.Dormant)
-                    {
-                        dormantCount++;
-                    }
-                }
-                
-                float3 center = (minPos + maxPos) * 0.5f;
-                float3 extent = maxPos - minPos;
-                
-                Debug.Log($"[初始化诊断] trans.pos={trans?.position}, spawnCenter(模拟)={spawnCenter}\n" +
-                         $"  initialMainCount={initialMainCount}, 实际MainBody={mainBodyCount}, Dormant={dormantCount}\n" +
-                         $"  粒子范围: min={minPos}, max={maxPos}\n" +
-                         $"  粒子中心={center}, 跨度={extent}\n" +
-                         $"  循环参数: cubeSize={cubeSize}, cubeHalf={cubeHalf}");
-            }
-
-            if (startupProfileDebug)
-            {
-                double now = Time.realtimeSinceStartupAsDouble;
-                Debug.Log($"[Startup] InitParticles {(now - startupPrev) * 1000.0:F1}ms");
-                startupPrev = now;
             }
             
             // 收集场景中的所有 SceneDropletSource
@@ -849,26 +937,22 @@ namespace Revive.Slime
             
             if (allSources.Count > 0)
             {
-                if (startupProfileDebug || componentDebug)
-                    // 找到场景水珠源
+                // 找到场景水珠源
                 foreach (var source in allSources)
                 {
                     source.Reset(); // 重置到休眠状态
                 }
             }
 
-            if (startupProfileDebug)
-            {
-                double now = Time.realtimeSinceStartupAsDouble;
-                Debug.Log($"[Startup] FindDropWater {(now - startupPrev) * 1000.0:F1}ms");
-                startupPrev = now;
-            }
 
-            _colliderRefreshTimer = colliderRefreshInterval;
-            _overlapResults = new Collider[maxNearbyColliders * 2]; // 预分配足够大的缓冲
+            var worldIndex = SlimeWorldColliderIndex.GetOrCreate();
+            LayerMask staticLayers = worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers : (LayerMask)(~0);
+            LayerMask dynamicLayers = worldDynamicColliderLayers;
+            worldIndex.Configure(staticLayers, dynamicLayers, includeTriggerColliders: false);
+            worldIndex.Rebuild();
             
             // 初始化PBF物理系统（主体配置）
-            _pbfSystem = new Physics.PBFSystem(Physics.PBFSystem.Config.MainBody);
+            _pbfSystem = new PBFSystem(PBFSystem.Config.MainBody);
             
             // 原始数据
             _particlesTemp = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
@@ -879,6 +963,7 @@ namespace Revive.Slime
             _renderLut = new NativeHashMap<int, int2>(maxParticles * 8, Allocator.Persistent);
 
             _mergeMainBodyLut = new NativeParallelMultiHashMap<int, int>(DropletSubsystem.DROPLET_START, Allocator.Persistent);
+            _mergeAbsorbLut = new NativeParallelMultiHashMap<int, int>(DropletSubsystem.DROPLET_START, Allocator.Persistent);
             _autoSeparateClusterCounts = new NativeArray<int>(256, Allocator.Persistent);
             _autoSeparateClusterCenters = new NativeArray<float3>(256, Allocator.Persistent);
             
@@ -888,9 +973,15 @@ namespace Revive.Slime
             _gridBuffer = new NativeArray<float>(PBF_Utils.GridSize * gridNumExpanded, Allocator.Persistent);
             _gridTempBuffer = new NativeArray<float>(PBF_Utils.GridSize * gridNumExpanded, Allocator.Persistent);
             _gridLut = new NativeHashMap<int3, int>(gridNumExpanded, Allocator.Persistent);
+            _dropletGridBuffer = new NativeArray<float>(PBF_Utils.GridSize * gridNumExpanded, Allocator.Persistent);
+            _dropletGridTempBuffer = new NativeArray<float>(PBF_Utils.GridSize * gridNumExpanded, Allocator.Persistent);
+            _dropletGridLut = new NativeHashMap<int3, int>(gridNumExpanded, Allocator.Persistent);
             _covBuffer = new NativeArray<float4x4>(maxParticles, Allocator.Persistent);
             _blockBuffer = new NativeArray<int4>(gridNumExpanded, Allocator.Persistent);
             _blockColorBuffer = new NativeArray<int>(9, Allocator.Persistent);
+
+            _dropletBlockBuffer = new NativeArray<int4>(gridNumExpanded, Allocator.Persistent);
+            _dropletBlockColorBuffer = new NativeArray<int>(9, Allocator.Persistent);
             
             _bubblesBuffer  = new NativeArray<Effects.Bubble>(PBF_Utils.BubblesCount, Allocator.Persistent);
             _bubblesPoolBuffer = new NativeList<int>(PBF_Utils.BubblesCount, Allocator.Persistent);
@@ -906,6 +997,7 @@ namespace Revive.Slime
             
             _componentsBuffer = new NativeList<Effects.Component>(16, Allocator.Persistent);
             _gridIDBuffer = new NativeArray<int>(_gridBuffer.Length, Allocator.Persistent);
+            _dropletGridIDBuffer = new NativeArray<int>(_dropletGridBuffer.Length, Allocator.Persistent);
             _prevGridStableId = new NativeArray<int>(_gridBuffer.Length, Allocator.Persistent);
             _controllerBuffer = new NativeList<ParticleController>(16, Allocator.Persistent);
             
@@ -922,13 +1014,8 @@ namespace Revive.Slime
             _controllerBuffer.Add(initialController);
 
             _marchingCubes = new LMarchingCubes();
+            _marchingCubesDroplet = new LMarchingCubes();
 
-            if (startupProfileDebug)
-            {
-                double now = Time.realtimeSinceStartupAsDouble;
-                Debug.Log($"[Startup] AllocateBuffers+MarchingCubes {(now - startupPrev) * 1000.0:F1}ms");
-                startupPrev = now;
-            }
 
             _particleRenderer = new SlimeParticleRenderer(particleMat, particleMesh, maxParticles);
             _bubblesDataBuffer = new ComputeBuffer(PBF_Utils.BubblesCount, sizeof(float) * 8);
@@ -955,18 +1042,10 @@ namespace Revive.Slime
             int sourceCapacityForDroplets = math.max(1, allSources.Count);
             _dropletSubsystem.Initialize(_particles, _velocityBuffer, sourceCapacityForDroplets);
             
-            if (startupProfileDebug)
-            {
-                double now = Time.realtimeSinceStartupAsDouble;
-                Debug.Log($"[Startup] InitColliderBuffer (NearbyCache) capacity={maxNearbyColliders}");
-                startupPrev = now;
-            }
             
             // 首次刷新近场碰撞体
-            RefreshNearbyColliders();
-            
-            if (startupProfileDebug || colliderCollectDebug)
-                Debug.Log($"[碰撞体采集] 近场缓存初始化完成，当前有效碰撞体数={_currentColliderCount}/{maxNearbyColliders}");
+            RefreshMainNearbyColliders();
+            RefreshDropletNearbyColliders();
 
             if (_slimeVolume == null)
             {
@@ -977,11 +1056,6 @@ namespace Revive.Slime
                 _slimeVolume.UpdateFromParticles(_particles, true);
             }
 
-            if (startupProfileDebug)
-            {
-                double now = Time.realtimeSinceStartupAsDouble;
-                Debug.Log($"[Startup] Total {(now - startupT0) * 1000.0:F1}ms");
-            }
         }
 
         private void OnDestroy()
@@ -989,13 +1063,15 @@ namespace Revive.Slime
             if (_particles.IsCreated) _particles.Dispose();
             if (_particlesRenderBuffer.IsCreated) _particlesRenderBuffer.Dispose();
             if (_particlesTemp.IsCreated) _particlesTemp.Dispose();
+            if (_renderHashesBuffer.IsCreated) _renderHashesBuffer.Dispose();
             if (_renderLut.IsCreated) _renderLut.Dispose();
             if (_posOld.IsCreated) _posOld.Dispose();
-            if (_clampDelta.IsCreated) _clampDelta.Dispose(); // 【P4】
+            if (_clampDelta.IsCreated) _clampDelta.Dispose();
             if (_velocityBuffer.IsCreated) _velocityBuffer.Dispose();
             if (_velocityTempBuffer.IsCreated) _velocityTempBuffer.Dispose();
 
             if (_mergeMainBodyLut.IsCreated) _mergeMainBodyLut.Dispose();
+            if (_mergeAbsorbLut.IsCreated) _mergeAbsorbLut.Dispose();
             if (_autoSeparateClusterCounts.IsCreated) _autoSeparateClusterCounts.Dispose();
             if (_autoSeparateClusterCenters.IsCreated) _autoSeparateClusterCenters.Dispose();
             
@@ -1004,20 +1080,27 @@ namespace Revive.Slime
             if (_boundsBuffer.IsCreated) _boundsBuffer.Dispose();
             if (_gridBuffer.IsCreated) _gridBuffer.Dispose();
             if (_gridTempBuffer.IsCreated) _gridTempBuffer.Dispose();
+            if (_dropletGridBuffer.IsCreated) _dropletGridBuffer.Dispose();
+            if (_dropletGridTempBuffer.IsCreated) _dropletGridTempBuffer.Dispose();
             if (_covBuffer.IsCreated) _covBuffer.Dispose();
             if (_gridLut.IsCreated) _gridLut.Dispose();
+            if (_dropletGridLut.IsCreated) _dropletGridLut.Dispose();
             if (_blockBuffer.IsCreated) _blockBuffer.Dispose();
             if (_blockColorBuffer.IsCreated) _blockColorBuffer.Dispose();
+            if (_dropletBlockBuffer.IsCreated) _dropletBlockBuffer.Dispose();
+            if (_dropletBlockColorBuffer.IsCreated) _dropletBlockColorBuffer.Dispose();
             if (_bubblesBuffer.IsCreated) _bubblesBuffer.Dispose();
             if (_bubblesPoolBuffer.IsCreated) _bubblesPoolBuffer.Dispose();
             if (_componentsBuffer.IsCreated) _componentsBuffer.Dispose();
             if (_gridIDBuffer.IsCreated) _gridIDBuffer.Dispose();
+            if (_dropletGridIDBuffer.IsCreated) _dropletGridIDBuffer.Dispose();
             if (_prevGridStableId.IsCreated) _prevGridStableId.Dispose();
             if (_controllerBuffer.IsCreated) _controllerBuffer.Dispose();
             if (_stableIdToSlot.IsCreated) _stableIdToSlot.Dispose();
             if (_recallEligibleStableIds.IsCreated) _recallEligibleStableIds.Dispose();
             if (_slimeInstances.IsCreated) _slimeInstances.Dispose();
             if (_colliderBuffer.IsCreated)  _colliderBuffer.Dispose();
+            if (_dropletColliderBuffer.IsCreated) _dropletColliderBuffer.Dispose();
             if (_sourceControllers.IsCreated) _sourceControllers.Dispose();
             
             // 释放场景水珠子系统
@@ -1027,6 +1110,12 @@ namespace Revive.Slime
             {
                 _marchingCubes.Dispose();
                 _marchingCubes = null;
+            }
+
+            if (_marchingCubesDroplet != null)
+            {
+                _marchingCubesDroplet.Dispose();
+                _marchingCubesDroplet = null;
             }
 
             _particleRenderer?.Dispose();
@@ -1044,44 +1133,6 @@ namespace Revive.Slime
         {
             // 更新场景水珠源的激活状态
             UpdateSceneDropletSources();
-            
-            // 定期输出状态信息
-            if (componentDebug && Time.frameCount % 300 == 0)
-            {
-                if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
-                {
-                    var ctrl = _controllerBuffer[0];
-                    Debug.Log($"[Status] 控制器: Center={ctrl.Center}, Radius={ctrl.Radius:F2}");
-                }
-                
-                // 计算粒子分布（区分主体和场景水珠）
-                if (_particles.IsCreated && activeParticles > 0)
-                {
-                    float3 mainCenter = _controllerBuffer[0].Center;
-                    float mainMinDist = float.MaxValue, mainMaxDist = 0;
-                    float dropletMinDist = float.MaxValue, dropletMaxDist = 0;
-                    int mainCount = 0, dropletCount = 0;
-                    int count = math.min(activeParticles, _particles.Length);
-                    for (int i = 0; i < count; i++)
-                    {
-                        var p = _particles[i];
-                        float dist = math.length(p.Position - mainCenter);  // 世界坐标：计算到中心距离
-                        if (p.Type == ParticleType.MainBody)
-                        {
-                            mainMinDist = math.min(mainMinDist, dist);
-                            mainMaxDist = math.max(mainMaxDist, dist);
-                            mainCount++;
-                        }
-                        else if (p.SourceId >= 0)
-                        {
-                            dropletMinDist = math.min(dropletMinDist, dist);
-                            dropletMaxDist = math.max(dropletMaxDist, dist);
-                            dropletCount++;
-                        }
-                    }
-                    Debug.Log($"[Status] 主体粒子({mainCount}): 最近={mainMinDist:F2}, 最远={mainMaxDist:F2}");
-                }
-            }
             
             
             // 更新控制器中心到最新位置（避免FixedUpdate和Update之间的延迟）
@@ -1104,6 +1155,9 @@ namespace Revive.Slime
                 // Surface 渲染：主体 + 水珠都通过 Marching Cubes 表面重建
                 if (_mesh != null)
                     Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_bounds.min, Quaternion.identity, Vector3.one), mat, 0);
+
+                if (_dropletMesh != null)
+                    Graphics.DrawMesh(_dropletMesh, Matrix4x4.TRS(_dropletBounds.min, Quaternion.identity, Vector3.one), mat, 0);
 
                 Graphics.DrawMeshInstancedProcedural(particleMesh, 0, bubblesMat, _bounds, PBF_Utils.BubblesCount);
             }
@@ -1134,18 +1188,17 @@ namespace Revive.Slime
         {
             if (!isActiveAndEnabled)
                 return;
-            
             PerformanceProfiler.BeginFrame();
             
             // 不再移除场景水珠，让它们留在主粒子系统中以便渲染和交互
             
-            // 近场碰撞体刷新（每 N 帧一次）
-            _colliderRefreshTimer++;
-            if (_colliderRefreshTimer >= colliderRefreshInterval)
-            {
-                _colliderRefreshTimer = 0;
-                RefreshNearbyColliders();
-            }
+            PerformanceProfiler.Begin("RefreshMainColliders");
+            RefreshMainNearbyColliders();
+            PerformanceProfiler.End("RefreshMainColliders");
+            
+            PerformanceProfiler.Begin("RefreshDropletColliders");
+            RefreshDropletNearbyColliders();
+            PerformanceProfiler.End("RefreshDropletColliders");
 
             // 使用 trans.position 变化量计算速度，保证位置和速度同步
             // 这样高速位置补偿的方向和控制器中心的移动方向一致，不会导致粒子飞散
@@ -1159,22 +1212,19 @@ namespace Revive.Slime
             // 这样 len 和 Radius 匹配，粒子更容易满足 len < Radius 条件受向心力
             // Center 和 Radius 统一在 Control() 中更新（Simulate 之后）
             
-            if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0 && trans != null)
-            {
-            }
-            
             // 主体粒子模拟（原版每帧执行2次）
             for (int i = 0; i < 2; i++)
             {
                 Profiler.BeginSample("Simulate_Main");
-                PerformanceProfiler.Begin($"Simulate_{i}");
+                PerformanceProfiler.Begin(i == 0 ? "Simulate_0" : "Simulate_1");
                 Simulate();
-                PerformanceProfiler.End($"Simulate_{i}");
+                PerformanceProfiler.End(i == 0 ? "Simulate_0" : "Simulate_1");
                 Profiler.EndSample();
             }
             
             // 水珠独立模拟（独立分区，使用完整 PBF 物理 + 环境碰撞）
             Profiler.BeginSample("Simulate_Droplets");
+            PerformanceProfiler.Begin("Simulate_Droplets");
             
             // 实时更新物理参数（从第一个激活的 DropWater 读取，支持 Inspector 调整）
             foreach (var source in allSources)
@@ -1193,8 +1243,9 @@ namespace Revive.Slime
             float dropletGroundY = 0f; // 场景地面世界Y=0 → 内部Y=0
             // 恢复碰撞体，让水珠正常站在地面上
             _dropletSubsystem.Simulate(deltaTime, _particles, _velocityBuffer, dropletGroundY, targetDensity, 
-                _colliderBuffer, _currentColliderCount);
+                _dropletColliderBuffer, _currentDropletColliderCount);
             
+            PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
 
             PerformanceProfiler.Begin("Surface");
@@ -1233,9 +1284,28 @@ namespace Revive.Slime
             if (renderMode == RenderMode.Particles)
             {
                 // 连续打包：主体 + 水珠
+                PerformanceProfiler.Begin("Particles_ConvertToWorld");
                 int totalParticles = ConvertToWorldPositionsForRendering();
+                PerformanceProfiler.End("Particles_ConvertToWorld");
+
+                PerformanceProfiler.Begin("Particles_Upload");
                 _particleRenderer.UploadParticles(_particlesRenderBuffer, totalParticles);
-                _particleRenderer.SetBounds(minPos * PBF_Utils.Scale, maxPos * PBF_Utils.Scale);
+                PerformanceProfiler.End("Particles_Upload");
+
+                PerformanceProfiler.Begin("Particles_CalcBounds");
+                new Reconstruction.CalcBoundsJob()
+                {
+                    Ps = _particlesRenderBuffer,
+                    Controllers = _controllerBuffer,
+                    SourceControllers = _sourceControllers,
+                    Bounds = _boundsBuffer,
+                    ActiveCount = totalParticles,
+                }.Schedule().Complete();
+                PerformanceProfiler.End("Particles_CalcBounds");
+
+                PerformanceProfiler.Begin("Particles_SetBounds");
+                _particleRenderer.SetBounds(_boundsBuffer[0] * PBF_Utils.Scale, _boundsBuffer[1] * PBF_Utils.Scale);
+                PerformanceProfiler.End("Particles_SetBounds");
             }
             else
             {
@@ -1257,23 +1327,26 @@ namespace Revive.Slime
 
         private void Surface()
         {
+            SurfaceMain();
+            SurfaceDroplets();
+        }
+
+        private void SurfaceMain()
+        {
             Profiler.BeginSample("Render");
-            
-            // 先将粒子转换为世界坐标（Surface 渲染需要世界坐标）
-            // 返回总粒子数：主体 + 水珠
-            int totalParticles = ConvertToWorldPositionsForRendering();
-            
-            // 为渲染重新构建邻域表（包含水珠）
-            PerformanceProfiler.Begin("Surface_BuildLut");
+
+            int totalParticles = ConvertMainToWorldPositionsForRendering();
+
+            PerformanceProfiler.Begin("SurfaceMain_BuildLut");
             BuildRenderLut(totalParticles);
-            PerformanceProfiler.End("Surface_BuildLut");
-            
-            PerformanceProfiler.Begin("Surface_MeanPos");
+            PerformanceProfiler.End("SurfaceMain_BuildLut");
+
+            PerformanceProfiler.Begin("SurfaceMain_MeanPos");
 
             var handle = new Reconstruction.ComputeMeanPosJob
             {
                 Lut = _renderLut,
-                Ps = _particlesRenderBuffer, // 使用世界坐标
+                Ps = _particlesRenderBuffer,
                 MeanPos = _particlesTemp,
             }.Schedule(totalParticles, batchCount);
 
@@ -1282,7 +1355,7 @@ namespace Revive.Slime
                 handle = new Reconstruction.ComputeCovarianceJob()
                 {
                     Lut = _renderLut,
-                    Ps = _particlesRenderBuffer, // 使用世界坐标
+                    Ps = _particlesRenderBuffer,
                     MeanPos = _particlesTemp,
                     GMatrix = _covBuffer,
                 }.Schedule(totalParticles, batchCount, handle);
@@ -1290,13 +1363,13 @@ namespace Revive.Slime
 
             new Reconstruction.CalcBoundsJob()
             {
-                Ps = _particlesRenderBuffer, // 使用世界坐标
+                Ps = _particlesRenderBuffer,
                 Controllers = _controllerBuffer,
                 SourceControllers = _sourceControllers,
                 Bounds = _boundsBuffer,
                 ActiveCount = totalParticles,
             }.Schedule(handle).Complete();
-            PerformanceProfiler.End("Surface_MeanPos");
+            PerformanceProfiler.End("SurfaceMain_MeanPos");
 
             Profiler.EndSample();
 
@@ -1304,21 +1377,9 @@ namespace Revive.Slime
             float blockSize = PBF_Utils.CellSize * 4;
             minPos = math.floor(_boundsBuffer[0] / blockSize) * blockSize;
             maxPos = math.ceil(_boundsBuffer[1] / blockSize) * blockSize;
-            
-            // 调试：检查 Bounds 是否包含水珠
-            int dropletCount2 = totalParticles - activeParticles;
-            if (dropletCount2 > 0 && Time.frameCount % 60 == 0)
-            {
-                var firstDroplet = _particlesRenderBuffer[activeParticles];
-                bool inBounds = math.all(firstDroplet.Position >= _boundsBuffer[0]) && 
-                               math.all(firstDroplet.Position <= _boundsBuffer[1]);
-                Debug.Log($"[Surface.Bounds] rawMin=({_boundsBuffer[0].x:F1},{_boundsBuffer[0].y:F1},{_boundsBuffer[0].z:F1}), " +
-                    $"rawMax=({_boundsBuffer[1].x:F1},{_boundsBuffer[1].y:F1},{_boundsBuffer[1].z:F1}), " +
-                    $"水珠在Bounds内={inBounds}, 水珠位置=({firstDroplet.Position.x:F1},{firstDroplet.Position.y:F1},{firstDroplet.Position.z:F1})");
-            }
 
             Profiler.BeginSample("Allocate");
-            PerformanceProfiler.Begin("Surface_Allocate");
+            PerformanceProfiler.Begin("SurfaceMain_Allocate");
             handle = new Reconstruction.ClearGridJob
             {
                 Grid = _gridBuffer,
@@ -1343,12 +1404,12 @@ namespace Revive.Slime
                 Blocks = _blockBuffer,
                 BlockColors = _blockColorBuffer,
             }.Schedule().Complete();
-            PerformanceProfiler.End("Surface_Allocate");
+            PerformanceProfiler.End("SurfaceMain_Allocate");
 
             Profiler.EndSample();
 
             Profiler.BeginSample("Splat");
-            PerformanceProfiler.Begin("Surface_Splat");
+            PerformanceProfiler.Begin("SurfaceMain_Splat");
 
 #if USE_SPLAT_SINGLE_THREAD
             handle = new Reconstruction.DensityProjectionJob()
@@ -1391,11 +1452,11 @@ namespace Revive.Slime
             }.Schedule(keys.Length, batchCount);
 #endif
             handle.Complete();
-            PerformanceProfiler.End("Surface_Splat");
+            PerformanceProfiler.End("SurfaceMain_Splat");
             Profiler.EndSample();
 
             Profiler.BeginSample("Blur");
-            PerformanceProfiler.Begin("Surface_Blur");
+            PerformanceProfiler.Begin("SurfaceMain_Blur");
 
             new Reconstruction.GridBlurJob()
             {
@@ -1404,18 +1465,18 @@ namespace Revive.Slime
                 GridRead = _gridBuffer,
                 GridWrite = _gridTempBuffer,
             }.Schedule(keys.Length, batchCount, handle).Complete();
-            PerformanceProfiler.End("Surface_Blur");
+            PerformanceProfiler.End("SurfaceMain_Blur");
 
             Profiler.EndSample();
 
             Profiler.BeginSample("Marching cubes");
-            PerformanceProfiler.Begin("Surface_MarchingCubes");
+            PerformanceProfiler.Begin("SurfaceMain_MarchingCubes");
             _mesh = _marchingCubes.MarchingCubesParallel(keys, _gridLut, _gridTempBuffer, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
-            PerformanceProfiler.End("Surface_MarchingCubes");
+            PerformanceProfiler.End("SurfaceMain_MarchingCubes");
             Profiler.EndSample();
-            
+
             Profiler.BeginSample("CCA");
-            PerformanceProfiler.Begin("Surface_CCA");
+            PerformanceProfiler.Begin("SurfaceMain_CCA");
             _componentsBuffer.Clear();
             handle = new Effects.ConnectComponentBlockJob()
             {
@@ -1426,34 +1487,208 @@ namespace Revive.Slime
                 GridID = _gridIDBuffer,
                 Threshold = PBF_Utils.CCAThreshold,
             }.Schedule();
-            
+
             handle.Complete();
-            PerformanceProfiler.End("Surface_CCA");
+            PerformanceProfiler.End("SurfaceMain_CCA");
             Profiler.EndSample();
-            
-            // 网格投票：让CCA组件ID跨帧稳定（必须在ParticleIDJob之前执行）
+
             Profiler.BeginSample("StableID");
-            PerformanceProfiler.Begin("Surface_StableID");
+            PerformanceProfiler.Begin("SurfaceMain_StableID");
             ResolveStableIds();
-            PerformanceProfiler.End("Surface_StableID");
+            PerformanceProfiler.End("SurfaceMain_StableID");
             Profiler.EndSample();
-            
-            // ParticleIDJob仍然使用CCA组件ID（ClusterId = compIdx+1）
-            // 稳定ID通过_compToStableId映射在控制器分配时使用
+
             Profiler.BeginSample("ParticleID");
-            PerformanceProfiler.Begin("Surface_ParticleID");
+            PerformanceProfiler.Begin("SurfaceMain_ParticleID");
             handle = new Effects.ParticleIDJob()
             {
                 GridLut = _gridLut,
-                GridID = _gridIDBuffer,  // 仍使用原始CCA组件ID
+                GridID = _gridIDBuffer,
                 Controllers = _controllerBuffer,
                 SourceControllers = _sourceControllers,
                 Particles = _particles,
                 MinPos = minPos,
             }.Schedule(activeParticles, batchCount);
             handle.Complete();
-            PerformanceProfiler.End("Surface_ParticleID");
+            PerformanceProfiler.End("SurfaceMain_ParticleID");
             Profiler.EndSample();
+
+            keys.Dispose();
+        }
+
+        private void SurfaceDroplets()
+        {
+            int dropletCount = _dropletSubsystem.ActiveCount;
+            if (dropletCount <= 0)
+            {
+                _dropletMesh = null;
+                return;
+            }
+
+            if (_cachedMainCamera == null)
+                _cachedMainCamera = Camera.main;
+            var cam = _cachedMainCamera;
+            if (cam != null)
+            {
+                if (_dropletSubsystem.TryGetActiveBounds(out float3 dropletMinSim, out float3 dropletMaxSim))
+                {
+                    Vector3 minW = (Vector3)(dropletMinSim * PBF_Utils.Scale);
+                    Vector3 maxW = (Vector3)(dropletMaxSim * PBF_Utils.Scale);
+                    Vector3 centerW = (minW + maxW) * 0.5f;
+                    Vector3 sizeW = (maxW - minW);
+                    float marginW = PBF_Utils.h * PBF_Utils.Scale * 4f;
+                    sizeW += Vector3.one * marginW;
+                    var testBounds = new Bounds(centerW, sizeW);
+
+                    if (_cachedFrustumPlanes == null || _cachedFrustumPlanes.Length != 6)
+                        _cachedFrustumPlanes = new UnityEngine.Plane[6];
+                    GeometryUtility.CalculateFrustumPlanes(cam, _cachedFrustumPlanes);
+                    if (!GeometryUtility.TestPlanesAABB(_cachedFrustumPlanes, testBounds))
+                    {
+                        _dropletMesh = null;
+                        return;
+                    }
+                }
+            }
+
+            _dropletSubsystem.CopyToRenderBuffer(_particlesRenderBuffer, 0);
+
+            PerformanceProfiler.Begin("SurfaceDroplet_BuildLut");
+            BuildRenderLut(dropletCount);
+            PerformanceProfiler.End("SurfaceDroplet_BuildLut");
+
+            PerformanceProfiler.Begin("SurfaceDroplet_MeanPos");
+            var handle = new Reconstruction.ComputeMeanPosJob
+            {
+                Lut = _renderLut,
+                Ps = _particlesRenderBuffer,
+                MeanPos = _particlesTemp,
+            }.Schedule(dropletCount, batchCount);
+
+            if (useAnisotropic)
+            {
+                handle = new Reconstruction.ComputeCovarianceJob()
+                {
+                    Lut = _renderLut,
+                    Ps = _particlesRenderBuffer,
+                    MeanPos = _particlesTemp,
+                    GMatrix = _covBuffer,
+                }.Schedule(dropletCount, batchCount, handle);
+            }
+
+            new Reconstruction.CalcBoundsJob()
+            {
+                Ps = _particlesRenderBuffer,
+                Controllers = _controllerBuffer,
+                SourceControllers = _sourceControllers,
+                Bounds = _boundsBuffer,
+                ActiveCount = dropletCount,
+            }.Schedule(handle).Complete();
+            PerformanceProfiler.End("SurfaceDroplet_MeanPos");
+
+            float blockSize = PBF_Utils.CellSize * 4;
+            float3 dropletMinPos = math.floor(_boundsBuffer[0] / blockSize) * blockSize;
+            float3 dropletMaxPos = math.ceil(_boundsBuffer[1] / blockSize) * blockSize;
+            _dropletBounds = new Bounds()
+            {
+                min = dropletMinPos * PBF_Utils.Scale,
+                max = dropletMaxPos * PBF_Utils.Scale
+            };
+
+            _dropletGridLut.Clear();
+
+            PerformanceProfiler.Begin("SurfaceDroplet_Allocate");
+            handle = new Reconstruction.AllocateBlockJob()
+            {
+                Ps = _particlesTemp,
+                GridLut = _dropletGridLut,
+                MinPos = dropletMinPos,
+                ActiveCount = dropletCount,
+            }.Schedule();
+            handle.Complete();
+
+            var keys = _dropletGridLut.GetKeyArray(Allocator.TempJob);
+            int dropletBlockNum = keys.Length;
+            if (dropletBlockNum == 0)
+            {
+                keys.Dispose();
+                _dropletMesh = null;
+                PerformanceProfiler.End("SurfaceDroplet_Allocate");
+                return;
+            }
+
+            int clearLen = dropletBlockNum * PBF_Utils.GridSize;
+            new Reconstruction.ClearGridJob
+            {
+                Grid = _dropletGridBuffer.GetSubArray(0, clearLen),
+                GridID = _dropletGridIDBuffer.GetSubArray(0, clearLen),
+            }.Schedule(clearLen, batchCount).Complete();
+
+            new Reconstruction.ColorBlockJob()
+            {
+                Keys = keys,
+                Blocks = _dropletBlockBuffer,
+                BlockColors = _dropletBlockColorBuffer,
+            }.Schedule().Complete();
+            PerformanceProfiler.End("SurfaceDroplet_Allocate");
+
+            PerformanceProfiler.Begin("SurfaceDroplet_Splat");
+#if USE_SPLAT_SINGLE_THREAD
+            handle = new Reconstruction.DensityProjectionJob()
+            {
+                Ps = _particlesTemp,
+                GMatrix = _covBuffer,
+                Grid = _dropletGridBuffer,
+                GridLut = _dropletGridLut,
+                MinPos = dropletMinPos,
+                UseAnisotropic = useAnisotropic,
+            }.Schedule();
+#elif USE_SPLAT_COLOR8
+            for (int i = 0; i < 8; i++)
+            {
+                int2 slice = new int2(_dropletBlockColorBuffer[i], _dropletBlockColorBuffer[i + 1]);
+                int count = slice.y - slice.x;
+                handle = new Reconstruction.DensitySplatColoredJob()
+                {
+                    ParticleLut = _renderLut,
+                    ColorKeys = _dropletBlockBuffer.Slice(slice.x, count),
+                    Ps = _particlesTemp,
+                    GMatrix = _covBuffer,
+                    Grid = _dropletGridBuffer,
+                    GridLut = _dropletGridLut,
+                    MinPos = dropletMinPos,
+                    UseAnisotropic = useAnisotropic,
+                }.Schedule(count, count, handle);
+            }
+#else
+            handle = new Reconstruction.DensityProjectionParallelJob()
+            {
+                Ps = _particlesTemp,
+                GMatrix = _covBuffer,
+                GridLut = _dropletGridLut,
+                Grid = _dropletGridBuffer,
+                ParticleLut = _renderLut,
+                Keys = keys,
+                UseAnisotropic = useAnisotropic,
+                MinPos = dropletMinPos,
+            }.Schedule(keys.Length, batchCount);
+#endif
+            handle.Complete();
+            PerformanceProfiler.End("SurfaceDroplet_Splat");
+
+            PerformanceProfiler.Begin("SurfaceDroplet_Blur");
+            new Reconstruction.GridBlurJob()
+            {
+                Keys = keys,
+                GridLut = _dropletGridLut,
+                GridRead = _dropletGridBuffer,
+                GridWrite = _dropletGridTempBuffer,
+            }.Schedule(keys.Length, batchCount, handle).Complete();
+            PerformanceProfiler.End("SurfaceDroplet_Blur");
+
+            PerformanceProfiler.Begin("SurfaceDroplet_MarchingCubes");
+            _dropletMesh = _marchingCubesDroplet.MarchingCubesParallel(keys, _dropletGridLut, _dropletGridTempBuffer, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
+            PerformanceProfiler.End("SurfaceDroplet_MarchingCubes");
 
             keys.Dispose();
         }
@@ -1461,51 +1696,6 @@ namespace Revive.Slime
         private void Simulate()
         {
             _pbfSystem.Lut.Clear();
-            
-            // 速度分解：v_soft（流体形变）+ v_board（刚体补偿）
-            float3 v_real = (float3)_velocity * PBF_Utils.InvScale;
-            float3 v_soft, v_board;
-            
-            float thresholdXZ_sim = manualThreshold * PBF_Utils.InvScale;
-            float thresholdY_sim = verticalThreshold * PBF_Utils.InvScale;
-            v_soft = v_real;
-            v_board = float3.zero;
-            
-            // 水平方向（XZ）
-            float speedXZ_sq = v_real.x * v_real.x + v_real.z * v_real.z;
-            if (speedXZ_sq > thresholdXZ_sim * thresholdXZ_sim)
-            {
-                float speedXZ = math.sqrt(speedXZ_sq);
-                float scale = thresholdXZ_sim / speedXZ;
-                v_soft.x = v_real.x * scale;
-                v_soft.z = v_real.z * scale;
-                v_board.x = v_real.x - v_soft.x;
-                v_board.z = v_real.z - v_soft.z;
-            }
-            
-            // 垂直方向（Y）
-            float absY = math.abs(v_real.y);
-            if (absY > thresholdY_sim)
-            {
-                v_soft.y = math.sign(v_real.y) * thresholdY_sim;
-                v_board.y = v_real.y - v_soft.y;
-            }
-            
-            float3 boardDelta = v_board * Time.fixedDeltaTime;
-            _v_soft = v_soft; // 保存供控制器更新使用
-            
-            // === 折返检测日志 ===
-            float speedXZ_log = math.sqrt(speedXZ_sq);
-            float2 dirXZ = speedXZ_log > 0.01f ? new float2(v_real.x, v_real.z) / speedXZ_log : float2.zero;
-            float2 prevDirXZ = math.length(new float2(_prevVelocitySim.x, _prevVelocitySim.z)) > 0.01f 
-                ? math.normalize(new float2(_prevVelocitySim.x, _prevVelocitySim.z)) : float2.zero;
-            float dirDot = math.dot(dirXZ, prevDirXZ);
-            bool isTurning = dirDot < 0.5f && speedXZ_log > 0.1f; // 方向变化>60度且有速度
-            bool thresholdTriggered = speedXZ_sq > thresholdXZ_sim * thresholdXZ_sim;
-            _thresholdTriggered = thresholdTriggered; // 保存供Control()使用
-            
-_prevVelocitySim = v_real;
-            
             // 在 ApplyForceJob 之前更新控制器 Velocity
             if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
             {
@@ -1542,6 +1732,8 @@ _prevVelocitySim = v_real;
                 MaxDeformDistY = maxDeformDistY * PBF_Utils.InvScale,   // 垂直形变上限
             }.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("ApplyForce");
+
+            // 召回调试日志已移除
 
             PerformanceProfiler.Begin("Hash");
             new Simulation_PBF.HashJob
@@ -1670,7 +1862,7 @@ _prevVelocitySim = v_real;
                 VelocityW = _velocityBuffer,
                 ViscosityStrength = viscosityStrength,
                 TargetDensity = targetDensity,
-                DeltaTime = Time.fixedDeltaTime,
+                DeltaTime = deltaTime,
             }.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("ApplyViscosity");
             
@@ -1696,7 +1888,7 @@ _prevVelocitySim = v_real;
             Vector3 sourceWorldPos = source.transform.position;
             float sourceGroundY = 0f; // 默认地面高度（模拟坐标）
             Vector3 rayOrigin = sourceWorldPos + Vector3.up * 2f; // 抬高起点
-            if (UnityEngine.Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 30f, colliderLayers))
+            if (UnityEngine.Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 30f, ColliderQueryMask))
             {
                 sourceGroundY = (hit.point.y ) * PBF_Utils.InvScale; // 加上粒子半径，转为模拟坐标
             }
@@ -1715,13 +1907,6 @@ _prevVelocitySim = v_real;
             {
                 source.SetState(DropWater.DropletSourceState.Simulated);
                 source.SetAdaptiveRadius(source.spawnRadius);
-                
-                if (componentDebug)
-                {
-                    float3 mainCenter = trans != null ? (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
-                    float distToMain = math.length(sourcePos - mainCenter);
-                    Debug.Log($"[Slime_PBF] 激活 {source.name}：{allocated} 个粒子在独立分区，距主体={distToMain * PBF_Utils.Scale:F2}, 地面Y={sourceGroundY * PBF_Utils.Scale:F2}");
-                }
             }
         }
 
@@ -1743,9 +1928,6 @@ _prevVelocitySim = v_real;
             // 使用独立子系统休眠
             int deactivatedCount = _dropletSubsystem.DeactivateSource(sourceId);
             source.Reset();
-            
-            if (componentDebug && deactivatedCount > 0)
-                Debug.Log($"[Slime_PBF] 休眠 {source.name}：{deactivatedCount} 个粒子在独立分区");
         }
 
         
@@ -1798,8 +1980,6 @@ _prevVelocitySim = v_real;
         {
             if (allSources == null || allSources.Count == 0)
             {
-                if (componentDebug && Time.frameCount % 300 == 1)
-                    Debug.Log($"[UpdateSourceControllers] frame={Time.frameCount} allSources 为空或无元素");
                 return;
             }
             
@@ -1832,9 +2012,6 @@ _prevVelocitySim = v_real;
                 };
                 activeCount++;
             }
-            
-            if (componentDebug && Time.frameCount % 300 == 1)
-                Debug.Log($"[UpdateSourceControllers] frame={Time.frameCount} 更新了 {activeCount}/{allSources.Count} 个 SourceController");
         }
 
 
@@ -1856,51 +2033,8 @@ _prevVelocitySim = v_real;
             float mainMaxDist = 0;
             int mainBodyCount = 0;
             int count = math.min(activeParticles, _particles.Length);
-            
-            // === 第一步：统计每个 ClusterId 的重心和粒子数 ===
-            const int maxClusters = 256;
-            var clusterCounts = new NativeArray<int>(maxClusters, Allocator.Temp);
-            var clusterCenters = new NativeArray<float3>(maxClusters, Allocator.Temp);
-            
-            for (int i = 0; i < count; i++)
-            {
-                var p = _particles[i];
-                if (p.Type == ParticleType.MainBody && p.ClusterId > 0 && p.ClusterId < maxClusters)
-                {
-                    clusterCounts[p.ClusterId]++;
-                    clusterCenters[p.ClusterId] += p.Position;
-                }
-            }
-            
-            // 计算每个 cluster 的重心
-            for (int i = 1; i < maxClusters; i++)
-            {
-                if (clusterCounts[i] > 0)
-                {
-                    clusterCenters[i] /= clusterCounts[i];
-                }
-            }
-            
-            // === 第二步：找出重心距离 mainCenter 最近的 ClusterId（主组件） ===
-            // 这样即使玩家控制的部分较小，也不会被错误分离
-            int mainClusterId = 0;
-            float minDistToMain = float.MaxValue;
-            for (int i = 1; i < maxClusters; i++)
-            {
-                if (clusterCounts[i] > 0)
-                {
-                    float dist = math.length(clusterCenters[i] - mainCenter);
-                    if (dist < minDistToMain)
-                    {
-                        minDistToMain = dist;
-                        mainClusterId = i;
-                    }
-                }
-            }
-            clusterCounts.Dispose();
-            clusterCenters.Dispose();
-            
-            // === 第三步：用主连通组件内所有 MainBody 粒子的最大距离来算 mainMaxDist ===
+
+            // 用 MainBody 粒子的最大距离来算 mainMaxDist
             for (int i = 0; i < count; i++)
             {
                 var p = _particles[i];
@@ -1945,12 +2079,6 @@ _prevVelocitySim = v_real;
             // float dynamicConcentration = concentration * speedRatio;
             float dynamicConcentration = concentration; // 固定值
             
-            if (componentDebug && speed > baseSpeed * 1.5f && Time.frameCount % 60 == 0)
-            {
-                Debug.Log($"[DynamicConc] speed={speed:F2}, ratio={speedRatio:F2}, " +
-                         $"conc={concentration}→{dynamicConcentration:F1}");
-            }
-            
             _controllerBuffer[0] = new ParticleController()
             {
                 Center = mainCenter,
@@ -1978,8 +2106,10 @@ _prevVelocitySim = v_real;
             // 统计每个 CCA 组件的分离粒子数
             var detachedParticleCountPerComp = new NativeArray<int>(math.max(1, compCount), Allocator.Temp, NativeArrayOptions.ClearMemory);
             NativeArray<int> recentFromEmitCountPerComp = default;
-            if (componentDebug || _connect)
+            if (_connect)
                 recentFromEmitCountPerComp = new NativeArray<int>(math.max(1, compCount), Allocator.Temp, NativeArrayOptions.ClearMemory);
+
+            // 统计分离/发射粒子数量并标记最近发射的团块
             for (int p = 0; p < activeParticles; p++)
             {
                 var particle = _particles[p];
@@ -1994,20 +2124,20 @@ _prevVelocitySim = v_real;
 
                     if (recentFromEmitCountPerComp.IsCreated)
                     {
+                        int cid = particle.ControllerId;
+                        bool hadFreeFlyingLastFrame = _controllerFreeFramesCounts != null &&
+                                                      cid > 0 && cid < _controllerFreeFramesCounts.Length &&
+                                                      _controllerFreeFramesCounts[cid] > 0;
                         bool looksLikeNewlyEmittedSeparated = particle.Type == ParticleType.Separated &&
                                                              particle.ControllerId > 0 &&
-                                                             particle.FramesOutsideMain < 60;
+                                                             particle.FramesOutsideMain < 60 &&
+                                                             hadFreeFlyingLastFrame;
                         if (looksLikeNewlyEmittedSeparated)
-                            recentFromEmitCountPerComp[compIdx]++;
+                            recentFromEmitCountPerComp[clusterId - 1]++;
                     }
                 }
             }
-            
-            if (_tmpStableIdSet == null)
-                _tmpStableIdSet = new HashSet<int>();
-            _tmpStableIdSet.Clear();
-            _tmpStableIdSet.Add(0);
-            
+
             for (int i = 0; i < compCount; i++)
             {
                 int particleCount = detachedParticleCountPerComp[i];
@@ -2024,7 +2154,9 @@ _prevVelocitySim = v_real;
 
                 var component = _componentsBuffer[i];
                 float3 extent = component.BoundsMax - component.Center;
-                float radius = math.max(1, (extent.x + extent.y + extent.z) * PBF_Utils.CellSize * separatedRadiusScale);
+                float radiusXZ = math.max(1f, math.length(new float2(extent.x, extent.z)) * PBF_Utils.CellSize * separatedRadiusScale);
+                float halfHeight = math.max(0.001f, extent.y * PBF_Utils.CellSize * separatedRadiusScale);
+                float radius = math.sqrt(radiusXZ * radiusXZ + halfHeight * halfHeight);
                 float3 center = minPos + component.Center * PBF_Utils.CellSize;
 
                 // 方案1：召回期间，如果“新发射/保护期团块”被位置匹配继承到了召回快照中的 stableId，
@@ -2034,11 +2166,15 @@ _prevVelocitySim = v_real;
                     if (stableId > 0 && stableId < _recallEligibleStableIds.Length && _recallEligibleStableIds[stableId] != 0)
                     {
                         int recentCount = recentFromEmitCountPerComp[i];
-                        if (recentCount == particleCount && particleCount > 0)
+                        int minRecentCount = math.max(1, (int)math.ceil(particleCount * 0.8f));
+                        if (particleCount > 0 && recentCount >= minRecentCount)
                         {
                             int newStableId = _nextStableId++;
                             _compToStableId[i] = newStableId;
                             stableId = newStableId;
+
+                            if (newStableId > 0 && newStableId < _recallEligibleStableIds.Length)
+                                _recallEligibleStableIds[newStableId] = 0;
 
                             if (_stableIdToCenter == null)
                                 _stableIdToCenter = new Dictionary<int, float3>(16);
@@ -2057,8 +2193,12 @@ _prevVelocitySim = v_real;
                 if (allowRecallForController)
                 {
                     float distToMain = math.length(center - mainCenter);
-                    float speedFactor = math.saturate(distToMain / recallSlowdownDist);
-                    float recallSpeed = math.lerp(recallMinSpeed, recallMaxSpeed, math.sqrt(speedFactor));
+                    float recallSlowdownDistSim = math.max(0.001f, recallSlowdownDist * PBF_Utils.InvScale);
+                    float recallMinSpeedSim = recallMinSpeed * PBF_Utils.InvScale;
+                    float recallMaxSpeedSim = recallMaxSpeed * PBF_Utils.InvScale;
+                    float speedFactor = math.saturate(distToMain / recallSlowdownDistSim);
+                    float smoothFactor = speedFactor * speedFactor * (3f - 2f * speedFactor);
+                    float recallSpeedSim = math.lerp(recallMinSpeedSim, recallMaxSpeedSim, smoothFactor);
                     // 召回只使用水平方向，Y分量置0
                     float3 toMainXZ = mainCenter - center;
                     toMainXZ.y = 0;
@@ -2067,13 +2207,12 @@ _prevVelocitySim = v_real;
                     bool useAvoid = recallAvoidance && _currentColliderCount > 0;
                     if (useAvoid)
                     {
-                        toMain = ComputeAvoidedRecallVelocity(center, radius, mainCenter, rawDir, recallSpeed);
+                        toMain = ComputeAvoidedRecallVelocity(controllerId, center, radiusXZ, halfHeight, mainCenter, rawDir, recallSpeedSim);
                     }
                     else
                     {
-                        toMain = recallSpeed * rawDir;
+                        toMain = recallSpeedSim * rawDir;
                     }
-
                 }
 
                 float3 currentCenter = center;
@@ -2116,6 +2255,13 @@ _prevVelocitySim = v_real;
                     _particles[i] = p;
                     continue;
                 }
+
+                if (p.Type == ParticleType.FadingOut)
+                {
+                    p.ClusterId = 0;
+                    _particles[i] = p;
+                    continue;
+                }
                 
                 // 主体和休眠粒子使用主控制器
                 if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant)
@@ -2146,11 +2292,19 @@ _prevVelocitySim = v_real;
                 int clusterId = p.ClusterId;
                 if (clusterId > 0 && clusterId <= compCount)
                 {
-                    int newGroupId = _componentToGroup[clusterId - 1];
-                    int newStableId = GetStableIdForComponent(clusterId - 1);
+                    int compIdx = clusterId - 1;
+                    int newGroupId = _componentToGroup[compIdx];
+                    int newStableId = GetStableIdForComponent(compIdx);
                     if (inEmitProtection && newGroupId == 0)
                     {
                         p.FramesOutsideMain++;
+                        _particles[i] = p;
+                        continue;
+                    }
+
+                    if (!inEmitProtection && newGroupId == 0)
+                    {
+                        ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
                         _particles[i] = p;
                         continue;
                     }
@@ -2159,11 +2313,8 @@ _prevVelocitySim = v_real;
                     // 回归主体只能通过 MergeContactingParticles/EnableRecall。
                     p.ControllerId = (newGroupId == 0) ? prevControllerId : newGroupId;
                     p.StableId = (newGroupId == 0) ? prevStableId : newStableId;
-                    if (inEmitProtection)
-                    {
-                        p.FramesOutsideMain++;
-                    }
 
+                    p.FramesOutsideMain++;
                     _particles[i] = p;
                 }
                 else
@@ -2197,6 +2348,8 @@ _prevVelocitySim = v_real;
             for (int i = 0; i < activeParticles; i++)
             {
                 var p = _particles[i];
+                if (p.Type == ParticleType.FadingOut)
+                    continue;
                 // 自由飞行粒子 或 保护期内的分离粒子（ControllerId > 0 且 FramesOutsideMain < 60）
                 bool isFreeFlying = p.FreeFrames > 0;
                 bool isInProtection = p.Type == ParticleType.Separated && p.ControllerId > 0 && p.FramesOutsideMain < 60;
@@ -2216,8 +2369,7 @@ _prevVelocitySim = v_real;
                 {
                     var ctrl = _controllerBuffer[c];
                     float3 newCenter = freeParticleCentroid[c] / freeParticleCount[c];
-                    
-                    float3 oldCenter = ctrl.Center;
+
                     float3 lerpedCenter = math.lerp(ctrl.Center, newCenter, 0.3f); // 平滑过渡
                     ctrl.Center = lerpedCenter;
                     ctrl.IsValid = true; // 确保控制器保持有效
@@ -2249,8 +2401,6 @@ _prevVelocitySim = v_real;
             // 召回停止条件：只在5秒超时时自动停止（可以随时重新按按钮启动）
             if (_connect && Time.time - _connectStartTime > 5f)
             {
-                if (componentDebug)
-                    Debug.Log($"[Recall停止] 5秒超时");
                 _connect = false;
             }
             
@@ -2299,7 +2449,7 @@ _prevVelocitySim = v_real;
                 var p = _particles[i];
                 
                 // 只处理分离粒子，主体粒子跑飞的可能性低
-                if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant) continue;
+                if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut) continue;
                 
                 // 跳过场景水珠（SourceId >= 0 表示来自 DropWater）
                 if (p.SourceId >= 0) 
@@ -2332,10 +2482,6 @@ _prevVelocitySim = v_real;
             }
             
             // 只要有粒子被休眠就立即警告（这是bug，必须报告）
-            if (culledCount > 0)
-            {
-                Debug.LogWarning($"[DistanceCulling] 休眠了 {culledCount} 个过远分离粒子（距离>{maxParticleDistance:F0}），当前活跃={activeParticles}");
-            }
         }
         
         /// <summary>
@@ -2348,65 +2494,129 @@ _prevVelocitySim = v_real;
         {
             int mergedCount = 0;
             int dropletMergedCount = 0;
-            
+
             int count = math.min(activeParticles, _particles.Length);
             float mergeRadius2 = mergeRadius * mergeRadius;
             // 接触距离使用 2 倍粒子间距，因为实际粒子分布可能稀疏
             float contactDist2 = PBF_Utils.h2 * 4; // (2h)^2 = 4h^2
 
+            float contactDist = math.sqrt(contactDist2);
+            float invContactDist = contactDist > 0f ? (1f / contactDist) : 1f;
+
+            float gateMargin = math.sqrt(contactDist2) * 2f;
+
             int dropletActiveCount = _dropletSubsystem.ActiveCount;
-            bool hasCandidates = dropletActiveCount > 0;
+            bool checkDropletPartition = false;
+            bool hasCandidates = false;
+            PerformanceProfiler.Begin("MergeContact_Broadphase");
+            if (dropletActiveCount > 0 && _dropletSubsystem.TryGetActiveBounds(out float3 dropletMin, out float3 dropletMax))
+            {
+                float3 absorbMin = mainCenter - new float3(mergeRadius + gateMargin);
+                float3 absorbMax = mainCenter + new float3(mergeRadius + gateMargin);
+                if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 1)
+                {
+                    for (int c = 1; c < _controllerBuffer.Length; c++)
+                    {
+                        var ctrl = _controllerBuffer[c];
+                        if (!ctrl.IsValid) continue;
+                        float r = ctrl.Radius + gateMargin;
+                        absorbMin = math.min(absorbMin, ctrl.Center - new float3(r));
+                        absorbMax = math.max(absorbMax, ctrl.Center + new float3(r));
+                    }
+                }
+
+                float3 dMin = dropletMin - new float3(gateMargin);
+                float3 dMax = dropletMax + new float3(gateMargin);
+                checkDropletPartition =
+                    !(dMax.x < absorbMin.x || dMin.x > absorbMax.x ||
+                      dMax.y < absorbMin.y || dMin.y > absorbMax.y ||
+                      dMax.z < absorbMin.z || dMin.z > absorbMax.z);
+
+                if (checkDropletPartition)
+                    hasCandidates = true;
+                else
+                    dropletActiveCount = 0;
+            }
+            else
+            {
+                dropletActiveCount = 0;
+            }
             if (!hasCandidates)
             {
+                float broadphaseR = mergeRadius + gateMargin;
+                float broadphaseR2 = broadphaseR * broadphaseR;
                 for (int i = 0; i < count; i++)
                 {
                     var p = _particles[i];
-                    if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant)
+                    if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
                         continue;
                     if (p.FreeFrames > 0)
                         continue;
 
                     bool isSceneDroplet = p.SourceId >= 0;
                     if (!isSceneDroplet && p.ControllerId <= 0)
-                        continue;
+                    {
+                        float3 pos = p.Position;
+                        float distToMain2 = math.lengthsq(pos - mainCenter);
+                        if (distToMain2 > broadphaseR2)
+                            continue;
+                    }
 
                     hasCandidates = true;
                     break;
                 }
             }
 
+            PerformanceProfiler.End("MergeContact_Broadphase");
+
             if (!hasCandidates)
+            {
                 return;
+            }
             
             // ========== 性能优化：为主体粒子构建临时空间哈希 ==========
             // 将 O(n×m) 暴力遍历优化为 O(n+m)
             // 所有粒子统一使用世界坐标
-            if (_mergeMainBodyLut.Capacity < count)
-                _mergeMainBodyLut.Capacity = count;
+            PerformanceProfiler.Begin("MergeContact_BuildMainBodyLut");
+            int desiredMergeLutCapacity = math.max(256, count * 2);
+            if (_mergeMainBodyLut.Capacity < desiredMergeLutCapacity)
+                _mergeMainBodyLut.Capacity = desiredMergeLutCapacity;
             _mergeMainBodyLut.Clear();
             var mainBodyLut = _mergeMainBodyLut;
+
+            if (_mergeAbsorbLut.Capacity < desiredMergeLutCapacity)
+                _mergeAbsorbLut.Capacity = desiredMergeLutCapacity;
+            _mergeAbsorbLut.Clear();
+            var absorbLut = _mergeAbsorbLut;
             int mainBodyCount = 0;
-            float3 firstMainBodyPos = float3.zero;
-            int3 firstMainBodyCoord = int3.zero;
+
+            int3 GetMergeCoord(float3 p) => (int3)math.floor(p * invContactDist);
             
             for (int i = 0; i < count; i++)
             {
                 if (_particles[i].Type != ParticleType.MainBody) continue;
                 float3 pos = _particles[i].Position;
-                int3 coord = PBF_Utils.GetCoord(pos);
+                int3 coord = GetMergeCoord(pos);
                 int key = PBF_Utils.GetKey(coord);
                 mainBodyLut.Add(key, i);
-                if (mainBodyCount == 0)
-                {
-                    firstMainBodyPos = pos;
-                    firstMainBodyCoord = coord;
-                }
+                absorbLut.Add(key, i);
                 mainBodyCount++;
             }
+            PerformanceProfiler.End("MergeContact_BuildMainBodyLut");
 
-            // 预过滤：接触融合只发生在 contactDist (≈h) 范围内
-            // 门控半径 = 主体半径 + 水珠源半径 + 接触距离 + 小余量
-            float contactDist = math.sqrt(contactDist2);  // ≈ 1.0
+            // 添加可吸收的分离粒子（独立控制器）
+            PerformanceProfiler.Begin("MergeContact_BuildAbsorbLut");
+            for (int i = 0; i < count; i++)
+            {
+                var p = _particles[i];
+                if (p.Type != ParticleType.Separated || p.ControllerId <= 0) continue;
+                float3 pos = p.Position;
+                int3 coord = GetMergeCoord(pos);
+                int key = PBF_Utils.GetKey(coord);
+                absorbLut.Add(key, i);
+            }
+            PerformanceProfiler.End("MergeContact_BuildAbsorbLut");
+
 
             _absorbedSourceIds.Clear();
             if (allSources != null && allSources.Count > 0)
@@ -2416,7 +2626,7 @@ _prevVelocitySim = v_real;
             }
 
             int sourceCount = allSources != null ? allSources.Count : 0;
-            bool enableSourceGate = sourceCount > 0 && _sourceControllers.IsCreated && _sourceControllers.Length >= sourceCount;
+            bool enableSourceGate = false;
             if (enableSourceGate)
             {
                 if (_sourceMayContact == null || _sourceMayContact.Length < sourceCount)
@@ -2445,108 +2655,149 @@ _prevVelocitySim = v_real;
                     float gateRadius = mergeRadius + srcRadius + contactDist * 2;
                     float srcDistToMain = math.length(srcCenter - mainCenter);
                     
-                    if (srcDistToMain <= gateRadius)
+                    bool mayContact = srcDistToMain <= gateRadius;
+
+                    // 添加分离控制器门控：分离团距离水珠足够近时也可以视为可接触
+                    if (!mayContact && _controllerBuffer.IsCreated && _controllerBuffer.Length > 1)
+                    {
+                        for (int c = 1; c < _controllerBuffer.Length; c++)
+                        {
+                            var ctrl = _controllerBuffer[c];
+                            if (!ctrl.IsValid) continue;
+                            float ctrlGateRadius = ctrl.Radius + srcRadius + contactDist * 2;
+                            float dist = math.length(srcCenter - ctrl.Center);
+                            if (dist <= ctrlGateRadius)
+                            {
+                                mayContact = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (mayContact)
                         _sourceMayContact[s] = true;
                 }
             }
 
-            // 添加调试统计
-            int separatedChecked = 0;
-            int separatedInRange = 0;
-            int separatedMerged = 0;
-            int noMainBodyNearby = 0;  // 统计没有主体粒子在附近的情况
-            float minDistToMain = float.MaxValue;  // 最近的分离粒子到主体的距离
-            
-            int skippedFreeFrames = 0;
-            int skippedNoController = 0;
+            PerformanceProfiler.Begin("MergeContact_ScanMainRange");
             for (int i = 0; i < count; i++)
             {
                 // 只处理分离粒子
-                if (_particles[i].Type == ParticleType.MainBody || _particles[i].Type == ParticleType.Dormant) continue;
+                if (_particles[i].Type == ParticleType.MainBody || _particles[i].Type == ParticleType.Dormant || _particles[i].Type == ParticleType.FadingOut) continue;
                 
                 // 跳过还在自由飞行的粒子（FreeFrames > 0）
                 if (_particles[i].FreeFrames > 0) 
                 {
-                    skippedFreeFrames++;
                     continue;
                 }
                 
                 bool isSceneDroplet = _particles[i].SourceId >= 0;
-                
-                // 跳过没有独立控制器的分离粒子（ControllerId <= 0）
-                // 因为避障只对有控制器的粒子有效，没控制器的粒子不参与融合
-                if (!isSceneDroplet && _particles[i].ControllerId <= 0)
-                {
-                    skippedNoController++;
-                    continue;
-                }
-                separatedChecked++;
                 
                 // 分离粒子的 Position 是世界坐标
                 float3 pos = _particles[i].Position;
                 float distToMain2 = math.lengthsq(pos - mainCenter);
                 
                 // 场景水珠的特殊处理：接触主体时可以融合
-                if (isSceneDroplet)
-                {
-                    // 场景水珠使用更大的检测范围
-                    float dropletMergeRadius2 = mergeRadius2 * 4; // 2倍半径
-                    if (distToMain2 > dropletMergeRadius2)
-                        continue;
-                }
-                else
+                if (!isSceneDroplet)
                 {
                     // 普通分离粒子的合并检测（接触融合）
                     if (distToMain2 > mergeRadius2)
+                    {
                         continue;
-                }
-                    
-                separatedInRange++;
+                    }
 
-                // 使用空间哈希加速接触检测（O(1) 邻域查询）
+                    // 跳过没有独立控制器的分离粒子（ControllerId <= 0）
+                    // 因为避障只对有控制器的粒子有效，没控制器的粒子不参与融合
+                    if (_particles[i].ControllerId <= 0)
+                    {
+                        continue;
+                    }
+                }
+                    // 使用空间哈希加速接触检测（O(1) 邻域查询）
                 bool shouldMerge = false;
-                int3 coord = PBF_Utils.GetCoord(pos);
+                int3 coord = GetMergeCoord(pos);
                 
                 // 遍历 3x3x3 邻域
-                int contactMainIdx = -1;
+                int contactIdx = -1;
                 float actualContactDist = 0;
-                for (int dz = -1; dz <= 1 && !shouldMerge; ++dz)
-                for (int dy = -1; dy <= 1 && !shouldMerge; ++dy)
-                for (int dx = -1; dx <= 1 && !shouldMerge; ++dx)
+                const int mergeNeighborRange = 1;
+                for (int dz = -mergeNeighborRange; dz <= mergeNeighborRange && !shouldMerge; ++dz)
+                for (int dy = -mergeNeighborRange; dy <= mergeNeighborRange && !shouldMerge; ++dy)
+                for (int dx = -mergeNeighborRange; dx <= mergeNeighborRange && !shouldMerge; ++dx)
                 {
                     int key = PBF_Utils.GetKey(coord + new int3(dx, dy, dz));
-                    if (mainBodyLut.TryGetFirstValue(key, out int j, out var it))
+                    
+                    // 场景水珠查找“可吸收体”集合（主体+合法分离团），普通分离粒子只查主体
+                    if (isSceneDroplet)
                     {
-                        do
+                        if (absorbLut.TryGetFirstValue(key, out int j, out var it))
                         {
-                            if (i == j) continue;
-                            float r2 = math.lengthsq(pos - _particles[j].Position);
-                            if (r2 <= contactDist2)
+                            do
                             {
-                                shouldMerge = true;
-                                contactMainIdx = j;
-                                actualContactDist = math.sqrt(r2);
-                                break;
-                            }
-                        } while (mainBodyLut.TryGetNextValue(out j, ref it));
+                                if (i == j) continue;
+                                float r2 = math.lengthsq(pos - _particles[j].Position);
+                                if (r2 <= contactDist2)
+                                {
+                                    shouldMerge = true;
+                                    contactIdx = j;
+                                    actualContactDist = math.sqrt(r2);
+                                    break;
+                                }
+                            } while (absorbLut.TryGetNextValue(out j, ref it));
+                        }
+                    }
+                    else
+                    {
+                        if (mainBodyLut.TryGetFirstValue(key, out int j, out var it))
+                        {
+                            do
+                            {
+                                if (i == j) continue;
+                                float r2 = math.lengthsq(pos - _particles[j].Position);
+                                if (r2 <= contactDist2)
+                                {
+                                    shouldMerge = true;
+                                    contactIdx = j;
+                                    actualContactDist = math.sqrt(r2);
+                                    break;
+                                }
+                            } while (mainBodyLut.TryGetNextValue(out j, ref it));
+                        }
                     }
                 }
 
                 if (!shouldMerge) 
                 {
-                    noMainBodyNearby++;
-                    float dist = math.sqrt(distToMain2);
-                    minDistToMain = math.min(minDistToMain, dist);
                     continue;
                 }
                 
-                separatedMerged++;
-
                 var p = _particles[i];
                 int sourceId = p.SourceId;
                 
-                // 使用ParticleStateManager合并粒子
-                ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
+                if (isSceneDroplet && contactIdx >= 0)
+                {
+                    var target = _particles[contactIdx];
+                    if (target.Type == ParticleType.Separated && target.ControllerId > 0)
+                    {
+                        // 直接并入分离团：继承控制器/稳定ID/Cluster等信息
+                        p.Type = ParticleType.Separated;
+                        p.ControllerId = target.ControllerId;
+                        p.StableId = target.StableId;
+                        p.ClusterId = target.ClusterId;
+                        p.FramesOutsideMain = target.FramesOutsideMain;
+                        p.SourceId = -1;
+                        p.FreeFrames = 0;
+                    }
+                    else
+                    {
+                        ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
+                    }
+                }
+                else
+                {
+                    // 使用ParticleStateManager合并粒子
+                    ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
+                }
                 _particles[i] = p;
                 
                 // 融合时抑制爆炸：去掉水平速度和向上分量，保留向下速度避免“下落变慢”
@@ -2576,17 +2827,18 @@ _prevVelocitySim = v_real;
                     mergedCount++;
                 }
             }
+
+            PerformanceProfiler.End("MergeContact_ScanMainRange");
             
             // ========== 处理水珠独立分区 [8192-16383] ==========
             // 复用与分离粒子相同的接触融合逻辑
             {
-                _dropletSubsystem.GetDebugInfo(out int dropletActive, out _);
-                
-                if (dropletActive > 0)
+                PerformanceProfiler.Begin("MergeContact_ScanDropletPartition");
+                if (checkDropletPartition && dropletActiveCount > 0)
                 {
+                    // dropletActiveCount 个活跃水珠，索引范围 [8192..8192+dropletActiveCount)
                     int dropletStart = DropletSubsystem.DROPLET_START;
-                    // 只遍历活跃水珠范围，而非整个分区（性能优化：从8192次降到实际活跃数）
-                    int dropletEnd = dropletStart + dropletActive - 1;
+                    int dropletEnd = dropletStart + dropletActiveCount - 1;
                     
                     for (int i = dropletStart; i <= dropletEnd; i++)
                     {
@@ -2611,39 +2863,29 @@ _prevVelocitySim = v_real;
                         
                         float3 dropletPos = p.Position;
                         
-                        // 预过滤：使用与分离粒子相同的 mergeRadius2
-                        float distToMain2 = math.lengthsq(dropletPos - mainCenter);
-                        float distToMain = math.sqrt(distToMain2);
-                        
-                        if (distToMain2 > mergeRadius2 * 4) 
-                        {
-                            continue;
-                        }
-                        
                         // 使用空间哈希加速接触检测（O(1) 邻域查询）
                         bool shouldMerge = false;
-                        int3 dropletCoord = PBF_Utils.GetCoord(dropletPos);
-                        float minR2ToMainBody = float.MaxValue;
-                        int neighborsFound = 0;
+                        int3 dropletCoord = GetMergeCoord(dropletPos);
+                        int contactIdx = -1;
                         
-                        for (int dz = -1; dz <= 1 && !shouldMerge; ++dz)
-                        for (int dy = -1; dy <= 1 && !shouldMerge; ++dy)
-                        for (int dx = -1; dx <= 1 && !shouldMerge; ++dx)
+                        const int dropletMergeNeighborRange = 1;
+                        for (int dz = -dropletMergeNeighborRange; dz <= dropletMergeNeighborRange && !shouldMerge; ++dz)
+                        for (int dy = -dropletMergeNeighborRange; dy <= dropletMergeNeighborRange && !shouldMerge; ++dy)
+                        for (int dx = -dropletMergeNeighborRange; dx <= dropletMergeNeighborRange && !shouldMerge; ++dx)
                         {
                             int key = PBF_Utils.GetKey(dropletCoord + new int3(dx, dy, dz));
-                            if (mainBodyLut.TryGetFirstValue(key, out int j, out var it))
+                            if (absorbLut.TryGetFirstValue(key, out int j, out var it))
                             {
                                 do
                                 {
-                                    neighborsFound++;
                                     float r2 = math.lengthsq(dropletPos - _particles[j].Position);
-                                    minR2ToMainBody = math.min(minR2ToMainBody, r2);
                                     if (r2 <= contactDist2)
                                     {
                                         shouldMerge = true;
+                                        contactIdx = j;
                                         break;
                                     }
-                                } while (mainBodyLut.TryGetNextValue(out j, ref it));
+                                } while (absorbLut.TryGetNextValue(out j, ref it));
                             }
                         }
                         
@@ -2665,17 +2907,31 @@ _prevVelocitySim = v_real;
                             continue; // 迁移失败，跳过
                         }
                         
-                        // 在主体分区末尾创建新的 MainBody 粒子
+                        // 在主体分区末尾创建新的粒子（根据接触目标决定主体/分离）
+                        var target = contactIdx >= 0 ? _particles[contactIdx] : default;
                         int newMainIdx = activeParticles;
-                        _particles[newMainIdx] = new Particle
+                        var newParticle = new Particle
                         {
                             Position = migratedPos,
                             Type = ParticleType.MainBody,
                             ControllerId = 0,
                             StableId = 0,
                             FreeFrames = 0,
-                            SourceId = -1
+                            SourceId = -1,
+                            ClusterId = 0,
+                            FramesOutsideMain = 0
                         };
+
+                        if (contactIdx >= 0 && target.Type == ParticleType.Separated && target.ControllerId > 0)
+                        {
+                            newParticle.Type = ParticleType.Separated;
+                            newParticle.ControllerId = target.ControllerId;
+                            newParticle.StableId = target.StableId;
+                            newParticle.ClusterId = target.ClusterId;
+                            newParticle.FramesOutsideMain = target.FramesOutsideMain;
+                        }
+
+                        _particles[newMainIdx] = newParticle;
                         // 【修复】融合时清零速度，防止高速粒子冲入主体导致爆炸
                         _velocityBuffer[newMainIdx] = float3.zero;
                         activeParticles++;
@@ -2689,10 +2945,12 @@ _prevVelocitySim = v_real;
                         }
                     }
                 }
+                PerformanceProfiler.End("MergeContact_ScanDropletPartition");
                 
             }
             
             // 更新场景水珠源的剩余数量
+            PerformanceProfiler.Begin("MergeContact_UpdateSources");
             if (_absorbedFromSourceCounts != null && _absorbedSourceIds.Count > 0 && allSources != null)
             {
                 for (int idx = 0; idx < _absorbedSourceIds.Count; idx++)
@@ -2706,6 +2964,7 @@ _prevVelocitySim = v_real;
                     }
                 }
             }
+            PerformanceProfiler.End("MergeContact_UpdateSources");
             
         }
         
@@ -2863,7 +3122,6 @@ _prevVelocitySim = v_real;
             // 检查SlimeVolume是否允许发射
             if (!_slimeVolume.CanEmit(emitBatchSize))
             {
-                Debug.LogWarning($"[Emit] 体积不足，无法发射 (当前: {_slimeVolume.CurrentVolume}, 最小: {_slimeVolume.MinVolume})");
                 return;
             }
             
@@ -2875,7 +3133,6 @@ _prevVelocitySim = v_real;
             }
             else
             {
-                Debug.LogWarning("[Emit] 没有控制器也没有trans引用");
                 return;
             }
             
@@ -2915,7 +3172,6 @@ _prevVelocitySim = v_real;
             if (mainParticleCount == 0)
             {
                 distList.Dispose();
-                Debug.LogWarning("[Emit] 没有主体粒子可发射");
                 return;
             }
             
@@ -3035,6 +3291,46 @@ _prevVelocitySim = v_real;
             }
 
             int candidateCount = candidateIndices.Count;
+
+            // 候选数量不足直接跳过发射，避免“先发一小撮再回滚”的闪烁
+            if (candidateCount < minSeparateClusterSize)
+            {
+                // 宽松补选：放宽角度/高度限制，仅按距离选最近的主体粒子补足到 minSeparateClusterSize
+                float fallbackMaxDist = math.max(maxSelectDist, controllerRadius * 2f);
+                float fallbackMaxDistSq = fallbackMaxDist * fallbackMaxDist;
+                var extra = new System.Collections.Generic.List<int>(minSeparateClusterSize - candidateCount);
+                for (int i = 0; i < activeParticles; i++)
+                {
+                    if (_particles[i].Type != ParticleType.MainBody) continue;
+                    if (candidateMask[i] != 0) continue;
+                    float distSq = math.lengthsq(_particles[i].Position - spawnCenter);
+                    if (distSq > fallbackMaxDistSq) continue;
+                    extra.Add(i);
+                }
+                if (extra.Count > 0)
+                {
+                    extra.Sort((a, b) =>
+                    {
+                        float da = math.lengthsq(_particles[a].Position - spawnCenter);
+                        float db = math.lengthsq(_particles[b].Position - spawnCenter);
+                        return da.CompareTo(db);
+                    });
+                    for (int k = 0; k < extra.Count && candidateIndices.Count < minSeparateClusterSize; k++)
+                    {
+                        int idx = extra[k];
+                        candidateMask[idx] = 1;
+                        candidateIndices.Add(idx);
+                    }
+                }
+
+                candidateCount = candidateIndices.Count;
+                if (candidateCount < minSeparateClusterSize)
+                {
+                    candidateMask.Dispose();
+                    return;
+                }
+            }
+
             if (candidateCount > 0)
             {
                 int[] idxArr = candidateIndices.ToArray();
@@ -3080,8 +3376,6 @@ _prevVelocitySim = v_real;
                         _velocityBuffer[i] = float3.zero;
                     }
                 }
-                if (componentDebug)
-                    Debug.Log($"[Emit] 发射数量不足 ({emitted} < {minSeparateClusterSize})，已撤销");
                 return;
             }
             
@@ -3149,9 +3443,6 @@ _prevVelocitySim = v_real;
         
         private void RearrangeInstances()
         {
-            int rayInsectCallCount = 0;
-            float rearrangeStart = Time.realtimeSinceStartup;
-            
             if (_slimeInstances.Length - _instancePool.Count > _controllerBuffer.Length)
             {
                 var used = new NativeArray<bool>(_slimeInstances.Length, Allocator.Temp);
@@ -3179,7 +3470,6 @@ _prevVelocitySim = v_real;
                     
                     used[instanceID] = true;
                     UpdateInstanceController(instanceID, controllerID);
-                    rayInsectCallCount++;
                 }
 
                 for (int i = 0; i < _slimeInstances.Length; i++)
@@ -3211,7 +3501,6 @@ _prevVelocitySim = v_real;
 
                     int controllerID = _slimeInstances[_controlledInstance].ControllerID;
                     UpdateInstanceController(_controlledInstance, controllerID);
-                    rayInsectCallCount++;
                 }
             }
             else
@@ -3228,7 +3517,6 @@ _prevVelocitySim = v_real;
                     {
                         used[0] = true;
                         UpdateInstanceController(instanceID, 0);
-                        rayInsectCallCount++;
                         continue;
                     }
                     
@@ -3271,7 +3559,6 @@ _prevVelocitySim = v_real;
                     
                     used[controllerID] = true;
                     UpdateInstanceController(instanceID, controllerID);
-                    rayInsectCallCount++;
                 }
                 
                 for (int i = 0; i < _controllerBuffer.Length; i++)
@@ -3299,11 +3586,12 @@ _prevVelocitySim = v_real;
                         MinPos = minPos,
                         MaxRadius = controller.Radius,
                     }.Schedule().Complete();
-                    rayInsectCallCount++;
                     
                     float3 newPos = _boundsBuffer[0];
                     if (!math.all(math.isfinite(newPos)))
-                        newPos = controller.Center + dir * controller.Radius * 0.5f;
+                        continue;
+                    
+                    newPos = controller.Center + dir * controller.Radius * 0.5f;
                     
                     SlimeInstance slime = new SlimeInstance()
                     {
@@ -3347,27 +3635,6 @@ _prevVelocitySim = v_real;
                 }
             }
             
-            float rearrangeMs = (Time.realtimeSinceStartup - rearrangeStart) * 1000f;
-            if (componentDebug && (Time.frameCount % 60 == 0 || rearrangeMs > 5f))
-            {
-                // 统计有效控制器数量
-                int validControllers = 0;
-                string ctrlInfo = "";
-                for (int c = 0; c < _controllerBuffer.Length; c++)
-                {
-                    var ctrl = _controllerBuffer[c];
-                    // 25粒子才算一组
-                    const int minParticlesForInstance = 25;
-                    if (c == 0 || (ctrl.IsValid && ctrl.ParticleCount >= minParticlesForInstance))
-                    {
-                        validControllers++;
-                        ctrlInfo += $"C{c}:{ctrl.ParticleCount} ";
-                    }
-                }
-                Debug.Log($"[RearrangeInstances] 耗时={rearrangeMs:F2}ms, RayInsectJob={rayInsectCallCount}, " +
-                         $"有效控制器={validControllers}/{_controllerBuffer.Length}, activeInstances={_slimeInstances.Length - _instancePool.Count}");
-                Debug.Log($"[RearrangeInstances] 控制器粒子数: {ctrlInfo}");
-            }
         }
 
         private void UpdateInstanceController(int instanceID, int controllerID)
@@ -3389,13 +3656,13 @@ _prevVelocitySim = v_real;
             if (horizVec.sqrMagnitude > 1e-4f)
             {
                 var newDir = Vector3.Slerp(slime.Dir, horizVec.normalized, speed);
-                newDir.y = 0f;
+                newDir.y = 0;
                 slime.Dir = newDir.sqrMagnitude > 1e-6f ? newDir.normalized : Vector3.forward;
             }
             else
             {
                 var newDir = slime.Dir;
-                newDir.y = 0f;
+                newDir.y = 0;
                 slime.Dir = newDir.sqrMagnitude > 1e-6f ? newDir.normalized : Vector3.forward;
             }
             
@@ -3413,6 +3680,11 @@ _prevVelocitySim = v_real;
                 }
             }
             float3 eyeCenter = mainBodyCount > 0 ? particleCentroid / mainBodyCount : controller.Center;
+
+            if (controllerID == 0)
+            {
+                _mainBodyCentroidWorld = (Vector3)(eyeCenter * PBF_Utils.Scale);
+            }
             
             // 眼睛方向只跟随水平速度，忽略垂直分量（跳跃时保持朝向稳定）
             float3 horizVel = new float3(controller.Velocity.x, 0, controller.Velocity.z);
@@ -3443,7 +3715,7 @@ _prevVelocitySim = v_real;
             {
                 // 找到表面：沿射线方向向内偏移（确保在表面内部）
                 float actualSurfaceDist = math.length(surfacePos - eyeCenter);
-                float insetDepth = actualSurfaceDist * 0.30f;
+                float insetDepth = actualSurfaceDist * 0.2f;
                 newPos = surfacePos - rayDir * insetDepth;
             }
             else
@@ -3485,12 +3757,20 @@ _prevVelocitySim = v_real;
             // 与主体粒子通过 GetWorldPosition() 得到的内部坐标一致，无需转换
             int dropletCount = _dropletSubsystem.CopyToRenderBuffer(_particlesRenderBuffer, activeParticles);
             
-            if (componentDebug && dropletCount > 0 && Time.frameCount % 60 == 0)
-            {
-                _dropletSubsystem.GetDebugInfo(out int dropletActive, out _);
-            }
-            
             return activeParticles + dropletCount;
+        }
+
+        private int ConvertMainToWorldPositionsForRendering()
+        {
+            for (int i = 0; i < activeParticles; i++)
+            {
+                var p = _particles[i];
+                float3 worldPos = Simulation_PBF.GetWorldPosition(p, _controllerBuffer, _sourceControllers);
+                p.Position = worldPos;
+                _particlesRenderBuffer[i] = p;
+            }
+
+            return activeParticles;
         }
         
         /// <summary>
@@ -3498,8 +3778,19 @@ _prevVelocitySim = v_real;
         /// </summary>
         private void BuildRenderLut(int totalParticles)
         {
-            // 使用临时哈希数组，避免破坏模拟用的 _hashes
-            using var renderHashes = new NativeArray<int2>(totalParticles, Allocator.TempJob);
+            if (totalParticles <= 0)
+            {
+                _renderLut.Clear();
+                return;
+            }
+
+            if (!_renderHashesBuffer.IsCreated || _renderHashesBuffer.Length < totalParticles)
+            {
+                if (_renderHashesBuffer.IsCreated) _renderHashesBuffer.Dispose();
+                _renderHashesBuffer = new NativeArray<int2>(math.max(256, totalParticles), Allocator.Persistent);
+            }
+
+            var renderHashes = _renderHashesBuffer.GetSubArray(0, totalParticles);
             
             // 使用渲染专用邻域表，不破坏模拟用的 _lut
             _renderLut.Clear();
@@ -3549,7 +3840,8 @@ _prevVelocitySim = v_real;
             if (!Application.isPlaying)
                 return;
             
-            if (!componentDebug)
+            // 没有任何线框选项时直接返回
+            if (!recallAvoidanceGizmos && !gridDebug && !ccaDebug && !colliderCollectDebug)
                 return;
             
             // 模拟边界（黄色）
@@ -3561,6 +3853,38 @@ _prevVelocitySim = v_real;
             {
                 Gizmos.color = new Color(0f, 1f, 1f, 0.6f);
                 Gizmos.DrawWireSphere(trans.position, _controllerBuffer[0].Radius * PBF_Utils.Scale);
+            }
+
+            if (recallAvoidanceGizmos && _controllerBuffer.IsCreated && _controllerBuffer.Length > 1)
+            {
+                Gizmos.color = new Color(1f, 0f, 1f, 0.5f);
+                for (int i = 1; i < _controllerBuffer.Length; i++)
+                {
+                    var ctrl = _controllerBuffer[i];
+                    if (!ctrl.IsValid)
+                        continue;
+                    Vector3 cW = (Vector3)(ctrl.Center * PBF_Utils.Scale);
+                    float rW = math.max(0.001f, ctrl.Radius * PBF_Utils.Scale);
+                    Gizmos.DrawWireSphere(cW, rW);
+                }
+
+                if (_dbgRecallSphereCastFrame > 0)
+                {
+                    Gizmos.color = _dbgRecallSphereHitFinal ? new Color(1f, 0.2f, 0.2f, 0.9f) : new Color(1f, 1f, 1f, 0.35f);
+                    Vector3 startW = _dbgRecallSphereOriginW;
+                    Vector3 endW = _dbgRecallSphereOriginW + _dbgRecallSphereDirW * _dbgRecallSphereCastDistW;
+                    float rW = math.max(0.001f, _dbgRecallSphereRadiusW);
+                    Gizmos.DrawWireSphere(startW, rW);
+                    Gizmos.DrawWireSphere(endW, rW);
+                    Gizmos.DrawLine(startW, endW);
+
+                    if (_dbgRecallSphereHitRaw)
+                    {
+                        Gizmos.color = _dbgRecallSphereHitFilteredByNormal ? new Color(1f, 0.7f, 0f, 0.9f) : new Color(1f, 0.2f, 0.2f, 0.9f);
+                        Gizmos.DrawWireSphere(_dbgRecallSphereHitPointW, rW * 0.35f);
+                        Gizmos.DrawLine(_dbgRecallSphereHitPointW, _dbgRecallSphereHitPointW + _dbgRecallSphereHitNormalW * math.max(0.2f, rW));
+                    }
+                }
             }
             
             // 网格块（gridDebug）
@@ -3602,85 +3926,80 @@ _prevVelocitySim = v_real;
             }
         }
         
-        #region 碰撞体采集（近场缓存）
+        #region 碰撞体查询（索引缓存）
         
         /// <summary>
         /// 刷新近场碰撞体缓存：查询史莱姆和水珠附近的碰撞体
         /// </summary>
-        private void RefreshNearbyColliders()
+        private void RefreshMainNearbyColliders()
         {
-            // 获取史莱姆中心位置（世界坐标）
+            _currentColliderCount = 0;
+            _colliderInstanceIds.Clear();
+
+            if (!SlimeWorldColliderIndex.TryGetInstance(out var index))
+                return;
+
+            Transform ignoreRoot = trans != null ? trans.root : null;
             Vector3 slimeCenter = trans != null ? trans.position : Vector3.zero;
-            
-            // 扩大查询半径以包含水珠（水珠可能离主体较远）
-            float expandedRadius = colliderQueryRadius;
-            
-            // 考虑所有活跃的水珠源位置
-            if (allSources != null && allSources.Count > 0)
+
+            index.AppendMyBoxColliders(slimeCenter, mainColliderQueryRadius, ignoreRoot, _colliderBuffer, ref _currentColliderCount, mainColliderCacheCapacity, _colliderInstanceIds);
+
+            if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 1)
             {
-                foreach (var source in allSources)
+                for (int i = 1; i < _controllerBuffer.Length && _currentColliderCount < mainColliderCacheCapacity; i++)
                 {
-                    if (source != null && source.State == DropWater.DropletSourceState.Simulated)
-                    {
-                        float distToSource = Vector3.Distance(slimeCenter, source.transform.position);
-                        expandedRadius = Mathf.Max(expandedRadius, distToSource + 5f); // 额外5米覆盖水珠散布范围
-                    }
+                    var ctrl = _controllerBuffer[i];
+                    if (!ctrl.IsValid)
+                        continue;
+
+                    Vector3 cW = (Vector3)(ctrl.Center * PBF_Utils.Scale);
+                    float rW = math.max(mainColliderQueryRadius, (ctrl.Radius * PBF_Utils.Scale) + 2f);
+                    index.AppendMyBoxColliders(cW, rW, ignoreRoot, _colliderBuffer, ref _currentColliderCount, mainColliderCacheCapacity, _colliderInstanceIds);
                 }
             }
-            
-            // 查询扩大范围内的碰撞体
-            int foundCount = UnityEngine.Physics.OverlapSphereNonAlloc(
-                slimeCenter, 
-                expandedRadius, 
-                _overlapResults, 
-                colliderLayers
-            );
-            
-            if (colliderCollectDebug)
-                Debug.Log($"[RefreshNearbyColliders] center={slimeCenter}, radius={colliderQueryRadius}, found={foundCount}");
-            
-            // 写入 _colliderBuffer
-            int validCount = 0;
-            for (int i = 0; i < foundCount && validCount < maxNearbyColliders; i++)
-            {
-                var col = _overlapResults[i];
-                if (col == null) continue;
-                
-                // 跳过玩家角色自身的碰撞体（检查整个角色层级）
-                if (trans != null && col.transform.root == trans.root)
-                    continue;
-                
-                var info = col.GetComponent<SlimeColliderInfo>();
-                int colliderType = info != null ? (int)info.colliderType : ColliderTypes.Ground;
-                float friction = info != null ? info.surfaceFriction : 0.3f;
-                
-                // 计算 extent
-                float3 extentRaw = (float3)(col.bounds.extents * PBF_Utils.InvScale);
-                float3 margin = new float3(1f, 1f, 1f);
-                
-                _colliderBuffer[validCount] = new MyBoxCollider()
-                {
-                    Center = col.bounds.center * PBF_Utils.InvScale,
-                    Extent = extentRaw + margin,
-                    Type = colliderType,
-                    Friction = friction,
-                };
-                
-                validCount++;
-                
-                if (colliderCollectDebug)
-                    Debug.Log($"  [{validCount}] {col.gameObject.name}: Type={colliderType}, Layer={col.gameObject.layer}");
-            }
-            
-            _currentColliderCount = validCount;
-            
-            if (colliderCollectDebug || (startupProfileDebug && Time.frameCount < 10))
-                Debug.Log($"[RefreshNearbyColliders] 有效碰撞体数={_currentColliderCount}/{maxNearbyColliders}");
         }
         
         /// <summary>
         /// 为每个有效控制器独立射线检测地面高度，存入 ctrl.GroundY
         /// </summary>
+        private void RefreshDropletNearbyColliders()
+        {
+            _currentDropletColliderCount = 0;
+            _dropletColliderInstanceIds.Clear();
+
+            if (!SlimeWorldColliderIndex.TryGetInstance(out var index))
+                return;
+
+            Transform ignoreRoot = trans != null ? trans.root : null;
+            if (_dropletSubsystem.TryGetActiveBounds(out float3 min, out float3 max))
+            {
+                float3 center = (min + max) * 0.5f;
+                float3 extent = (max - min) * 0.5f;
+
+                Vector3 centerWorld = (Vector3)(center * PBF_Utils.Scale);
+                Vector3 extentWorld = (Vector3)(extent * PBF_Utils.Scale);
+                float radiusWorld = math.max(dropletColliderQueryRadius, extentWorld.magnitude + 2f);
+
+                index.AppendMyBoxColliders(centerWorld, radiusWorld, ignoreRoot,
+                    _dropletColliderBuffer, ref _currentDropletColliderCount, dropletColliderCacheCapacity, _dropletColliderInstanceIds);
+                return;
+            }
+
+            if (allSources == null || allSources.Count == 0)
+                return;
+
+            for (int s = 0; s < allSources.Count && _currentDropletColliderCount < dropletColliderCacheCapacity; s++)
+            {
+                var source = allSources[s];
+                if (source == null || source.State != DropWater.DropletSourceState.Simulated)
+                    continue;
+
+                Vector3 sourceCenter = source.transform.position;
+                index.AppendMyBoxColliders(sourceCenter, dropletColliderQueryRadius, ignoreRoot,
+                    _dropletColliderBuffer, ref _currentDropletColliderCount, dropletColliderCacheCapacity, _dropletColliderInstanceIds);
+            }
+        }
+
         private void UpdateControllerGroundHeights()
         {
             if (!_controllerBuffer.IsCreated || _controllerBuffer.Length == 0)
@@ -3707,7 +4026,8 @@ _prevVelocitySim = v_real;
                 float rayStartY = worldPos.y + 2f; // 抬高起点
                 worldPos.y = rayStartY;
                 
-                if (UnityEngine.Physics.Raycast(worldPos, Vector3.down, out RaycastHit hit, 30f, colliderLayers))
+                bool hitGround = TryRaycastFiltered(worldPos, Vector3.down, 30f, out RaycastHit hit);
+                if (hitGround)
                 {
                     float oldGroundY = ctrl.GroundY;
                     // 地面高度 + 粒子半径，转为模拟坐标
@@ -3724,24 +4044,11 @@ _prevVelocitySim = v_real;
                         ctrl.GroundY = math.lerp(oldGroundY, newGroundY, 0.1f); // 缓慢上升
                     }
                     
-                    // 调试日志：检测地面高度突变（仅在实际应用后差异超过阈值时输出）
-                    if (componentDebug && (Time.frameCount % 60 == 0) && c > 0 && math.abs(ctrl.GroundY - oldGroundY) > 0.5f)
-                    {
-                        Debug.Log($"[GroundDetect] C{c}: 地面变化 old={oldGroundY * PBF_Utils.Scale:F2} -> new={ctrl.GroundY * PBF_Utils.Scale:F2}, " +
-                                  $"rayHit={newGroundY * PBF_Utils.Scale:F2}, hit={hit.collider.name}");
-                    }
                 }
                 else
                 {
                     // 未命中时使用控制器中心Y减去一定距离作为后备
-                    float oldGroundY = ctrl.GroundY;
                     ctrl.GroundY = ctrl.Center.y - 20f;
-                    
-                    // 调试日志：射线未命中
-                    if (componentDebug && (Time.frameCount % 60 == 0) && c > 0)
-                    {
-                        Debug.Log($"[GroundDetect] C{c}: 射线未命中! rayStart=({worldPos.x:F1},{rayStartY:F1},{worldPos.z:F1}), 使用后备={ctrl.GroundY * PBF_Utils.Scale:F2}");
-                    }
                 }
                 
                 _controllerBuffer[c] = ctrl;
@@ -3751,22 +4058,98 @@ _prevVelocitySim = v_real;
         #endregion
         
         #region 召回避障
-        
+
+        private bool TryRaycastFiltered(Vector3 originW, Vector3 dirW, float maxDistW, out RaycastHit best)
+        {
+            best = default;
+            if (_raycastHits == null || _raycastHits.Length == 0)
+                return UnityEngine.Physics.Raycast(originW, dirW, out best, maxDistW, ColliderQueryMask, QueryTriggerInteraction.Ignore);
+
+            int count = UnityEngine.Physics.RaycastNonAlloc(originW, dirW, _raycastHits, maxDistW, ColliderQueryMask, QueryTriggerInteraction.Ignore);
+            float bestDist = float.PositiveInfinity;
+            bool has = false;
+            for (int i = 0; i < count; i++)
+            {
+                var h = _raycastHits[i];
+                var col = h.collider;
+                if (col == null)
+                    continue;
+                if (trans != null && col.transform != null && col.transform.root == trans.root)
+                    continue;
+                if (h.distance < bestDist)
+                {
+                    bestDist = h.distance;
+                    best = h;
+                    has = true;
+                }
+            }
+            return has;
+        }
+
+        private bool TrySphereCastFiltered(Vector3 originW, float radiusW, Vector3 dirW, float maxDistW, out RaycastHit best)
+        {
+            best = default;
+            if (_sphereCastHits == null || _sphereCastHits.Length == 0)
+                return UnityEngine.Physics.SphereCast(originW, radiusW, dirW, out best, maxDistW, ColliderQueryMask, QueryTriggerInteraction.Ignore);
+
+            int count = UnityEngine.Physics.SphereCastNonAlloc(originW, radiusW, dirW, _sphereCastHits, maxDistW, ColliderQueryMask, QueryTriggerInteraction.Ignore);
+            float bestDist = float.PositiveInfinity;
+            bool has = false;
+            for (int i = 0; i < count; i++)
+            {
+                var h = _sphereCastHits[i];
+                var col = h.collider;
+                if (col == null)
+                    continue;
+                if (trans != null && col.transform != null && col.transform.root == trans.root)
+                    continue;
+                if (h.distance <= 1e-4f)
+                    continue;
+                if (h.distance < bestDist)
+                {
+                    bestDist = h.distance;
+                    best = h;
+                    has = true;
+                }
+            }
+            return has;
+        }
+
         /// <summary>
         /// 计算带避障的召回速度
         /// 新逻辑：基础速度 = 指向主体的速度，叠加避障 steering 力
         /// </summary>
         /// <param name="center">分离组中心（模拟坐标）</param>
-        /// <param name="radius">分离组半径</param>
+        /// <param name="radiusXZ">分离组半径</param>
+        /// <param name="halfHeight">分离组半径</param>
         /// <param name="mainCenter">主体中心（模拟坐标）</param>
         /// <param name="rawDir">原始朝向主体的方向（归一化）</param>
         /// <param name="speed">召回速度</param>
         /// <returns>处理过避障的召回速度向量</returns>
-        private float3 ComputeAvoidedRecallVelocity(float3 center, float radius, float3 mainCenter, float3 rawDir, float speed)
+        private float3 ComputeAvoidedRecallVelocity(int controllerId, float3 center, float radiusXZ, float halfHeight, float3 mainCenter, float3 rawDir, float speed)
         {
             // 基础速度：直接指向主体
-            float3 baseVel = speed * rawDir;
+            float3 baseVel = new float3(rawDir.x, 0f, rawDir.z) * speed;
             float3 steering = float3.zero;
+
+            float dt = math.max(1e-4f, deltaTime);
+            float maxUpSim = math.max(0.01f, recallStepMaxUpSpeed) * PBF_Utils.InvScale;
+            bool hasStepJumpTarget = controllerId > 0 &&
+                                    _controllerStepJumpTargetCenterY != null &&
+                                    controllerId < _controllerStepJumpTargetCenterY.Length &&
+                                    !float.IsNaN(_controllerStepJumpTargetCenterY[controllerId]);
+
+            float recallObstacleCheckDistSim = recallObstacleCheckDist * PBF_Utils.InvScale;
+            float recallObstacleKeepDistanceMarginSim = recallObstacleKeepDistanceMargin * PBF_Utils.InvScale;
+            float recallStepMaxHeightSim = recallStepMaxHeight * PBF_Utils.InvScale;
+
+            bool dbgSphereHitRaw = false;
+            bool dbgSphereHitFinal = false;
+            bool dbgSphereHitFilteredByNormal = false;
+            Collider dbgSphereCol = null;
+            int dbgSphereLayer = -1;
+            Vector3 dbgSphereNormalW = Vector3.zero;
+            float dbgSphereDistW = -1f;
             
             // XZ平面上的方向
             float2 dirXZ = math.normalizesafe(new float2(rawDir.x, rawDir.z));
@@ -3775,13 +4158,56 @@ _prevVelocitySim = v_real;
                 return baseVel; // 几乎垂直，不需要避障
             }
 
-            float projectionCheckDist = recallObstacleCheckDist + radius;
+            float projectionCheckDist = recallObstacleCheckDistSim + radiusXZ;
             Vector3 originW = (Vector3)(center * PBF_Utils.Scale);
             Vector3 dirW = new Vector3(dirXZ.x, 0f, dirXZ.y);
-            float sphereRadiusW = math.max(0.001f, radius * PBF_Utils.Scale);
+            float sphereRadiusW = math.max(0.001f, radiusXZ * PBF_Utils.Scale);
             float castDistW = math.max(0.001f, projectionCheckDist * PBF_Utils.Scale);
-            float keepDistW = math.max(0f, (radius + recallObstacleKeepDistanceMargin) * PBF_Utils.Scale);
-            bool sphereHit = UnityEngine.Physics.SphereCast(originW, sphereRadiusW, dirW, out RaycastHit hit, castDistW, colliderLayers, QueryTriggerInteraction.Ignore);
+            float keepDistW = math.max(0f, (radiusXZ + recallObstacleKeepDistanceMarginSim) * PBF_Utils.Scale);
+            bool sphereHitRaw = TrySphereCastFiltered(originW, sphereRadiusW, dirW, castDistW, out RaycastHit hit);
+            bool sphereHit = sphereHitRaw;
+            dbgSphereHitRaw = sphereHitRaw;
+            if (sphereHitRaw)
+            {
+                dbgSphereCol = hit.collider;
+                dbgSphereLayer = (dbgSphereCol != null) ? dbgSphereCol.gameObject.layer : -1;
+                dbgSphereNormalW = hit.normal;
+                dbgSphereDistW = hit.distance;
+            }
+
+            if (sphereHit)
+            {
+                // 过滤地面/坡面：水平召回避障只关心“墙”的水平法线
+                if (math.abs(hit.normal.y) > 0.65f)
+                {
+                    sphereHit = false;
+                    dbgSphereHitFilteredByNormal = true;
+                }
+            }
+            dbgSphereHitFinal = sphereHit;
+
+            if (recallAvoidanceGizmos)
+            {
+                _dbgRecallSphereCastFrame = Time.frameCount;
+                _dbgRecallSphereOriginW = originW;
+                _dbgRecallSphereDirW = dirW;
+                _dbgRecallSphereRadiusW = sphereRadiusW;
+                _dbgRecallSphereCastDistW = castDistW;
+                _dbgRecallSphereHitRaw = sphereHitRaw;
+                _dbgRecallSphereHitFinal = sphereHit;
+                _dbgRecallSphereHitFilteredByNormal = dbgSphereHitFilteredByNormal;
+                if (sphereHitRaw)
+                {
+                    _dbgRecallSphereHitPointW = hit.point;
+                    _dbgRecallSphereHitNormalW = hit.normal;
+                }
+                else
+                {
+                    _dbgRecallSphereHitPointW = Vector3.zero;
+                    _dbgRecallSphereHitNormalW = Vector3.up;
+                }
+            }
+
             if (sphereHit)
             {
                 float3 nSim = (float3)hit.normal;
@@ -3794,63 +4220,28 @@ _prevVelocitySim = v_real;
                     vXZ -= intoWall * nSim;
                 float distRemainW = math.max(0f, hit.distance - keepDistW);
                 float denomW = math.max(0.001f, castDistW - keepDistW);
-                float slow01 = math.saturate(distRemainW / denomW);
-                vXZ *= slow01;
-                float push01 = 1f - slow01;
-                vXZ += nSim * (speed * 0.35f * push01);
+                float slow01Hit = math.saturate(distRemainW / denomW);
+                vXZ *= slow01Hit;
+                float push01 = 1f - slow01Hit;
+
+                float3 slideVecHit = rawDir - math.dot(rawDir, nSim) * nSim;
+                slideVecHit.y = 0;
+                if (math.lengthsq(slideVecHit) < 1e-3f)
+                    slideVecHit = new float3(-nSim.z, 0f, nSim.x);
+                float3 slideDirHit = math.normalizesafe(slideVecHit);
+                if (math.lengthsq(slideDirHit) < 1e-6f)
+                {
+                    float3 perp = new float3(-nSim.z, 0f, nSim.x);
+                    slideDirHit = math.normalizesafe(perp);
+                }
+
+                vXZ += slideDirHit * (speed * 0.35f * push01);
                 baseVel.x = vXZ.x;
                 baseVel.z = vXZ.z;
             }
-            else
-            {
-                bool canOverlap = _overlapResults != null && _overlapResults.Length > 0;
-                bool overlapped = canOverlap && UnityEngine.Physics.CheckSphere(originW, sphereRadiusW, colliderLayers, QueryTriggerInteraction.Ignore);
-                if (overlapped)
-                {
-                    int overlapCount = UnityEngine.Physics.OverlapSphereNonAlloc(originW, sphereRadiusW, _overlapResults, colliderLayers, QueryTriggerInteraction.Ignore);
-                    float bestDist2 = float.PositiveInfinity;
-                    Vector3 bestPoint = originW;
-                    for (int i = 0; i < overlapCount; i++)
-                    {
-                        var col = _overlapResults[i];
-                        if (col == null)
-                            continue;
-                        if (trans != null && col.transform.root == trans.root)
-                            continue;
-                        Vector3 cp = col.ClosestPoint(originW);
-                        float d2 = (originW - cp).sqrMagnitude;
-                        if (d2 < bestDist2)
-                        {
-                            bestDist2 = d2;
-                            bestPoint = cp;
-                        }
-                    }
-
-                    Vector3 nW;
-                    Vector3 delta = originW - bestPoint;
-                    float deltaLen2 = delta.sqrMagnitude;
-                    if (deltaLen2 > 1e-8f)
-                        nW = delta / Mathf.Sqrt(deltaLen2);
-                    else
-                        nW = (dirW.sqrMagnitude > 1e-8f) ? (-dirW.normalized) : Vector3.up;
-
-                    float3 nSim = (float3)nW;
-                    nSim.y = 0;
-                    nSim = math.normalizesafe(nSim);
-                    float3 vXZ = speed * rawDir;
-                    vXZ.y = 0;
-                    float intoWall = math.dot(vXZ, nSim);
-                    if (intoWall < 0f)
-                        vXZ -= intoWall * nSim;
-                    vXZ *= 0.15f;
-                    vXZ += nSim * (speed * 0.50f);
-                    baseVel.x = vXZ.x;
-                    baseVel.z = vXZ.z;
-                }
-            }
             
             // 检测前方是否有障碍物阻挡
-            float checkDist = recallObstacleCheckDist + radius;
+            float checkDist = recallObstacleCheckDistSim + radiusXZ;
             float closestBlockDist = float.MaxValue;
             int closestBlockIdx = -1;
             float3 closestBlockNormal = float3.zero;
@@ -3861,7 +4252,7 @@ _prevVelocitySim = v_real;
                 MyBoxCollider box = _colliderBuffer[c];
                 
                 // 扩展后的 AABB（考虑分离组半径）
-                float3 expandedExtent = box.Extent + new float3(radius, 0, radius);
+                float3 expandedExtent = box.Extent + new float3(radiusXZ, 0, radiusXZ);
                 
                 // 射线-AABB相交测试（只考虑XZ平面）
                 float3 rayOrigin = center;
@@ -3879,8 +4270,8 @@ _prevVelocitySim = v_real;
                 float tFar = math.min(tmax3.x, tmax3.z);
                 
                 // 检查Y方向是否重叠（分离组高度范围与AABB高度范围）
-                float groupBottom = center.y - radius;
-                float groupTop = center.y + radius;
+                float groupBottom = center.y - halfHeight;
+                float groupTop = center.y + halfHeight;
                 float boxBottom = box.Center.y - box.Extent.y;
                 float boxTop = box.Center.y + box.Extent.y;
                 
@@ -3892,13 +4283,38 @@ _prevVelocitySim = v_real;
                 {
                     float penX = expandedExtent.x - math.abs(deltaToBox.x);
                     float penZ = expandedExtent.z - math.abs(deltaToBox.z);
-                    float signX = math.sign(deltaToBox.x);
-                    float signZ = math.sign(deltaToBox.z);
-                    if (penX < penZ)
-                        closestBlockNormal = new float3(signX == 0f ? -math.sign(rayDir.x) : signX, 0, 0);
+
+                    // 重要：insideXZ 仅表示“在投影盒子内部”，对很大的BoxCollider（地面/关卡边界）会导致误判“贴墙”。
+                    // 只有当确实靠近盒子侧面（penetration 足够小）时才当作阻挡。
+                    float considerPen = (radiusXZ + recallObstacleKeepDistanceMarginSim) * 1.25f;
+                    bool moveAxisX = math.abs(rayDir.x) > math.abs(rayDir.z);
+                    float distToFace = moveAxisX ? penX : penZ;
+                    if (distToFace > considerPen)
+                        continue;
+
+                    bool movingTowardBox;
+                    if (moveAxisX)
+                        movingTowardBox = (rayDir.x * deltaToBox.x) < 0f;
                     else
-                        closestBlockNormal = new float3(0, 0, signZ == 0f ? -math.sign(rayDir.z) : signZ);
-                    closestBlockDist = 0f;
+                        movingTowardBox = (rayDir.z * deltaToBox.z) < 0f;
+                    if (!movingTowardBox)
+                        continue;
+
+                    if (moveAxisX)
+                    {
+                        float nSign = math.sign(deltaToBox.x);
+                        if (nSign == 0f)
+                            nSign = -math.sign(rayDir.x);
+                        closestBlockNormal = new float3(nSign, 0, 0);
+                    }
+                    else
+                    {
+                        float nSign = math.sign(deltaToBox.z);
+                        if (nSign == 0f)
+                            nSign = -math.sign(rayDir.z);
+                        closestBlockNormal = new float3(0, 0, nSign);
+                    }
+                    closestBlockDist = distToFace;
                     closestBlockIdx = c;
                     closestBlockTopY = boxTop;
                     continue;
@@ -3920,16 +4336,95 @@ _prevVelocitySim = v_real;
                     }
                 }
             }
+
+            bool dbgHasCurGround = false;
+            bool dbgHasAheadGround = false;
+            float dbgCurGroundYW = 0f;
+            float dbgAheadGroundYW = 0f;
+            float dbgGroundDeltaW = 0f;
+            bool dbgHasStepTop = false;
+            float dbgStepTopYW = 0f;
+            float dbgStepTopDeltaW = 0f;
+            bool dbgCanStepUpByGround = false;
+            bool dbgIsDropByGround = false;
+            float dbgProbeFwdW = 0f;
+            if (closestBlockIdx >= 0 && recallStepMaxHeightSim > 0f)
+            {
+                float maxStepWDbg = recallStepMaxHeight;
+                float closestBlockDistWDbg = closestBlockDist * PBF_Utils.Scale;
+                dbgProbeFwdW = closestBlockDistWDbg + sphereRadiusW + 0.02f;
+                if (dbgSphereHitFinal)
+                    dbgProbeFwdW = math.max(dbgProbeFwdW, hit.distance + sphereRadiusW + 0.02f);
+                // 下台阶时如果 closestBlockDist 很小，probe 点可能仍在上台阶平台上，导致 groundDeltaW=0。
+                // 这里强制一个最小前移距离，尽量采样到边缘之后的地面。
+                dbgProbeFwdW = math.max(dbgProbeFwdW, (sphereRadiusW + keepDistW) + 0.20f);
+                dbgProbeFwdW = math.min(dbgProbeFwdW, castDistW + sphereRadiusW + 0.25f);
+
+                Vector3 curRayOriginW = originW + Vector3.up * 2f;
+                if (TryRaycastFiltered(curRayOriginW, Vector3.down, 6f, out RaycastHit curGroundHit))
+                {
+                    dbgHasCurGround = true;
+                    dbgCurGroundYW = curGroundHit.point.y;
+                }
+
+                Vector3 aheadPosW = originW + dirW * dbgProbeFwdW;
+                Vector3 aheadRayOriginW = aheadPosW + Vector3.up * 2f;
+                if (TryRaycastFiltered(aheadRayOriginW, Vector3.down, 6f, out RaycastHit aheadGroundHit))
+                {
+                    dbgHasAheadGround = true;
+                    dbgAheadGroundYW = aheadGroundHit.point.y;
+                }
+
+                if (dbgHasCurGround && dbgHasAheadGround)
+                {
+                    dbgGroundDeltaW = dbgAheadGroundYW - dbgCurGroundYW;
+                    dbgCanStepUpByGround = dbgGroundDeltaW > 0.01f && dbgGroundDeltaW <= maxStepWDbg;
+                    dbgIsDropByGround = dbgGroundDeltaW < -0.05f;
+
+                    if (dbgSphereHitFinal)
+                    {
+                        Vector3 stepTopProbePosW = originW + dirW * (hit.distance + sphereRadiusW + 0.02f);
+                        Vector3 stepTopRayOriginW = stepTopProbePosW + Vector3.up * (maxStepWDbg + 0.35f);
+                        float stepTopRayLenW = maxStepWDbg + 1.0f;
+                        if (TryRaycastFiltered(stepTopRayOriginW, Vector3.down, stepTopRayLenW, out RaycastHit stepTopHit))
+                        {
+                            dbgHasStepTop = true;
+                            dbgStepTopYW = stepTopHit.point.y;
+                            dbgStepTopDeltaW = dbgStepTopYW - dbgCurGroundYW;
+                            dbgCanStepUpByGround = dbgStepTopDeltaW > 0.01f && dbgStepTopDeltaW <= maxStepWDbg;
+                        }
+                    }
+
+                    float triggerAdvanceSimDbg = recallStepTriggerAdvance * PBF_Utils.InvScale;
+                    float triggerDistWDbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSimDbg) * PBF_Utils.Scale;
+                    if (dbgIsDropByGround && closestBlockDistWDbg <= triggerDistWDbg)
+                    {
+                        baseVel = new float3(rawDir.x, 0f, rawDir.z) * speed;
+                        steering = float3.zero;
+                        closestBlockIdx = -1;
+                    }
+                }
+            }
             
             // 如果没有阻挡，直接返回基础速度
             if (closestBlockIdx < 0)
             {
-                float targetYOffset = math.min(radius, recallStepMaxHeight);
-                float dyToMain = (mainCenter.y + targetYOffset) - center.y;
-                if (dyToMain > 0f)
+                if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
+                    _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
+
+                float3 dir3 = new float3(rawDir.x, 0f, rawDir.z);
+                float dirLen2 = math.lengthsq(dir3);
+                if (dirLen2 > 1e-6f)
                 {
-                    float up = math.min(recallStepUpSpeed, dyToMain * recallHeightCompensation);
-                    baseVel.y = math.max(baseVel.y, up);
+                    dir3 /= math.sqrt(dirLen2);
+                    float3 velXZ = new float3(baseVel.x, 0f, baseVel.z);
+                    float dotToward = math.dot(velXZ, dir3);
+                    if (dotToward < 0f)
+                    {
+                        velXZ -= dir3 * dotToward;
+                        baseVel.x = velXZ.x;
+                        baseVel.z = velXZ.z;
+                    }
                 }
                 return baseVel;
             }
@@ -3937,23 +4432,79 @@ _prevVelocitySim = v_real;
             // === 阻挡处理：叠加 steering 力 ===
             
             // 1. 检查是否是可跨越的台阶
-            float groupBottomY = center.y - radius;
+            float groupBottomY = center.y - halfHeight;
             float stepHeight = closestBlockTopY - groupBottomY;
             // 只要障碍物顶部低于主体，就尝试向上
-            bool canStepUp = stepHeight > 0 && stepHeight <= recallStepMaxHeight;
-            bool mainIsHigher = mainCenter.y > center.y - 1f; // 主体在分离组上方或差不多高度
-            
-            if (canStepUp || mainIsHigher)
+            float stepHeightW = stepHeight * PBF_Utils.Scale;
+            bool canStepUp = stepHeight > 0 && stepHeight <= recallStepMaxHeightSim && stepHeightW > 0.03f;
+            if (dbgHasCurGround && dbgHasAheadGround)
             {
-                // 台阶/高度差处理：叠加向上的 steering
-                float upStrength = recallStepUpSpeed;
-                // 如果主体更高，根据高度差和配置系数增强向上力
-                if (mainCenter.y > center.y)
-                {
-                    upStrength = math.max(upStrength, (mainCenter.y - center.y) * recallHeightCompensation);
-                }
-                steering.y = math.max(steering.y, upStrength);
+                stepHeightW = dbgHasStepTop ? dbgStepTopDeltaW : dbgGroundDeltaW;
+                canStepUp = dbgCanStepUpByGround;
             }
+
+            if (canStepUp)
+            {
+                if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
+                {
+                    float targetY = _controllerStepJumpTargetCenterY[controllerId];
+                    float dy = targetY - center.y;
+                    if (dy <= 0.01f * PBF_Utils.InvScale)
+                    {
+                        _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
+                        hasStepJumpTarget = false;
+                    }
+                    else
+                    {
+                        float upV = math.min(maxUpSim, dy / dt);
+                        baseVel.y = math.max(baseVel.y, upV);
+                    }
+                }
+
+                float triggerAdvanceSim = recallStepTriggerAdvance * PBF_Utils.InvScale;
+                float triggerDist = radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSim;
+                if (closestBlockDist <= triggerDist)
+                {
+                    baseVel.x = rawDir.x * speed;
+                    baseVel.z = rawDir.z * speed;
+                    float clearanceW = math.max(0.02f, sphereRadiusW * 0.5f);
+                    float targetRiseW = stepHeightW * (1f + recallHeightCompPercent) + clearanceW;
+                    float g = math.abs(UnityEngine.Physics.gravity.y);
+                    float jumpVelW = math.sqrt(math.max(0f, 2f * g * targetRiseW)) * math.max(0.2f, recallStepJumpSpeedScale);
+                    float jumpVelSim = jumpVelW * PBF_Utils.InvScale;
+                    baseVel.y = math.max(baseVel.y, math.min(maxUpSim, jumpVelSim));
+
+                    if (controllerId > 0)
+                    {
+                        if (_controllerStepJumpTargetCenterY != null && controllerId < _controllerStepJumpTargetCenterY.Length)
+                        {
+                            float clearanceSim = clearanceW * PBF_Utils.InvScale;
+                            float extraUpSim = math.max(0f, stepHeight * recallHeightCompPercent);
+                            float targetCenterYSim = closestBlockTopY + clearanceSim + halfHeight + extraUpSim;
+                            float curTarget = _controllerStepJumpTargetCenterY[controllerId];
+                            float nextTarget = float.IsNaN(curTarget) ? targetCenterYSim : math.max(curTarget, targetCenterYSim);
+                            _controllerStepJumpTargetCenterY[controllerId] = nextTarget;
+                        }
+                    }
+
+                    float stepProximityFactor = 1f - math.saturate(closestBlockDist / checkDist);
+                    float stepBaseSlow = 1f - stepProximityFactor * 0.75f;
+                    stepBaseSlow = math.max(stepBaseSlow, 0.2f);
+                    stepBaseSlow = math.saturate(stepBaseSlow);
+                    baseVel.x *= stepBaseSlow;
+                    baseVel.z *= stepBaseSlow;
+                    return baseVel;
+                }
+
+                baseVel.x = rawDir.x * speed;
+                baseVel.z = rawDir.z * speed;
+                if (!hasStepJumpTarget)
+                    baseVel.y = 0f;
+                return baseVel;
+            }
+
+            if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
+                _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
             
             // 2. 水平方向：叠加沿墙滑动的 steering
             float3 slideVec = rawDir - math.dot(rawDir, closestBlockNormal) * closestBlockNormal;
@@ -3963,23 +4514,54 @@ _prevVelocitySim = v_real;
             // 如果滑动方向几乎为零（正对墙），尝试绕行
             if (math.lengthsq(slideDir) < 0.1f)
             {
-                float3 perpDir = new float3(-rawDir.z, 0, rawDir.x);
+                float3 perpDir = new float3(-closestBlockNormal.z, 0f, closestBlockNormal.x);
                 slideDir = math.normalizesafe(perpDir);
+                if (math.lengthsq(slideDir) < 1e-6f)
+                {
+                    float3 alt = new float3(-rawDir.z, 0f, rawDir.x);
+                    slideDir = math.normalizesafe(alt);
+                }
             }
             
             // 叠加水平 steering（强度与障碍物距离成反比）
-            float proximityFactor = 1f - math.saturate(closestBlockDist / checkDist);
-            float baseSlow = 1f - proximityFactor * 0.75f;
-            if (canStepUp)
-                baseSlow = math.min(baseSlow, 0.2f);
-            baseSlow = math.saturate(baseSlow);
-            baseVel.x *= baseSlow;
-            baseVel.z *= baseSlow;
-            steering += slideDir * speed * proximityFactor * recallSlideWeight;
+            float slideProximityFactor = 1f - math.saturate(closestBlockDist / checkDist);
+            float slideBaseSlow = 1f - slideProximityFactor * 0.75f;
+            slideBaseSlow = math.saturate(slideBaseSlow);
+            baseVel.x *= slideBaseSlow;
+            baseVel.z *= slideBaseSlow;
+            steering += slideDir * speed * slideProximityFactor * recallSlideWeight;
+
+            float distRemain = math.max(0f, closestBlockDist - (radiusXZ + recallObstacleKeepDistanceMarginSim));
+            float slow01Slide = (checkDist > 1e-4f) ? math.saturate(distRemain / checkDist) : 0f;
+            baseVel.x *= slow01Slide;
+            baseVel.z *= slow01Slide;
+            float3 pushDir = closestBlockNormal - math.dot(closestBlockNormal, rawDir) * rawDir;
+            pushDir.y = 0;
+            pushDir = math.normalizesafe(pushDir);
+            if (math.lengthsq(pushDir) < 1e-6f)
+                pushDir = slideDir;
+            steering += pushDir * (speed * 0.35f * (1f - slow01Slide));
             
             // 最终速度 = 基础速度 + steering
             float3 resultVel = baseVel + steering;
-            
+
+            {
+                float3 dir3 = new float3(rawDir.x, 0f, rawDir.z);
+                float dirLen2 = math.lengthsq(dir3);
+                if (dirLen2 > 1e-6f)
+                {
+                    dir3 /= math.sqrt(dirLen2);
+                    float3 velXZ = new float3(resultVel.x, 0f, resultVel.z);
+                    float dotToward = math.dot(velXZ, dir3);
+                    if (dotToward < 0f)
+                    {
+                        velXZ -= dir3 * dotToward;
+                        resultVel.x = velXZ.x;
+                        resultVel.z = velXZ.z;
+                    }
+                }
+            }
+
             return resultVel;
         }
         
@@ -3993,8 +4575,7 @@ _prevVelocitySim = v_real;
         [ContextMenu("重置参数为默认值")]
         public void ResetToDefaults()
         {
-            int count = ConfigResetHelper.ResetToDefaults(this);
-            Debug.Log($"[Slime_PBF] 已重置 {count} 个参数为默认值");
+            ConfigResetHelper.ResetToDefaults(this);
         }
         
         #endregion
@@ -4014,6 +4595,27 @@ _prevVelocitySim = v_real;
         private HashSet<int> _tmpStableIdSet;
         private List<int> _tmpStableIdList;
         private HashSet<int> _tmpControllerIdSet;
+
+        private float3[] _stableResolveCenters;
+        private int[] _stableResolveCellCounts;
+        private int[] _stableResolveAssignedStable;
+        private List<int> _stableResolveAllStableIds;
+        private List<float3> _stableResolveAllStableCenters;
+        private List<int> _stableResolveCandComp;
+        private List<int> _stableResolveCandStable;
+        private List<float> _stableResolveCandDist2;
+        private List<int> _stableResolveOrder;
+        private Dictionary<int, int> _stableResolveStableAssignedToComp;
+        private CandidateDistComparer _stableResolveCandComparer;
+
+        private sealed class CandidateDistComparer : System.Collections.Generic.IComparer<int>
+        {
+            public List<float> Dist2;
+            public int Compare(int a, int b)
+            {
+                return Dist2[a].CompareTo(Dist2[b]);
+            }
+        }
 
         private int GetOrCreateControllerIdForStableId(int stableId)
         {
@@ -4035,6 +4637,17 @@ _prevVelocitySim = v_real;
                 _controllerBuffer.Add(default);
             }
 
+            if (_controllerStepJumpTargetCenterY == null || _controllerStepJumpTargetCenterY.Length <= newId)
+            {
+                int oldLen = _controllerStepJumpTargetCenterY?.Length ?? 0;
+                int newLen = math.max(newId + 1, oldLen * 2 + 1);
+                System.Array.Resize(ref _controllerStepJumpTargetCenterY, newLen);
+                for (int i = oldLen; i < newLen; i++)
+                    _controllerStepJumpTargetCenterY[i] = float.NaN;
+            }
+            if (newId > 0 && newId < _controllerStepJumpTargetCenterY.Length)
+                _controllerStepJumpTargetCenterY[newId] = float.NaN;
+
             _stableIdToController[stableId] = newId;
             return newId;
         }
@@ -4042,6 +4655,15 @@ _prevVelocitySim = v_real;
         private void RefreshStableIdToSlotMapping()
         {
             int required = math.max(1, _nextStableId);
+
+            if (_connect && _recallEligibleStableIds.IsCreated && _recallEligibleStableIds.Length < required)
+            {
+                var old = _recallEligibleStableIds;
+                _recallEligibleStableIds = new NativeArray<byte>(required, Allocator.Persistent);
+                for (int i = 0; i < _recallEligibleStableIds.Length; i++)
+                    _recallEligibleStableIds[i] = (i < old.Length) ? old[i] : (byte)0;
+                old.Dispose();
+            }
 
             if (!_stableIdToSlot.IsCreated || _stableIdToSlot.Length < required)
             {
@@ -4101,60 +4723,124 @@ _prevVelocitySim = v_real;
             int newIdCount = 0;
             int inheritedCount = 0;
             
-            // 遍历每个CCA组件，基于位置匹配已有的稳定ID
+            // 使用全局最小距离匹配，避免按遍历顺序导致的 stableId“抢占”误分配
+            if (_stableResolveCenters == null || _stableResolveCenters.Length < compCount)
+                _stableResolveCenters = new float3[math.max(32, compCount)];
+            if (_stableResolveCellCounts == null || _stableResolveCellCounts.Length < compCount)
+                _stableResolveCellCounts = new int[math.max(32, compCount)];
             for (int c = 0; c < compCount; c++)
             {
                 var comp = _componentsBuffer[c];
-                float3 center = minPos + comp.Center * PBF_Utils.CellSize;
-                
-                // 找最近的已有稳定ID
-                int bestStableId = 0;
-                float bestDist = float.MaxValue;
-                
-                foreach (var kv in _stableIdToCenter)
+                _stableResolveCenters[c] = minPos + comp.Center * PBF_Utils.CellSize;
+                _stableResolveCellCounts[c] = comp.CellCount;
+            }
+
+            if (_stableResolveAllStableIds == null)
+                _stableResolveAllStableIds = new List<int>(math.max(16, _stableIdToCenter.Count));
+            if (_stableResolveAllStableCenters == null)
+                _stableResolveAllStableCenters = new List<float3>(math.max(16, _stableIdToCenter.Count));
+            _stableResolveAllStableIds.Clear();
+            _stableResolveAllStableCenters.Clear();
+            if (_stableResolveAllStableIds.Capacity < _stableIdToCenter.Count)
+                _stableResolveAllStableIds.Capacity = _stableIdToCenter.Count;
+            if (_stableResolveAllStableCenters.Capacity < _stableIdToCenter.Count)
+                _stableResolveAllStableCenters.Capacity = _stableIdToCenter.Count;
+            foreach (var kv in _stableIdToCenter)
+            {
+                if (kv.Key == 0)
+                    continue;
+                _stableResolveAllStableIds.Add(kv.Key);
+                _stableResolveAllStableCenters.Add(kv.Value);
+            }
+
+            // 候选边：comp -> stableId, dist2
+            if (_stableResolveCandComp == null)
+                _stableResolveCandComp = new List<int>(compCount * 2);
+            if (_stableResolveCandStable == null)
+                _stableResolveCandStable = new List<int>(compCount * 2);
+            if (_stableResolveCandDist2 == null)
+                _stableResolveCandDist2 = new List<float>(compCount * 2);
+            _stableResolveCandComp.Clear();
+            _stableResolveCandStable.Clear();
+            _stableResolveCandDist2.Clear();
+            int expectCand = compCount * 2;
+            if (_stableResolveCandComp.Capacity < expectCand)
+                _stableResolveCandComp.Capacity = expectCand;
+            if (_stableResolveCandStable.Capacity < expectCand)
+                _stableResolveCandStable.Capacity = expectCand;
+            if (_stableResolveCandDist2.Capacity < expectCand)
+                _stableResolveCandDist2.Capacity = expectCand;
+            for (int c = 0; c < compCount; c++)
+            {
+                float3 center = _stableResolveCenters[c];
+                for (int s = 0; s < _stableResolveAllStableIds.Count; s++)
                 {
-                    if (_tmpStableIdSet.Contains(kv.Key)) continue;
-                    float dist = math.lengthsq(center - kv.Value);
-                    if (dist < bestDist)
+                    float dist2 = math.lengthsq(center - _stableResolveAllStableCenters[s]);
+                    if (dist2 < matchThreshold2)
                     {
-                        bestDist = dist;
-                        bestStableId = kv.Key;
+                        _stableResolveCandComp.Add(c);
+                        _stableResolveCandStable.Add(_stableResolveAllStableIds[s]);
+                        _stableResolveCandDist2.Add(dist2);
                     }
                 }
-                
+            }
+
+            // 对候选按距离从近到远排序（索引排序，避免引入新类型）
+            if (_stableResolveOrder == null)
+                _stableResolveOrder = new List<int>(_stableResolveCandDist2.Count);
+            _stableResolveOrder.Clear();
+            if (_stableResolveOrder.Capacity < _stableResolveCandDist2.Count)
+                _stableResolveOrder.Capacity = _stableResolveCandDist2.Count;
+            for (int i = 0; i < _stableResolveCandDist2.Count; i++)
+                _stableResolveOrder.Add(i);
+            if (_stableResolveCandComparer == null)
+                _stableResolveCandComparer = new CandidateDistComparer();
+            _stableResolveCandComparer.Dist2 = _stableResolveCandDist2;
+            _stableResolveOrder.Sort(_stableResolveCandComparer);
+
+            if (_stableResolveAssignedStable == null || _stableResolveAssignedStable.Length < compCount)
+                _stableResolveAssignedStable = new int[math.max(32, compCount)];
+            System.Array.Clear(_stableResolveAssignedStable, 0, compCount);
+            if (_stableResolveStableAssignedToComp == null)
+                _stableResolveStableAssignedToComp = new Dictionary<int, int>(math.max(16, _stableResolveAllStableIds.Count));
+            else
+                _stableResolveStableAssignedToComp.Clear();
+
+            // 先按最小距离贪心匹配（全局），避免“遍历顺序抢占”
+            for (int oi = 0; oi < _stableResolveOrder.Count; oi++)
+            {
+                int idx = _stableResolveOrder[oi];
+                int c = _stableResolveCandComp[idx];
+                int sid = _stableResolveCandStable[idx];
+                if (_stableResolveAssignedStable[c] != 0)
+                    continue;
+                if (_tmpStableIdSet.Contains(sid))
+                    continue;
+                _stableResolveAssignedStable[c] = sid;
+                _tmpStableIdSet.Add(sid);
+                _stableResolveStableAssignedToComp[sid] = c;
+            }
+
+            // 第二遍：为每个组件落定 stableId（未匹配到则新分配）
+            for (int c = 0; c < compCount; c++)
+            {
                 int finalStableId;
                 bool isNewId = false;
-                if (bestStableId > 0 && bestDist < matchThreshold2)
+                if (_stableResolveAssignedStable[c] != 0)
                 {
-                    // 继承已有ID
-                    finalStableId = bestStableId;
+                    finalStableId = _stableResolveAssignedStable[c];
                     inheritedCount++;
                 }
                 else
                 {
-                    // 分配新ID
                     finalStableId = _nextStableId++;
                     isNewId = true;
                     newIdCount++;
+                    _tmpStableIdSet.Add(finalStableId);
                 }
-                
+
                 _compToStableId[c] = finalStableId;
-                _tmpStableIdSet.Add(finalStableId);
-                
-                // 更新稳定ID的中心位置
-                _stableIdToCenter[finalStableId] = center;
-                
-                // 调试日志：新分配ID时输出详细信息
-                if (componentDebug && isNewId && comp.CellCount > 10)
-                {
-                    Debug.Log($"[StableID] 新分配! comp={c}, stableId={finalStableId}, center={center * PBF_Utils.Scale}, cells={comp.CellCount}, bestDist={math.sqrt(bestDist) * PBF_Utils.Scale:F2}, threshold={matchThreshold * PBF_Utils.Scale:F2}");
-                }
-            }
-            
-            // 调试日志：每60帧输出概要
-            if (componentDebug && Time.frameCount % 60 == 0 && compCount > 1)
-            {
-                Debug.Log($"[StableID] frame={Time.frameCount} 组件数={compCount}, 继承={inheritedCount}, 新分配={newIdCount}, 稳定ID池={_stableIdToCenter.Count}, nextId={_nextStableId}");
+                _stableIdToCenter[finalStableId] = _stableResolveCenters[c];
             }
             
             // 清理不再使用的稳定ID（超过32个时）

@@ -137,6 +137,13 @@ namespace Revive.Slime
             public void Execute(int index)
             {
                 Particle p = Particles[index];
+
+                if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                {
+                    p.ClusterId = 0;
+                    Particles[index] = p;
+                    return;
+                }
                 
                 // 场景水珠跳过CCA，ClusterId 保持为 0
                 if (p.Type == ParticleType.SceneDroplet || p.SourceId >= 0)

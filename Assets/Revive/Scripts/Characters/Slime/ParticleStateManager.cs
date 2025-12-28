@@ -19,8 +19,6 @@ namespace Revive.Slime
             // 规则1：只有场景水珠才能有非负SourceId
             if (p.SourceId >= 0 && p.Type != ParticleType.SceneDroplet)
             {
-                if (particleIndex >= 0)
-                    Debug.LogError($"[粒子状态错误] 粒子{particleIndex}: Type={p.Type}但SourceId={p.SourceId}");
                 p.SourceId = -1; // 自动修正
                 isValid = false;
             }
@@ -35,8 +33,6 @@ namespace Revive.Slime
             // 规则3：主体粒子的ControllerId必须是0
             if (p.Type == ParticleType.MainBody && p.ControllerId != 0)
             {
-                if (particleIndex >= 0)
-                    Debug.LogError($"[粒子状态错误] 粒子{particleIndex}: 主体粒子但ControllerId={p.ControllerId}");
                 p.ControllerId = 0; // 自动修正
                 isValid = false;
             }
@@ -46,8 +42,6 @@ namespace Revive.Slime
             {
                 if (p.SourceId != -1 || p.ControllerId != 0 || p.FreeFrames != 0 || p.StableId != 0)
                 {
-                    if (particleIndex >= 0)
-                        Debug.LogError($"[粒子状态错误] 粒子{particleIndex}: 休眠粒子但有非零关联");
                     p.SourceId = -1;
                     p.ControllerId = 0;
                     p.StableId = 0;
@@ -59,8 +53,6 @@ namespace Revive.Slime
             // 规则5：只有Emitted和Separated粒子才能有FreeFrames
             if (p.Type != ParticleType.Emitted && p.Type != ParticleType.Separated && p.FreeFrames > 0)
             {
-                if (particleIndex >= 0)
-                    Debug.LogError($"[粒子状态错误] 粒子{particleIndex}: Type={p.Type}但FreeFrames={p.FreeFrames}");
                 p.FreeFrames = 0; // 自动修正
                 isValid = false;
             }
@@ -128,7 +120,6 @@ namespace Revive.Slime
             // 只能从主体发射
             if (p.Type != ParticleType.MainBody)
             {
-                Debug.LogWarning($"[状态转换警告] 尝试从非主体粒子发射(Type={p.Type})");
                 return;
             }
             
@@ -198,7 +189,7 @@ namespace Revive.Slime
         /// </summary>
         public static bool IsActive(Particle p)
         {
-            return p.Type != ParticleType.Dormant;
+            return p.Type != ParticleType.Dormant && p.Type != ParticleType.FadingOut;
         }
         
         /// <summary>
@@ -248,6 +239,7 @@ namespace Revive.Slime
             switch (p.Type)
             {
                 case ParticleType.Dormant: return "休眠";
+                case ParticleType.FadingOut: return "淡出";
                 case ParticleType.MainBody: return "主体";
                 case ParticleType.SceneDroplet: return $"场景水珠(源{p.SourceId})";
                 case ParticleType.Emitted: return $"发射中(剩{p.FreeFrames}帧)";

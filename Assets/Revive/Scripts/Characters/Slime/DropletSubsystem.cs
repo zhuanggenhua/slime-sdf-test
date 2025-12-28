@@ -2,7 +2,7 @@ using Unity.Mathematics;
 using Unity.Collections;
 using Unity.Burst;
 using Unity.Jobs;
-using UnityEngine;
+using UnityEngine; 
 
 namespace Revive.Slime
 {
@@ -24,7 +24,7 @@ namespace Revive.Slime
         private int maxSources;
         
         // PBF 物理系统（封装了所有缓冲区）
-        private Physics.PBFSystem pbfSystem;
+        private PBFSystem pbfSystem;
         
         // 凝聚力 Job 临时缓冲区
         private NativeArray<float3> _targetCenters;
@@ -96,7 +96,7 @@ namespace Revive.Slime
             sources = new NativeArray<SourceInfo>(maxSourceCount, Allocator.Persistent);
             
             // 初始化 PBF 物理系统（使用水珠配置）
-            pbfSystem = new Physics.PBFSystem(Physics.PBFSystem.Config.Droplet);
+            pbfSystem = new PBFSystem(PBFSystem.Config.Droplet);
             
             // 初始化凝聚力 Job 临时缓冲区
             _targetCenters = new NativeArray<float3>(DROPLET_CAPACITY, Allocator.Persistent);
@@ -124,6 +124,27 @@ namespace Revive.Slime
             if (_positions.IsCreated) _positions.Dispose();
             pbfSystem?.Dispose();
         }
+
+        public bool TryGetActiveBounds(out float3 min, out float3 max)
+        {
+            if (activeCount <= 0)
+            {
+                min = float3.zero;
+                max = float3.zero;
+                return false;
+            }
+
+            min = new float3(float.MaxValue);
+            max = new float3(float.MinValue);
+            for (int i = 0; i < activeCount; i++)
+            {
+                float3 p = particles[i].Position;
+                min = math.min(min, p);
+                max = math.max(max, p);
+            }
+
+            return true;
+        }
         
         /// <summary>
         /// 激活水珠源（在固定分区中分配）
@@ -143,7 +164,6 @@ namespace Revive.Slime
             // 检查是否已激活
             if (sources[sourceId].active)
             {
-                Debug.LogWarning($"[DropletSubsystem] 源{sourceId}已激活");
                 return 0;
             }
             
@@ -153,7 +173,6 @@ namespace Revive.Slime
             
             if (allocatedCount == 0)
             {
-                Debug.LogWarning($"[DropletSubsystem] 水珠分区已满，无法分配");
                 return 0;
             }
             
@@ -395,7 +414,7 @@ namespace Revive.Slime
             var activeVelocities = new NativeSlice<float3>(velocities, 0, activeCount);
             
             // 使用PBFSystem进行物理模拟（内部已包含粘性处理，不再外部重复调用）
-            pbfSystem.SimulateStep(activeParticles, activeVelocities, activeCount, deltaTime, float3.zero);
+            pbfSystem.SimulateStep(activeParticles, activeVelocities, activeCount, deltaTime, float3.zero, _enableViscosity, _viscosityStrength);
             
             // 应用碰撞检测和地面限制
             // 优化：由于 swap 压缩，[0..activeCount) 范围内都是活跃的 SceneDroplet

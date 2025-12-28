@@ -238,7 +238,6 @@ namespace Revive.Slime
             }
             
             sb.AppendLine("================================================");
-            Debug.Log(sb.ToString());
         }
         
         #endregion
@@ -301,8 +300,6 @@ namespace Revive.Slime
                     sb.Append($"<color={color}>{stageName}={data.CurrentMs:F2}ms</color> ");
                 }
             }
-            
-            Debug.Log(sb.ToString());
         }
         
         #endregion

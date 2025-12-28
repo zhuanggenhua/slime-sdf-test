@@ -14,6 +14,7 @@ namespace Revive.Slime
         [Header("Slime Reference")]
         [Tooltip("Slime_PBF 组件引用")]
         public Slime_PBF SlimePBF;
+        public SlimeCarrySlot CarrySlot;
 
         [Header("Button Mapping")]
         [Tooltip("发射粒子使用的按钮（默认 Shoot）")]
@@ -34,6 +35,11 @@ namespace Revive.Slime
             if (SlimePBF == null)
             {
                 SlimePBF = GetComponentInChildren<Slime_PBF>();
+            }
+
+            if (CarrySlot == null)
+            {
+                CarrySlot = GetComponentInChildren<SlimeCarrySlot>();
             }
 
             if (SlimePBF == null)
@@ -59,14 +65,27 @@ namespace Revive.Slime
             if (!UseShootForEmit)
                 return;
             
-            if (_inputManager.ShootButton.State.CurrentState == MMInput.ButtonStates.ButtonPressed)
+            var shootState = _inputManager.ShootButton.State.CurrentState;
+            bool wantEmitOnce = shootState == MMInput.ButtonStates.ButtonDown;
+            bool wantEmitRepeat = shootState == MMInput.ButtonStates.ButtonPressed;
+
+            if (!wantEmitOnce && !wantEmitRepeat)
+                return;
+
+            if (CarrySlot != null && CarrySlot.HasHeldObject)
             {
-                if (Time.time - _lastEmitTime >= SlimePBF.EmitCooldown)
+                if (CarrySlot.ThrowHeld())
                 {
                     _lastEmitTime = Time.time;
-                    SlimePBF.EmitParticles();
                 }
+                return;
             }
+
+            if (Time.time - _lastEmitTime < SlimePBF.EmitCooldown)
+                return;
+
+            _lastEmitTime = Time.time;
+            SlimePBF.EmitParticles();
         }
 
         protected virtual void HandleRecallInput()

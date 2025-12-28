@@ -34,7 +34,7 @@ namespace Revive.Slime
         /// </summary>
         public bool IsActive()
         {
-            return Type != ParticleType.Dormant;
+            return Type != ParticleType.Dormant && Type != ParticleType.FadingOut;
         }
     }
     
@@ -242,6 +242,13 @@ namespace Revive.Slime
             public void Execute(int i)
             {
                 Particle p = Ps[i];
+
+                if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                {
+                    PsNew[i] = p;
+                    Velocity[i] = float3.zero;
+                    return;
+                }
                 
                 // 递减自由态倒计时并处理状态转换
                 if (p.FreeFrames > 0)
@@ -318,7 +325,7 @@ namespace Revive.Slime
                         // ControllerId=0 的分离粒子：计算指向主体的召回方向
                         if (controllerIndex == 0)
                         {
-                            float3 dirToMain = math.normalizesafe(toCenter);
+                            float3 dirToMain = math.normalizesafe(new float3(toCenter.x, 0f, toCenter.z));
                             // 召回速度：距离远时快，接近边缘时慢（防止冲过头）
                             // 使用固定的fadeDistance，不依赖主体大小
                             float distFromEdge = len - cl.Radius; // 距离边缘的距离
@@ -330,7 +337,7 @@ namespace Revive.Slime
                             
                             float originalY = velocity.y;
                             velocity = dirToMain * recallSpeed;
-                            velocity.y = math.max(originalY, velocity.y);
+                            velocity.y = originalY;
                         }
                         else
                         {
@@ -338,7 +345,21 @@ namespace Revive.Slime
                             // 注意：避障台阶上抬速度写在 cl.Velocity.y，如果这里强行保留原Y会导致“上台阶”完全无效。
                             float originalY = velocity.y;
                             velocity = cl.Velocity;
-                            velocity.y = math.max(originalY, cl.Velocity.y);
+                            if (cl.Velocity.y > 0f)
+                                velocity.y = math.max(originalY, cl.Velocity.y);
+                            else if (cl.Velocity.y < 0f)
+                                velocity.y = math.min(originalY, cl.Velocity.y);
+                            else
+                                velocity.y = originalY;
+
+                            float3 attraction = cl.Concentration * DeltaTime * math.min(1, len) *
+                                                math.normalizesafe(toCenter);
+                            if (attraction.y > 0f)
+                            {
+                                float upDVMax = math.abs(Gravity.y) * DeltaTime * 0.5f; // 允许最多抵消50%重力
+                                attraction.y = math.min(attraction.y, upDVMax);
+                            }
+                            velocity += attraction;
                         }
                     }
                     else if (len < cl.Radius)
@@ -385,8 +406,14 @@ namespace Revive.Slime
                             {
                                 // 召回时使用更低的 lerpFactor，让粒子更跟随控制器
                                 lerpFactor = math.min(lerpFactor, 0.3f);
+                                float originalY = velocity.y;
                                 velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
-                                // 召回时不保留原始Y，让粒子能跟随向上的召回速度
+                                if (cl.Velocity.y > 0f)
+                                    velocity.y = math.max(originalY, cl.Velocity.y);
+                                else if (cl.Velocity.y < 0f)
+                                    velocity.y = math.min(originalY, cl.Velocity.y);
+                                else
+                                    velocity.y = originalY;
                             }
                             else if (isSeparated)
                             {
@@ -407,7 +434,7 @@ namespace Revive.Slime
                             {
                                 float3 attraction = cl.Concentration * DeltaTime * math.min(1, len) *
                                                     math.normalizesafe(toCenter);
-                                if (isSeparated && controllerIndex > 0 && !enableRecallThisController && attraction.y > 0f)
+                                if (isSeparated && controllerIndex > 0 && attraction.y > 0f)
                                 {
                                     float upDVMax = math.abs(Gravity.y) * DeltaTime * 0.5f;
                                     attraction.y = math.min(attraction.y, upDVMax);
@@ -537,10 +564,12 @@ namespace Revive.Slime
                 
                 // 当前粒子是否在自由飞行（发射中）
                 int originalIdx = Hashes[i].y;
-                bool iAmFree = Particles[originalIdx].FreeFrames > 0;
+                Particle originalP = Particles[originalIdx];
+                bool iAmFree = originalP.FreeFrames > 0;
+                bool iAmFadingOut = originalP.Type == ParticleType.FadingOut;
                 
                 // 【关键】自由飞行粒子完全不参与 PBF 交互，让它们能自由飞出
-                if (iAmFree)
+                if (iAmFree || iAmFadingOut)
                 {
                     Lambda[i] = 0;
                     return;
@@ -560,7 +589,7 @@ namespace Revive.Slime
                         
                         // 跳过自由飞行粒子（它们不参与任何 PBF 交互）
                         int originalJ = Hashes[j].y;
-                        if (Particles[originalJ].FreeFrames > 0) continue;
+                        if (Particles[originalJ].FreeFrames > 0 || Particles[originalJ].Type == ParticleType.FadingOut) continue;
 
                         float3 dir = pos - PosPredict[j];
                         float r2 = math.lengthsq(dir);
@@ -723,9 +752,10 @@ namespace Revive.Slime
                 int originalIdx = Hashes[i].y;
                 Particle originalP = PsOriginal[originalIdx];
                 bool iAmFree = originalP.FreeFrames > 0;
+                bool iAmFadingOut = originalP.Type == ParticleType.FadingOut;
                 
                 // 【关键】自由飞行粒子完全不参与 PBF 交互，直接输出原位置
-                if (iAmFree)
+                if (iAmFree || iAmFadingOut)
                 {
                     PsNew[i] = new Particle
                     {
@@ -756,7 +786,7 @@ namespace Revive.Slime
                         
                         // 跳过自由飞行粒子（它们不参与任何 PBF 交互）
                         int originalJ = Hashes[j].y;
-                        if (PsOriginal[originalJ].FreeFrames > 0) continue;
+                        if (PsOriginal[originalJ].FreeFrames > 0 || PsOriginal[originalJ].Type == ParticleType.FadingOut) continue;
 
                         float3 dir = position - PosPredict[j];
                         float r2 = math.dot(dir, dir);
@@ -882,6 +912,13 @@ namespace Revive.Slime
             {
                 Particle p = Ps[i];
                 float3 posOld = PosOld[i];
+
+                if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                {
+                    Velocity[i] = float3.zero;
+                    Ps[i] = p;
+                    return;
+                }
                 
                 // 所有粒子统一使用模拟坐标（内部坐标）
                 float3 simPos = p.Position;
@@ -1052,7 +1089,13 @@ namespace Revive.Slime
                 
                 // 【关键修复】使用 Hashes 获取原始索引，因为 Particles 是原始索引数组
                 int originalIdx = Hashes[i].y;
-                
+
+                if (Particles[originalIdx].Type == ParticleType.FadingOut)
+                {
+                    VelocityW[i] = float3.zero;
+                    return;
+                }
+
                 // 【关键】自由飞行粒子不参与粘性计算，保持原速度
                 if (Particles[originalIdx].FreeFrames > 0)
                 {
@@ -1077,7 +1120,7 @@ namespace Revive.Slime
                         
                         // 跳过自由飞行粒子（使用原始索引）
                         int originalJ = Hashes[j].y;
-                        if (Particles[originalJ].FreeFrames > 0) continue;
+                        if (Particles[originalJ].FreeFrames > 0 || Particles[originalJ].Type == ParticleType.FadingOut) continue;
 
                         float3 dir = pos - PosPredict[j];
                         float r2 = math.lengthsq(dir);

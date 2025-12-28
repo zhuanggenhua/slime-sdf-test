@@ -19,6 +19,11 @@ namespace Revive.Slime
         private Mesh _mesh;
         private int _lastVertexCount;
 
+        private NativeArray<int> _blockVertCountBuffer;
+        private NativeArray<float3> _vertexBuffer;
+        private NativeArray<float3> _normalBuffer;
+        private NativeArray<int> _triangleBuffer;
+
         public LMarchingCubes()
         {
             _triangleConnectionTable = new NativeArray<int>(MarchingCubesTables.TriangleConnectionTable.SelectMany(x => x).ToArray(), Allocator.Persistent);
@@ -37,6 +42,10 @@ namespace Revive.Slime
             _cubeEdgeFlags.Dispose();
             _edgeVert.Dispose();
             _vertPos.Dispose();
+            if (_blockVertCountBuffer.IsCreated) _blockVertCountBuffer.Dispose();
+            if (_vertexBuffer.IsCreated) _vertexBuffer.Dispose();
+            if (_normalBuffer.IsCreated) _normalBuffer.Dispose();
+            if (_triangleBuffer.IsCreated) _triangleBuffer.Dispose();
             Object.Destroy(_mesh);
         }
         
@@ -87,7 +96,14 @@ namespace Revive.Slime
         public Mesh MarchingCubesParallel(NativeArray<int3> keys, NativeHashMap<int3, int> gridLut,
             NativeArray<float> grid, float threshold, float scale = 1)
         {
-            var blockVertCount = new NativeArray<int>(keys.Length + 1, Allocator.TempJob);
+            int requiredBlockVertCount = keys.Length + 1;
+            if (!_blockVertCountBuffer.IsCreated || _blockVertCountBuffer.Length < requiredBlockVertCount)
+            {
+                if (_blockVertCountBuffer.IsCreated) _blockVertCountBuffer.Dispose();
+                _blockVertCountBuffer = new NativeArray<int>(requiredBlockVertCount, Allocator.Persistent);
+            }
+            var blockVertCount = _blockVertCountBuffer.GetSubArray(0, requiredBlockVertCount);
+
             var handle = new TrianglesCounterJobs
             {
                 TriangleVertCountTable = _triangleVertCountTable,
@@ -105,9 +121,26 @@ namespace Revive.Slime
             }.Schedule(handle).Complete();
 
             var totalVertCount = blockVertCount[keys.Length];
-            var vertices = new NativeArray<float3>(totalVertCount, Allocator.TempJob);
-            var normals = new NativeArray<float3>(totalVertCount, Allocator.TempJob);
-            var triangles = new NativeArray<int>(totalVertCount, Allocator.TempJob);
+
+            if (!_vertexBuffer.IsCreated || _vertexBuffer.Length < totalVertCount)
+            {
+                if (_vertexBuffer.IsCreated) _vertexBuffer.Dispose();
+                _vertexBuffer = new NativeArray<float3>(math.max(0, totalVertCount), Allocator.Persistent);
+            }
+            if (!_normalBuffer.IsCreated || _normalBuffer.Length < totalVertCount)
+            {
+                if (_normalBuffer.IsCreated) _normalBuffer.Dispose();
+                _normalBuffer = new NativeArray<float3>(math.max(0, totalVertCount), Allocator.Persistent);
+            }
+            if (!_triangleBuffer.IsCreated || _triangleBuffer.Length < totalVertCount)
+            {
+                if (_triangleBuffer.IsCreated) _triangleBuffer.Dispose();
+                _triangleBuffer = new NativeArray<int>(math.max(0, totalVertCount), Allocator.Persistent);
+            }
+
+            var vertices = _vertexBuffer.GetSubArray(0, totalVertCount);
+            var normals = _normalBuffer.GetSubArray(0, totalVertCount);
+            var triangles = _triangleBuffer.GetSubArray(0, totalVertCount);
             
             new MarchingCubesParallelJobs
             {
@@ -142,10 +175,6 @@ namespace Revive.Slime
             mesh.UploadMeshData(false);
             
             _lastVertexCount = vertices.Length;
-            vertices.Dispose();
-            normals.Dispose();
-            triangles.Dispose();
-            blockVertCount.Dispose();
             
             return mesh;
         }

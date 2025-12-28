@@ -33,9 +33,8 @@ namespace Revive.Slime
                     field.SetValue(target, value);
                     count++;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
-                    Debug.LogWarning($"[ConfigReset] 无法重置字段 {field.Name}: {e.Message}");
                 }
             }
             

@@ -20,10 +20,5 @@ namespace Revive
             
             TranslationManager.Instance.RegisterProvider(new UnityTranslationProvider());
         }
-
-        private void Update()
-        {
-            Debug.Log(Tr._p("Common", "Continue"));
-        }
     }
 }

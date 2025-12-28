@@ -31,11 +31,27 @@ namespace Revive.Slime
         [Range(0.1f, 2f)]
         public float ClimbSpeedMultiplier = 1f;
 
+        [Range(0f, 1f)]
+        public float ClimbEnterIntoWallDot = 0.05f;
+
+        public float ClimbEnterDirectionMemory = 0.3f;
+
+        public float ClimbSlideSpeedMultiplier = 0.5f;
+
+        public float ClimbVerticalAcceleration = 20f;
+
         protected Collider _selfCollider;
         protected bool _isClimbing;
         protected Vector3 _climbNormal;
         protected SlimeColliderInfo _climbInfo;
         protected Collider[] _climbOverlapHits = new Collider[32];
+
+        protected float _storedGravity;
+        protected bool _storedGravityActive;
+        protected bool _hasStoredGravity;
+
+        protected Vector3 _lastHorizontalEnterDir;
+        protected float _lastHorizontalEnterDirTime;
 
         protected const string _climbingAnimationParameterName = "Climbing";
         protected int _climbingAnimationParameter;
@@ -60,10 +76,50 @@ namespace Revive.Slime
             }
 
             bool wasClimbing = _isClimbing;
-            Vector3 moveDir = _controller3D.CurrentDirection.normalized;
-            float verticalInput = _inputManager != null ? _inputManager.PrimaryMovement.y : 0f;
+            Vector2 primaryMovement = _inputManager != null ? _inputManager.PrimaryMovement : Vector2.zero;
+            Vector3 moveDir = new Vector3(primaryMovement.x, 0f, primaryMovement.y);
+            Vector3 velocityDir = _controller3D.Velocity;
+            velocityDir.y = 0f;
+
+            if (velocityDir.sqrMagnitude > 0.000001f)
+            {
+                _lastHorizontalEnterDir = velocityDir.normalized;
+                _lastHorizontalEnterDirTime = Time.time;
+            }
+            else if (moveDir.sqrMagnitude > 0.0001f)
+            {
+                _lastHorizontalEnterDir = moveDir.normalized;
+                _lastHorizontalEnterDirTime = Time.time;
+            }
+
+            Vector3 detectDir;
+            if (velocityDir.sqrMagnitude > 0.000001f)
+            {
+                detectDir = velocityDir.normalized;
+            }
+            else if (Time.time - _lastHorizontalEnterDirTime <= Mathf.Max(0f, ClimbEnterDirectionMemory) && _lastHorizontalEnterDir.sqrMagnitude > 0.0001f)
+            {
+                detectDir = _lastHorizontalEnterDir;
+            }
+            else if (moveDir.sqrMagnitude > 0.0001f)
+            {
+                detectDir = moveDir.normalized;
+            }
+            else
+            {
+                detectDir = Vector3.zero;
+            }
+
+            Vector3 maintainDir = Vector3.zero;
+            bool hasMaintainDir = false;
+            if (moveDir.sqrMagnitude > 0.0001f)
+            {
+                maintainDir = moveDir.normalized;
+                hasMaintainDir = true;
+            }
+            float verticalInput = primaryMovement.y;
             
-            DetectClimbableSurface(moveDir);
+            DetectClimbableSurface(detectDir, maintainDir, hasMaintainDir);
 
             if (_isClimbing && !wasClimbing)
             {
@@ -76,12 +132,21 @@ namespace Revive.Slime
 
             if (_isClimbing)
             {
-                ApplyClimbMovement(moveDir, verticalInput);
+                ApplyClimbMovement(maintainDir, hasMaintainDir, verticalInput);
             }
         }
 
-        protected virtual void DetectClimbableSurface(Vector3 moveDir)
+        protected virtual void DetectClimbableSurface(Vector3 enterDir, Vector3 maintainDir, bool hasMaintainDir)
         {
+            Vector3 dirForDot = _isClimbing ? maintainDir : enterDir;
+            bool applyDotFilter = !_isClimbing || hasMaintainDir;
+
+            if (!_isClimbing && (enterDir.sqrMagnitude < 0.0001f))
+            {
+                applyDotFilter = false;
+                dirForDot = Vector3.zero;
+            }
+
             float bestDist = float.MaxValue;
             float bestDot = float.MaxValue;
             Vector3 bestNormal = Vector3.zero;
@@ -110,18 +175,37 @@ namespace Revive.Slime
                 Vector3 delta = selfPoint - wallPoint;
                 float dist = delta.magnitude;
                 if (dist > maxSurfaceDist)
+                {
                     continue;
+                }
 
                 Vector3 normal = dist < 0.0001f ? (queryCenter - wallPoint) : (delta / dist);
                 normal.y = 0f;
                 float normalSqr = normal.sqrMagnitude;
                 if (normalSqr < 0.0001f)
+                {
                     continue;
+                }
                 normal /= Mathf.Sqrt(normalSqr);
                 
-                float dot = Vector3.Dot(moveDir, normal);
-                if (dot > 0.35f)
-                    continue;
+                float dot = Vector3.Dot(dirForDot, normal);
+                if (applyDotFilter)
+                {
+                    if (!_isClimbing)
+                    {
+                        if (dot > -Mathf.Clamp01(ClimbEnterIntoWallDot))
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        if (dot > 0.35f)
+                        {
+                            continue;
+                        }
+                    }
+                }
 
                 if (dot < bestDot || (Mathf.Abs(dot - bestDot) < 0.0001f && dist < bestDist))
                 {
@@ -143,29 +227,57 @@ namespace Revive.Slime
             _climbInfo = bestInfo;
         }
 
-        protected virtual void ApplyClimbMovement(Vector3 moveDir, float verticalInput)
+        protected virtual void ApplyClimbMovement(Vector3 moveDir, bool hasMoveDir, float verticalInput)
         {
             if (_controller3D == null || _climbInfo == null)
                 return;
 
             // 禁用重力并强制非着地状态（否则垂直速度会被限制为<=0）
-            _controller3D.GravityActive = false;
+            if (!_hasStoredGravity)
+            {
+                _storedGravity = _controller3D.Gravity;
+                _storedGravityActive = _controller3D.GravityActive;
+                _hasStoredGravity = true;
+            }
+
+            _controller3D.GravityActive = true;
+            _controller3D.Gravity = 0f;
             _controller3D.Grounded = false;
 
-            // 计算攀爬速度（与原始 ControllerTest 逻辑一致）
-            float pushIntoWall = Mathf.Clamp01(-Vector3.Dot(moveDir, _climbNormal));
-            float climbInput = Mathf.Max(0f, verticalInput);
-            float climbStrength = Mathf.Max(pushIntoWall, climbInput);
-            
-            // 计算攀爬速度（使用正常移动速度）
-            if (climbStrength > 0.1f)
+            float baseSpeed = _characterMovement != null ? _characterMovement.WalkSpeed : 4f;
+            float frictionFactor = 1f - Mathf.Clamp01(_climbInfo.surfaceFriction);
+            float upSpeed = baseSpeed * frictionFactor * ClimbSpeedMultiplier;
+            float downSpeed = baseSpeed * frictionFactor * ClimbSpeedMultiplier;
+            float slideSpeed = downSpeed * ClimbSlideSpeedMultiplier;
+
+            float pushIntoWall = 0f;
+            if (hasMoveDir)
             {
-                float baseSpeed = _characterMovement != null ? _characterMovement.WalkSpeed : 4f;
-                float targetY = baseSpeed * climbStrength * (1f - Mathf.Clamp01(_climbInfo.surfaceFriction)) * ClimbSpeedMultiplier;
-                
-                // 直接设置垂直速度，与正常移动速度一致
-                _controller3D.AddForce(new Vector3(0, targetY, 0));
+                pushIntoWall = Mathf.Clamp01(-Vector3.Dot(moveDir, _climbNormal));
             }
+
+            float targetVy;
+            if (verticalInput > 0.1f)
+            {
+                targetVy = upSpeed * Mathf.Clamp01(verticalInput);
+            }
+            else if (verticalInput < -0.1f)
+            {
+                targetVy = -downSpeed * Mathf.Clamp01(-verticalInput);
+            }
+            else if (pushIntoWall > 0.1f)
+            {
+                targetVy = upSpeed * pushIntoWall;
+            }
+            else
+            {
+                targetVy = -slideSpeed;
+            }
+
+            float currentVy = _controller3D.Velocity.y;
+            float dt = _controller3D.UpdateMode == TopDownController3D.UpdateModes.FixedUpdate ? Time.fixedDeltaTime : Time.deltaTime;
+            float newVy = Mathf.MoveTowards(currentVy, targetVy, ClimbVerticalAcceleration * dt);
+            _controller3D.Velocity = new Vector3(_controller3D.Velocity.x, newVy, _controller3D.Velocity.z);
         }
 
         protected virtual void OnClimbStart()
@@ -177,7 +289,12 @@ namespace Revive.Slime
         {
             if (_controller3D != null)
             {
-                _controller3D.GravityActive = true;
+                if (_hasStoredGravity)
+                {
+                    _controller3D.Gravity = _storedGravity;
+                    _controller3D.GravityActive = _storedGravityActive;
+                    _hasStoredGravity = false;
+                }
             }
 
             StopStartFeedbacks();

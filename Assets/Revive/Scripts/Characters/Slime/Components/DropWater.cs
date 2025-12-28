@@ -17,7 +17,7 @@ namespace Revive.Slime
 
         [Header("【粒子配置】")]
         [ChineseLabel("粒子数量"), Tooltip("该水珠包含的粒子数")]
-        [Range(10, 500), DefaultValue(100)]
+        [Range(10, 5000), DefaultValue(100)]
         public int particleCount = 100;
 
         [ChineseLabel("生成半径"), Tooltip("初始粒子分布的球形半径")]
@@ -26,7 +26,7 @@ namespace Revive.Slime
 
         [Header("【物理参数】")]
         [ChineseLabel("凝聚力强度"), Tooltip("粒子向中心凝聚的力度")]
-        [Range(1f, 100f), DefaultValue(30f)]
+        [Range(0f, 100f), DefaultValue(30f)]
         public float cohesionStrength = 30f;
 
         [ChineseLabel("凝聚半径"), Tooltip("凝聚力作用的最大半径")]
@@ -45,8 +45,8 @@ namespace Revive.Slime
         public bool enableViscosity = true;
 
         [ChineseLabel("粘性强度"), Tooltip("粘性强度，越大形状越稳定（与主体一致=10）")]
-        [Range(0f, 100f), DefaultValue(10f)]
-        public float viscosityStrength = 10f;
+        [Range(0f, 100f), DefaultValue(1f)]
+        public float viscosityStrength = 1f;
 
         [Header("【激活配置（Streaming）】")]
         [ChineseLabel("激活半径"), Tooltip("玩家进入此范围时激活水珠")]
@@ -93,10 +93,7 @@ namespace Revive.Slime
         {
             if (state != newState)
             {
-                var oldState = state;
                 state = newState;
-                if (dropletDebug)
-                    Debug.Log($"[SceneDroplet] {name}: {oldState} -> {newState}");
             }
         }
 
@@ -106,8 +103,6 @@ namespace Revive.Slime
         public void AssignParticles(int start, int count)
         {
             remainingCount = count;
-            if (dropletDebug)
-                Debug.Log($"[SceneDroplet] {name}: 分配粒子 [{start}..{start + count - 1}]");
         }
 
         /// <summary>
@@ -262,8 +257,7 @@ namespace Revive.Slime
         [ContextMenu("重置参数为默认值")]
         public void ResetToDefaults()
         {
-            int count = ConfigResetHelper.ResetToDefaults(this);
-            Debug.Log($"[SceneDropletSource] 已重置 {count} 个参数为默认值");
+            ConfigResetHelper.ResetToDefaults(this);
         }
     }
 }

@@ -4,7 +4,7 @@ using Unity.Jobs;
 using Unity.Burst;
 using UnityEngine;
 
-namespace Revive.Slime.Physics
+namespace Revive.Slime
 {
     /// <summary>
     /// PBF流体物理系统 - 完整封装缓冲区管理和流体算法
@@ -18,8 +18,6 @@ namespace Revive.Slime.Physics
             public int maxParticles;
             public float targetDensity;
             public int solverIterations;
-            public bool enableViscosity;
-            public float viscosityStrength;
             public float damping;
             
             public static Config MainBody => new Config
@@ -27,8 +25,6 @@ namespace Revive.Slime.Physics
                 maxParticles = 8192,
                 targetDensity = 1.5f,
                 solverIterations = 3,
-                enableViscosity = true,
-                viscosityStrength = 0.01f,
                 damping = 0.99f
             };
             
@@ -37,8 +33,6 @@ namespace Revive.Slime.Physics
                 maxParticles = 8192,
                 targetDensity = 1.5f,  // 与主体一致
                 solverIterations = 3,  // 与主体一致
-                enableViscosity = true,   // 启用粘性
-                viscosityStrength = 0.01f,
                 damping = 0.99f  // 与主体一致
             };
         }
@@ -109,7 +103,9 @@ namespace Revive.Slime.Physics
             NativeSlice<float3> velocities,
             int count,
             float deltaTime,
-            float3 gravity = default)
+            float3 gravity,
+            bool enableViscosity,
+            float viscosityStrength)
         {
             if (count <= 0) return;
             
@@ -132,9 +128,9 @@ namespace Revive.Slime.Physics
             ApplyPositionCorrections(particles, velocities, count, deltaTime);
             
             // 7. 粘性（可选）：让速度趋向邻居平均速度，维持形状
-            if (_config.enableViscosity && _config.viscosityStrength > 0)
+            if (enableViscosity && viscosityStrength > 0)
             {
-                ApplyViscosity(velocities, count);
+                ApplyViscosity(velocities, count, viscosityStrength, deltaTime);
             }
         }
         
@@ -377,7 +373,7 @@ namespace Revive.Slime.Physics
         /// <summary>
         /// 粘性：让速度趋向邻居平均速度，维持形状
         /// </summary>
-        private void ApplyViscosity(NativeSlice<float3> velocities, int count)
+        private void ApplyViscosity(NativeSlice<float3> velocities, int count, float viscosityStrength, float deltaTime)
         {
             // 水珠独立使用 PBFSystem，此时 _lut 和 _posPredict 是 PBF 求解后的排序顺序
             // 需要将速度也 shuffle 到排序顺序，计算粘性后再 unshuffle
@@ -397,9 +393,9 @@ namespace Revive.Slime.Physics
                 PosPredict = _posPredict,
                 VelocityR = _velocityTemp,
                 VelocityW = _velocityTemp2,
-                ViscosityStrength = _config.viscosityStrength,
+                ViscosityStrength = viscosityStrength,
                 TargetDensity = _config.targetDensity,
-                DeltaTime = 0.02f
+                DeltaTime = deltaTime
             }.Schedule(count, 64).Complete();
             
             // 3. 将结果 unshuffle 回原始索引顺序

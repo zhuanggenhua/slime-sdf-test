@@ -103,7 +103,6 @@ namespace Revive.Environment
                 _activeController.AddedForce = Vector3.zero;
                 _activeController.GravityActive = true;
                 _activeController = null;
-                Debug.Log("[JumpPad] 持续上升结束");
             }
         }
         
@@ -223,7 +222,6 @@ namespace Revive.Environment
             
             if (controller == null) 
             {
-                Debug.Log($"[MushroomJumpPad3D] 未找到 TopDownController3D on {other.name}");
                 return;
             }
 
@@ -253,7 +251,6 @@ namespace Revive.Environment
 
                 if (_debugLogs && justArmed)
                 {
-                    Debug.Log($"[JumpPad] Arm: vY={controller.Velocity.y:F2}, vXZ={new Vector2(controller.Velocity.x, controller.Velocity.z).magnitude:F2}, grounded={controller.Grounded}");
                 }
             }
 
@@ -269,7 +266,6 @@ namespace Revive.Environment
 
                 if (_debugLogs)
                 {
-                    Debug.Log($"[JumpPad] Fire: tSinceLast={timeSinceLast:F2}, vY={controller.Velocity.y:F2}, vXZ={new Vector2(controller.Velocity.x, controller.Velocity.z).magnitude:F2}");
                 }
 
                 PerformBounce(controller);
@@ -295,8 +291,6 @@ namespace Revive.Environment
             // 初始速度
             float startSpeed = Mathf.Max(0.01f, Mathf.Min(_startJumpSpeed, _jumpSpeed));
             controller.AddedForce = new Vector3(0f, startSpeed, 0f);
-            
-            Debug.Log($"[JumpPad] 开始弹跳: 持续{_sustainDuration}s, 速度={_jumpSpeed}");
             
             _bounceFeedback?.PlayFeedbacks(transform.position, _jumpSpeed);
         }
