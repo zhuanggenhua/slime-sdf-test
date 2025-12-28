@@ -1,0 +1,72 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &242967026288948971
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8875071769209325234}
+  - component: {fileID: 4083271393330177818}
+  m_Layer: 10
+  m_Name: WetGroundDecalTrail
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8875071769209325234
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 242967026288948971}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &4083271393330177818
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 242967026288948971}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06134b003eea42742af866400127f89e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  SpawnDistanceThreshold: 1
+  GroundLayerMask:
+    serializedVersion: 2
+    m_Bits: 512
+  RaycastDistance: 10
+  RaycastOriginOffset: {x: 0, y: 0.5, z: 0}
+  ShowDebugInfo: 0
+  ShowDebugRaycast: 0
+  DecalMaterials:
+  - DecalMaterial: {fileID: 2100000, guid: e4321ddbf64a8014cbcea4cce674c243, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.429
+  - DecalMaterial: {fileID: 2100000, guid: a31bd0efc635af64ba5156a12c07d861, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.463
+  - DecalMaterial: {fileID: 2100000, guid: 8c170f677f3f9fe4b967e17eedfcf39f, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.486
+  DecalSize: {x: 1, y: 1, z: 0.5}
+  FadeInDuration: 0.3
+  Lifetime: 10
+  FadeOutDuration: 1
+  SizeRandomness: 0.2
+  RotationRandomness: 180
+  PositionOffsetRadius: 0.2
+  MaxDecalCount: 100

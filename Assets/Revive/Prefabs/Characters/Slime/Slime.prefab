@@ -40,7 +40,8 @@ Transform:
   m_LocalPosition: {x: -0.52, y: 0.2, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 8792107974934219256}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!143 &1931838449660933406
@@ -197,6 +198,7 @@ MonoBehaviour:
   AdditionalAbilityNodes: []
   CharacterBrain: {fileID: 0}
   OptimizeForMobile: 1
+  TrailManager: {fileID: 0}
 --- !u!114 &1401347937689228787
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -441,43 +443,77 @@ MonoBehaviour:
   colliderCollectDebug: 1
   ccaDebug: 0
   startupProfileDebug: 0
-  recallAvoidanceGizmos: 0
---- !u!114 &-2123262804303764400
-MonoBehaviour:
+--- !u!1001 &83669942733672266
+PrefabInstance:
   m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 840677875511296776}
+    m_Modifications:
+    - target: {fileID: 242967026288948971, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_Name
+      value: WetGroundDecalTrail
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.011189997
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.20921
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.11912
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 4f0056cafcd71384c83ade1445014f4c, type: 3}
+--- !u!4 &8792107974934219256 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 8875071769209325234, guid: 4f0056cafcd71384c83ade1445014f4c,
+    type: 3}
+  m_PrefabInstance: {fileID: 83669942733672266}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2164855269287153525}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8f5f1e6c8f6a4cbb8c1a1e0baf2fbb5b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  AbilityStartSfx: {fileID: 0}
-  AbilityInProgressSfx: {fileID: 0}
-  AbilityStopSfx: {fileID: 0}
-  AbilityStartFeedbacks: {fileID: 0}
-  AbilityStopFeedbacks: {fileID: 0}
-  AbilityPermitted: 1
-  BlockingMovementStates: 
-  BlockingConditionStates: 
-  BlockingWeaponStates: 
---- !u!114 &-3952848528767816114
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2164855269287153525}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0eac5206b55348cb8dbb1cb1addf41c8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  CenterAnchor: {fileID: 0}
-  PreferSlimePbfCentroid: 1
-  HeldAnchorOffset: {x: 0, y: 0, z: 0}
-  DisableHeldColliders: 1
-  DisableGravityWhileHeld: 0
-  PostThrowIgnorePlayerCollisionSeconds: 0.1

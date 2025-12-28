@@ -1,0 +1,16 @@
+{
+    "name": "Revive.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:6a23786a3ae84e14c815ddade2ec2693"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
