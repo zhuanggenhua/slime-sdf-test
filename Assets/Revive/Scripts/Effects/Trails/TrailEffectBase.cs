@@ -66,6 +66,9 @@ namespace Revive.Effects
                 return;
             }
             
+            // 更新现有效果
+            UpdateEffects();
+            
             // 检查角色是否在地面上
             if (!_controller.Grounded)
             {
@@ -84,9 +87,6 @@ namespace Revive.Effects
                     LastSpawnTime = Time.time;
                 }
             }
-            
-            // 更新现有效果
-            UpdateEffects();
         }
         
         /// <summary>

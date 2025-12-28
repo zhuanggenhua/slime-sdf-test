@@ -44,7 +44,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 06134b003eea42742af866400127f89e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  SpawnDistanceThreshold: 1
+  SpawnDistanceThreshold: 0.4
   GroundLayerMask:
     serializedVersion: 2
     m_Bits: 512
@@ -55,18 +55,33 @@ MonoBehaviour:
   DecalMaterials:
   - DecalMaterial: {fileID: 2100000, guid: e4321ddbf64a8014cbcea4cce674c243, type: 2}
     BaseColor: {r: 0, g: 0, b: 0, a: 0}
-    SpawnProbability: 0.429
-  - DecalMaterial: {fileID: 2100000, guid: a31bd0efc635af64ba5156a12c07d861, type: 2}
+    SpawnProbability: 0.16
+  - DecalMaterial: {fileID: 2100000, guid: efe91a8e77beb4046b40440d4390b949, type: 2}
     BaseColor: {r: 0, g: 0, b: 0, a: 0}
-    SpawnProbability: 0.463
-  - DecalMaterial: {fileID: 2100000, guid: 8c170f677f3f9fe4b967e17eedfcf39f, type: 2}
+    SpawnProbability: 0.192
+  - DecalMaterial: {fileID: 2100000, guid: 8ad4363e22f0f7445a3a5dd98f2a9564, type: 2}
     BaseColor: {r: 0, g: 0, b: 0, a: 0}
-    SpawnProbability: 0.486
-  DecalSize: {x: 1, y: 1, z: 0.5}
-  FadeInDuration: 0.3
+    SpawnProbability: 0.156
+  - DecalMaterial: {fileID: 2100000, guid: 35903496b589cb140b80af946ab20385, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.225
+  - DecalMaterial: {fileID: 2100000, guid: 4b6c76374afe1504785076159cf49634, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.178
+  - DecalMaterial: {fileID: 2100000, guid: 43d4cb005eae05642a42b5b24c76de46, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.204
+  - DecalMaterial: {fileID: 2100000, guid: d877cb1f1aaf77c4d96a1eae4e127148, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.168
+  - DecalMaterial: {fileID: 2100000, guid: d70f074aa9949e34ca431251ef732d87, type: 2}
+    BaseColor: {r: 0, g: 0, b: 0, a: 0}
+    SpawnProbability: 0.239
+  DecalSize: {x: 1.5, y: 1.5, z: 0.5}
+  FadeInDuration: 0.1
   Lifetime: 10
-  FadeOutDuration: 1
-  SizeRandomness: 0.2
+  FadeOutDuration: 7
+  SizeRandomness: 0.4
   RotationRandomness: 180
   PositionOffsetRadius: 0.2
   MaxDecalCount: 100

@@ -254,20 +254,6 @@ namespace Revive.Effects
         {
             if (decal.MaterialInstance != null)
             {
-                // 尝试设置常见的透明度属性
-                if (decal.MaterialInstance.HasProperty("_Alpha"))
-                {
-                    decal.MaterialInstance.SetFloat("_Alpha", alpha);
-                }
-                
-                // 也更新颜色的alpha通道
-                if (decal.MaterialInstance.HasProperty("_BaseColor"))
-                {
-                    Color color = decal.MaterialInstance.GetColor("_BaseColor");
-                    color.a = alpha;
-                    decal.MaterialInstance.SetColor("_BaseColor", color);
-                }
-                
                 // Decal Projector的fadeFactor
                 if (decal.Projector != null)
                 {
