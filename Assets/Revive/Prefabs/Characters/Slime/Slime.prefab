@@ -19,8 +19,6 @@ GameObject:
   - component: {fileID: -904217351616132870}
   - component: {fileID: -8990146840772306320}
   - component: {fileID: 8866674475157012359}
-  - component: {fileID: -2123262804303764400}
-  - component: {fileID: -3952848528767816114}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -410,7 +408,7 @@ MonoBehaviour:
   faceMesh: {fileID: -2432090755550338912, guid: da95e641ecf8e56498a856ac1f5b5587,
     type: 3}
   faceMat: {fileID: 2100000, guid: 24cdfa6d5af709a48bb6b12867e8e7d2, type: 2}
-  mat: {fileID: -876546973899608171, guid: 29ad2ce0ca53a914daff303384aba3eb, type: 3}
+  mat: {fileID: 2100000, guid: 5e35cf563f1708d4686e402621db7f69, type: 2}
   particleMesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
   particleMat: {fileID: 2100000, guid: 8692fec3cd971cf4d8d8af04a82826ff, type: 2}
   bubblesMat: {fileID: 2100000, guid: d3ad7e9b0d79bbc4587fd6d464617cba, type: 2}
@@ -438,11 +436,9 @@ MonoBehaviour:
   dropletColliderCacheCapacity: 128
   dropletColliderQueryRadius: 20
   gridDebug: 0
-  componentDebug: 1
-  fadeDebug: 0
   colliderCollectDebug: 1
   ccaDebug: 0
-  startupProfileDebug: 0
+  recallAvoidanceGizmos: 0
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0
