@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Burst;
 using UnityEngine;
+using System.Diagnostics;
 
 namespace Revive.Slime
 {
@@ -107,6 +108,34 @@ namespace Revive.Slime
             bool enableViscosity,
             float viscosityStrength)
         {
+            SimulateStep(particles, velocities, count, deltaTime, gravity, enableViscosity, viscosityStrength, -1);
+        }
+
+        public void SimulateStep(
+            NativeSlice<Particle> particles,
+            NativeSlice<float3> velocities,
+            int count,
+            float deltaTime,
+            float3 gravity,
+            bool enableViscosity,
+            float viscosityStrength,
+            int solverIterationsOverride)
+        {
+            SimulateStep(particles, velocities, count, deltaTime, gravity, enableViscosity, viscosityStrength, solverIterationsOverride, float.NaN, float.NaN);
+        }
+
+        public void SimulateStep(
+            NativeSlice<Particle> particles,
+            NativeSlice<float3> velocities,
+            int count,
+            float deltaTime,
+            float3 gravity,
+            bool enableViscosity,
+            float viscosityStrength,
+            int solverIterationsOverride,
+            float minCOverride,
+            float tensileKOverride)
+        {
             if (count <= 0) return;
             
             // 1. 应用重力和预测位置（写入 _posPredictTemp 作为临时存储）
@@ -119,7 +148,10 @@ namespace Revive.Slime
             ShufflePositionsInternal(count);
             
             // 4. PBF求解
-            SolveDensityConstraints(count);
+            int solverIterations = solverIterationsOverride > 0 ? solverIterationsOverride : _config.solverIterations;
+            float minC = float.IsNaN(minCOverride) ? -0.2f : minCOverride;
+            float tensileK = float.IsNaN(tensileKOverride) ? 0.1f : tensileKOverride;
+            SolveDensityConstraints(count, solverIterations, minC, tensileK);
             
             // 5. Unshuffle：恢复到原始索引顺序
             UnshufflePositionsInternal(count);
@@ -131,6 +163,140 @@ namespace Revive.Slime
             if (enableViscosity && viscosityStrength > 0)
             {
                 ApplyViscosity(velocities, count, viscosityStrength, deltaTime);
+            }
+        }
+        
+        public struct StepTimings
+        {
+            public long TicksGravityPredict;
+            public long TicksNeighborhoodHash;
+            public long TicksNeighborhoodSort;
+            public long TicksNeighborhoodBuildLut;
+            public long TicksShufflePositions;
+            public long TicksSolveLambda;
+            public long TicksSolveDelta;
+            public long TicksUnshufflePositions;
+            public long TicksApplyPositionCorrections;
+            public long TicksViscosityShuffleVel;
+            public long TicksViscosityJob;
+            public long TicksViscosityUnshuffleVel;
+        }
+        
+        public void SimulateStepProfiled(
+            NativeSlice<Particle> particles,
+            NativeSlice<float3> velocities,
+            int count,
+            float deltaTime,
+            float3 gravity,
+            bool enableViscosity,
+            float viscosityStrength,
+            int solverIterationsOverride,
+            float minCOverride,
+            float tensileKOverride,
+            ref StepTimings timings)
+        {
+            if (count <= 0) return;
+            
+            long t0 = Stopwatch.GetTimestamp();
+            ApplyGravityAndPredict(particles, velocities, count, deltaTime, gravity);
+            timings.TicksGravityPredict += Stopwatch.GetTimestamp() - t0;
+            
+            _lut.Clear();
+            t0 = Stopwatch.GetTimestamp();
+            new HashJobFromPositions
+            {
+                Positions = _posPredictTemp,
+                Hashes = _hashes
+            }.Schedule(count, 64).Complete();
+            timings.TicksNeighborhoodHash += Stopwatch.GetTimestamp() - t0;
+            
+            t0 = Stopwatch.GetTimestamp();
+            var activeHashes = _hashes.GetSubArray(0, count);
+            activeHashes.SortJob(new PBF_Utils.Int2Comparer()).Schedule().Complete();
+            timings.TicksNeighborhoodSort += Stopwatch.GetTimestamp() - t0;
+            
+            t0 = Stopwatch.GetTimestamp();
+            new Simulation_PBF.BuildLutJob
+            {
+                Hashes = activeHashes,
+                Lut = _lut
+            }.Schedule().Complete();
+            timings.TicksNeighborhoodBuildLut += Stopwatch.GetTimestamp() - t0;
+            
+            t0 = Stopwatch.GetTimestamp();
+            ShufflePositionsInternal(count);
+            timings.TicksShufflePositions += Stopwatch.GetTimestamp() - t0;
+            
+            int solverIterations = solverIterationsOverride > 0 ? solverIterationsOverride : _config.solverIterations;
+            float minC = float.IsNaN(minCOverride) ? -0.2f : minCOverride;
+            float tensileK = float.IsNaN(tensileKOverride) ? 0.1f : tensileKOverride;
+            for (int iter = 0; iter < solverIterations; iter++)
+            {
+                NativeArray<float3> posIn = (iter % 2 == 0) ? _posPredict : _posPredictTemp;
+                NativeArray<float3> posOut = (iter % 2 == 0) ? _posPredictTemp : _posPredict;
+                
+                t0 = Stopwatch.GetTimestamp();
+                new Simulation_PBF.ComputeLambdaJob
+                {
+                    Lut = _lut,
+                    PosPredict = posIn,
+                    Lambda = _lambda,
+                    TargetDensity = _config.targetDensity,
+                    MinC = minC,
+                }.Schedule(count, 64).Complete();
+                timings.TicksSolveLambda += Stopwatch.GetTimestamp() - t0;
+                
+                t0 = Stopwatch.GetTimestamp();
+                new Simulation_PBF.ComputeDeltaPosJobSimple
+                {
+                    Lut = _lut,
+                    PosPredictIn = posIn,
+                    PosPredictOut = posOut,
+                    Lambda = _lambda,
+                    TargetDensity = _config.targetDensity,
+                    TensileK = tensileK,
+                }.Schedule(count, 64).Complete();
+                timings.TicksSolveDelta += Stopwatch.GetTimestamp() - t0;
+            }
+            
+            t0 = Stopwatch.GetTimestamp();
+            UnshufflePositionsInternal(count);
+            timings.TicksUnshufflePositions += Stopwatch.GetTimestamp() - t0;
+            
+            t0 = Stopwatch.GetTimestamp();
+            ApplyPositionCorrections(particles, velocities, count, deltaTime);
+            timings.TicksApplyPositionCorrections += Stopwatch.GetTimestamp() - t0;
+            
+            if (enableViscosity && viscosityStrength > 0)
+            {
+                t0 = Stopwatch.GetTimestamp();
+                for (int i = 0; i < count; i++)
+                {
+                    int origIdx = _hashes[i].y;
+                    _velocityTemp[i] = velocities[origIdx];
+                }
+                timings.TicksViscosityShuffleVel += Stopwatch.GetTimestamp() - t0;
+                
+                t0 = Stopwatch.GetTimestamp();
+                new Simulation_PBF.ApplyViscosityJobSimple
+                {
+                    Lut = _lut,
+                    PosPredict = _posPredict,
+                    VelocityR = _velocityTemp,
+                    VelocityW = _velocityTemp2,
+                    ViscosityStrength = viscosityStrength,
+                    TargetDensity = _config.targetDensity,
+                    DeltaTime = deltaTime
+                }.Schedule(count, 64).Complete();
+                timings.TicksViscosityJob += Stopwatch.GetTimestamp() - t0;
+                
+                t0 = Stopwatch.GetTimestamp();
+                for (int i = 0; i < count; i++)
+                {
+                    int origIdx = _hashes[i].y;
+                    velocities[origIdx] = _velocityTemp2[i];
+                }
+                timings.TicksViscosityUnshuffleVel += Stopwatch.GetTimestamp() - t0;
             }
         }
         
@@ -215,15 +381,20 @@ namespace Revive.Slime
         /// </summary>
         public void SolveDensityConstraints(int count)
         {
-            for (int iter = 0; iter < _config.solverIterations; iter++)
+            SolveDensityConstraints(count, _config.solverIterations, -0.2f, 0.1f);
+        }
+
+        private void SolveDensityConstraints(int count, int solverIterations, float minC, float tensileK)
+        {
+            for (int iter = 0; iter < solverIterations; iter++)
             {
                 if (iter % 2 == 0)
                 {
-                    SolveDensityIteration(_posPredict, _posPredictTemp, count);
+                    SolveDensityIteration(_posPredict, _posPredictTemp, count, minC, tensileK);
                 }
-                else  
+                else
                 {
-                    SolveDensityIteration(_posPredictTemp, _posPredict, count);
+                    SolveDensityIteration(_posPredictTemp, _posPredict, count, minC, tensileK);
                 }
             }
         }
@@ -310,7 +481,9 @@ namespace Revive.Slime
         private void SolveDensityIteration(
             NativeArray<float3> posIn, 
             NativeArray<float3> posOut,
-            int count)
+            int count,
+            float minC,
+            float tensileK)
         {
             // 计算Lambda（复用主体的 Job）
             new Simulation_PBF.ComputeLambdaJob
@@ -319,6 +492,7 @@ namespace Revive.Slime
                 PosPredict = posIn,
                 Lambda = _lambda,
                 TargetDensity = _config.targetDensity,
+                MinC = minC,
             }.Schedule(count, 64).Complete();
             
             // 计算位置修正（复用主体的简化版 Job）
@@ -329,6 +503,7 @@ namespace Revive.Slime
                 PosPredictOut = posOut,
                 Lambda = _lambda,
                 TargetDensity = _config.targetDensity,
+                TensileK = tensileK,
         }.Schedule(count, 64).Complete();
         }
         

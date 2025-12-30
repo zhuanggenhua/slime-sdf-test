@@ -1,4 +1,5 @@
 ﻿using System.Linq;
+using System.Diagnostics;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -82,7 +83,6 @@ namespace Revive.Slime
                 mesh.SetVertices(vertices.AsArray());
                 mesh.SetNormals(normals.AsArray());
             }
-            mesh.RecalculateBounds();
             mesh.UploadMeshData(false);
             
             _lastVertexCount = vertices.Length;
@@ -96,13 +96,25 @@ namespace Revive.Slime
         public Mesh MarchingCubesParallel(NativeArray<int3> keys, NativeHashMap<int3, int> gridLut,
             NativeArray<float> grid, float threshold, float scale = 1)
         {
+            UnityEngine.Profiling.Profiler.BeginSample("MC.BlockVertCountBuffer");
+            long tBlockBuf0 = Stopwatch.GetTimestamp();
             int requiredBlockVertCount = keys.Length + 1;
             if (!_blockVertCountBuffer.IsCreated || _blockVertCountBuffer.Length < requiredBlockVertCount)
             {
+                int newLen = math.max(requiredBlockVertCount, _blockVertCountBuffer.IsCreated ? (_blockVertCountBuffer.Length * 2) : 0);
+                if (newLen < requiredBlockVertCount) newLen = requiredBlockVertCount;
                 if (_blockVertCountBuffer.IsCreated) _blockVertCountBuffer.Dispose();
-                _blockVertCountBuffer = new NativeArray<int>(requiredBlockVertCount, Allocator.Persistent);
+                _blockVertCountBuffer = new NativeArray<int>(newLen, Allocator.Persistent);
             }
             var blockVertCount = _blockVertCountBuffer.GetSubArray(0, requiredBlockVertCount);
+
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            double invFreqMs = 1000.0 / Stopwatch.Frequency;
+            PerformanceProfiler.Add("MC_BlockVertCountBuffer", (Stopwatch.GetTimestamp() - tBlockBuf0) * invFreqMs);
+
+            UnityEngine.Profiling.Profiler.BeginSample("MC.TrianglesCounter+PrefixSum");
+            long tTriPrefix0 = Stopwatch.GetTimestamp();
 
             var handle = new TrianglesCounterJobs
             {
@@ -120,28 +132,46 @@ namespace Revive.Slime
                 BlockVertCount = blockVertCount
             }.Schedule(handle).Complete();
 
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            PerformanceProfiler.Add("MC_TrianglesCounterPrefix", (Stopwatch.GetTimestamp() - tTriPrefix0) * invFreqMs);
+
             var totalVertCount = blockVertCount[keys.Length];
 
+            UnityEngine.Profiling.Profiler.BeginSample("MC.BufferResize");
+            long tResize0 = Stopwatch.GetTimestamp();
             if (!_vertexBuffer.IsCreated || _vertexBuffer.Length < totalVertCount)
             {
+                int newLen = math.max(totalVertCount, _vertexBuffer.IsCreated ? (_vertexBuffer.Length * 2) : 0);
+                if (newLen < totalVertCount) newLen = totalVertCount;
                 if (_vertexBuffer.IsCreated) _vertexBuffer.Dispose();
-                _vertexBuffer = new NativeArray<float3>(math.max(0, totalVertCount), Allocator.Persistent);
+                _vertexBuffer = new NativeArray<float3>(math.max(0, newLen), Allocator.Persistent);
             }
             if (!_normalBuffer.IsCreated || _normalBuffer.Length < totalVertCount)
             {
+                int newLen = math.max(totalVertCount, _normalBuffer.IsCreated ? (_normalBuffer.Length * 2) : 0);
+                if (newLen < totalVertCount) newLen = totalVertCount;
                 if (_normalBuffer.IsCreated) _normalBuffer.Dispose();
-                _normalBuffer = new NativeArray<float3>(math.max(0, totalVertCount), Allocator.Persistent);
+                _normalBuffer = new NativeArray<float3>(math.max(0, newLen), Allocator.Persistent);
             }
             if (!_triangleBuffer.IsCreated || _triangleBuffer.Length < totalVertCount)
             {
+                int newLen = math.max(totalVertCount, _triangleBuffer.IsCreated ? (_triangleBuffer.Length * 2) : 0);
+                if (newLen < totalVertCount) newLen = totalVertCount;
                 if (_triangleBuffer.IsCreated) _triangleBuffer.Dispose();
-                _triangleBuffer = new NativeArray<int>(math.max(0, totalVertCount), Allocator.Persistent);
+                _triangleBuffer = new NativeArray<int>(math.max(0, newLen), Allocator.Persistent);
             }
+
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            PerformanceProfiler.Add("MC_BufferResize", (Stopwatch.GetTimestamp() - tResize0) * invFreqMs);
 
             var vertices = _vertexBuffer.GetSubArray(0, totalVertCount);
             var normals = _normalBuffer.GetSubArray(0, totalVertCount);
             var triangles = _triangleBuffer.GetSubArray(0, totalVertCount);
-            
+
+            UnityEngine.Profiling.Profiler.BeginSample("MC.BuildMeshJob");
+            long tBuildJob0 = Stopwatch.GetTimestamp();
             new MarchingCubesParallelJobs
             {
                 TriangleConnectionTable = _triangleConnectionTable,
@@ -157,8 +187,15 @@ namespace Revive.Slime
                 Threshold = threshold,
                 Scale = scale,
             }.Schedule(keys.Length, 32).Complete();
-            
+
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            PerformanceProfiler.Add("MC_BuildMeshJob", (Stopwatch.GetTimestamp() - tBuildJob0) * invFreqMs);
+
             var mesh = _mesh;
+
+            UnityEngine.Profiling.Profiler.BeginSample("MC.MeshSet");
+            long tMeshSet0 = Stopwatch.GetTimestamp();
             if (vertices.Length > _lastVertexCount)
             {
                 mesh.SetVertices(vertices);
@@ -171,11 +208,21 @@ namespace Revive.Slime
                 mesh.SetVertices(vertices);
                 mesh.SetNormals(normals);
             }
-            mesh.RecalculateBounds();
+
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            PerformanceProfiler.Add("MC_MeshSet", (Stopwatch.GetTimestamp() - tMeshSet0) * invFreqMs);
+
+            UnityEngine.Profiling.Profiler.BeginSample("MC.UploadMeshData");
+            long tUpload0 = Stopwatch.GetTimestamp();
             mesh.UploadMeshData(false);
-            
+
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            PerformanceProfiler.Add("MC_UploadMeshData", (Stopwatch.GetTimestamp() - tUpload0) * invFreqMs);
+
             _lastVertexCount = vertices.Length;
-            
+
             return mesh;
         }
 
@@ -210,9 +257,8 @@ namespace Revive.Slime
                 for (int dx = -1; dx <= 1; ++dx)
                 {
                     int3 nKey = key + new int3(dx, dy, dz);
-                    if (!GridLut.ContainsKey(nKey)) continue;
+                    if (!GridLut.TryGetValue(nKey, out int nOff)) continue;
 
-                    int nOff = GridLut[nKey];
                     for (int j = 0; j < 64; j++)
                     {
                         int3 coord = (nKey * 4) + GetLocalCoord(j) - minCoord;
@@ -314,9 +360,7 @@ namespace Revive.Slime
                     for (int dx = -1; dx <= 1; ++dx)
                     {
                         int3 nKey = key + new int3(dx, dy, dz);
-                        if (!GridLut.ContainsKey(nKey)) continue;
-
-                        int nOff = GridLut[nKey];
+                        if (!GridLut.TryGetValue(nKey, out int nOff)) continue;
                         for (int j = 0; j < 64; j++)
                         {
                             int3 coord = (nKey * 4) + GetLocalCoord(j) - minCoord;
@@ -455,9 +499,7 @@ namespace Revive.Slime
                 for (int dx = -1; dx <= 1; ++dx)
                 {
                     int3 nKey = key + new int3(dx, dy, dz);
-                    if (!GridLut.ContainsKey(nKey)) continue;
-
-                    int nOff = GridLut[nKey];
+                    if (!GridLut.TryGetValue(nKey, out int nOff)) continue;
                     for (int j = 0; j < 64; j++)
                     {
                         int3 coord = (nKey * 4) + GetLocalCoord(j) - minCoord;

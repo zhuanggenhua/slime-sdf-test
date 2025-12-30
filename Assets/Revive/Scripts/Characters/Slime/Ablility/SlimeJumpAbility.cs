@@ -168,15 +168,33 @@ namespace Revive.Slime
             }
 
             Vector3 labelPos = transform.position + _debugWorldOffset;
+            float speed = controller.Velocity.magnitude;
+
+            var speedStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                richText = true,
+                fontSize = 14,
+            };
+            speedStyle.normal.textColor = new Color(1f, 0.85f, 0.1f);
+
+            var textStyle = new GUIStyle(EditorStyles.label)
+            {
+                richText = true,
+                fontSize = 11,
+            };
+            textStyle.normal.textColor = Color.white;
+
+            Handles.color = Color.white;
+            Handles.Label(labelPos, $"<b>Speed={speed:F2}</b>", speedStyle);
+
             string text =
-                $"Jump\n" +
+                $"JumpImpulse={JumpImpulse:F2}\n" +
                 $"vY={controller.Velocity.y:F2}  lastY={controller.VelocityLastFrame.y:F2}\n" +
                 $"vXZ={new Vector2(controller.Velocity.x, controller.Velocity.z).magnitude:F2}\n" +
                 $"grounded={controller.Grounded}  justGrounded={controller.JustGotGrounded}\n" +
                 $"gravityActive={controller.GravityActive}  mode={controller.UpdateMode}";
 
-            Handles.color = Color.white;
-            Handles.Label(labelPos, text);
+            Handles.Label(labelPos + new Vector3(0f, -0.18f, 0f), text, textStyle);
         }
 #endif
     }

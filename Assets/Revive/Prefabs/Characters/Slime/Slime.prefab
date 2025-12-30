@@ -19,6 +19,8 @@ GameObject:
   - component: {fileID: -904217351616132870}
   - component: {fileID: -8990146840772306320}
   - component: {fileID: 8866674475157012359}
+  - component: {fileID: 2494007224200162004}
+  - component: {fileID: 4923431413906178474}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -91,9 +93,9 @@ Rigidbody:
   m_ImplicitTensor: 1
   m_UseGravity: 1
   m_IsKinematic: 1
-  m_Interpolate: 0
+  m_Interpolate: 1
   m_Constraints: 0
-  m_CollisionDetection: 0
+  m_CollisionDetection: 1
 --- !u!114 &5021390047149982154
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -379,10 +381,6 @@ MonoBehaviour:
   coreRadius: 20
   maxParticles: 16384
   activeParticles: 2504
-  recallMaxSpeed: 2
-  recallMinSpeed: 0.1
-  recallSlowdownDist: 3
-  recallAvoidance: 1
   recallStepMaxHeight: 2
   recallStepTriggerAdvance: 0.1
   recallHeightCompPercent: 0.2
@@ -392,7 +390,6 @@ MonoBehaviour:
   recallObstacleCheckDist: 0.3
   recallObstacleKeepDistanceMargin: 0.1
   mainRadiusScale: 1.1
-  separatedRadiusScale: 0.6
   mainOverlapThreshold: 0.6
   mainRadiusShrinkRate: 0.99
   enableAutoSeparate: 1
@@ -415,6 +412,10 @@ MonoBehaviour:
   trans: {fileID: 840677875511296776}
   _slimeVolume: {fileID: -8990146840772306320}
   renderMode: 1
+  showEyesOnSeparated: 0
+  rearrangeInstancesIntervalFrames: 4
+  nonControlledRaycastIntervalFrames: 6
+  dropletMarchingCubesIntervalFrames: 1
   blockNum: 0
   bubblesNum: 0
   minPos:
@@ -425,20 +426,78 @@ MonoBehaviour:
     x: 0
     y: 0
     z: 0
-  mainColliderCacheCapacity: 64
-  mainColliderQueryRadius: 20
+  enableWatering: 1
+  mainColliderIndexQueryCacheCapacity: 64
+  mainColliderIndexQueryRadiusWorld: 20
   worldStaticColliderLayers:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 512
   worldDynamicColliderLayers:
     serializedVersion: 2
-    m_Bits: 0
-  dropletColliderCacheCapacity: 128
-  dropletColliderQueryRadius: 20
+    m_Bits: 16777216
+  useWorldStaticSdf: 1
+  worldStaticSdfBytes: {fileID: 4900000, guid: dec04e336a0218b438b2816f0f5dbbc8, type: 3}
+  disableStaticColliderFallbackWhenUsingSdf: 1
+  worldStaticSdfFriction: 0.2
+  particleRadiusWorld: 0.05
+  dropletColliderIndexQueryCacheCapacity: 128
+  dropletColliderIndexQueryRadiusWorld: 20
+  dropletDynamicDragStrength: 20
+  dropletDynamicDragRadiusWorld: 1
+  dropletLiquidSolverIterations: 1
+  dropletLiquidGravityY: -10
+  performanceProfilerEnabled: 0
   gridDebug: 0
-  colliderCollectDebug: 1
+  colliderCollectDebug: 0
   ccaDebug: 0
   recallAvoidanceGizmos: 0
+  recallAvoidanceLogs: 0
+--- !u!114 &2494007224200162004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0eac5206b55348cb8dbb1cb1addf41c8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  CenterAnchor: {fileID: 0}
+  PreferSlimePbfCentroid: 1
+  HeldAnchorOffset: {x: 0, y: 0, z: 0}
+  PickupTransitionSeconds: 0.12
+  FixedThrowAngleDegrees: 45
+  MaxThrowRange: 20
+  GroundRaycastLayers:
+    serializedVersion: 2
+    m_Bits: 512
+  GroundRaycastMaxDistance: 200
+  PostThrowIgnorePlayerCollision: 1
+  PostThrowIgnoreSlimeSimulation: 1
+  PostThrowIgnoreDurationSeconds: 2
+--- !u!114 &4923431413906178474
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8f5f1e6c8f6a4cbb8c1a1e0baf2fbb5b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AbilityStartSfx: {fileID: 0}
+  AbilityInProgressSfx: {fileID: 0}
+  AbilityStopSfx: {fileID: 0}
+  AbilityStartFeedbacks: {fileID: 0}
+  AbilityStopFeedbacks: {fileID: 0}
+  AbilityPermitted: 1
+  BlockingMovementStates: 
+  BlockingConditionStates: 
+  BlockingWeaponStates: 
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Revive.Mathematics;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -14,11 +15,11 @@ namespace Revive.Slime
         /// </summary>
         public float3 Position;
         public ParticleType Type;  // 粒子类型
-        public int ControllerId;   // 所属控制器ID（0=主体，1+=分离组）
-        public int StableId;       // 分离团块稳定ID（0=主体，1+=分离团块）
+        public int ControllerSlot;   // 所属控制器槽位（0=主体，1+=分离组）
         public int SourceId;       // 场景水珠源ID（-1=非场景水珠）
         public int ClusterId;      // CCA cluster id
         public int FreeFrames;     // 发射倒计时（仅Emitted类型使用）
+        public int BlobId;       // 分离团块稳定ID（0=主体，1+=分离团块）
         public int FramesOutsideMain; // 连续离开主体的帧数（用于延迟分离判定）
         
         /// <summary>
@@ -59,7 +60,6 @@ namespace Revive.Slime
         public const int Climbable = 1;  // 可攀爬表面
         public const int Water = 2;      // 水体
         public const int Sticky = 3;     // 粘性表面
-        public const int JumpPad = 4;    // 弹跳平台
     }
     
     public struct MyBoxCollider
@@ -68,6 +68,10 @@ namespace Revive.Slime
         public float3 Extent;
         public int Type;       // 碰撞体类型（见 ColliderTypes）
         public float Friction; // 表面摩擦力（0-1）
+        public int IsDynamic;  // 1=动态（可投掷/可移动），0=静态
+        public float3 Velocity; // 动态碰撞体速度（模拟坐标），静态为0
+        public int Shape;      // 0=AABB, 1=OBB
+        public quaternion Rotation; // OBB: local-to-world rotation (sim/world share the same rotation)
     }
 
     public static class PBF_Utils
@@ -223,7 +227,7 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<Particle> Ps;
             [ReadOnly] public NativeArray<ParticleController> Controllers;
             [ReadOnly] public NativeArray<ParticleController> SourceControllers;
-            [ReadOnly] public NativeArray<int> StableIdToSlot;
+            [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
             [WriteOnly] public NativeArray<Particle> PsNew;
             public NativeArray<float3> Velocity;
             public float3 Gravity;
@@ -232,8 +236,8 @@ namespace Revive.Slime
             public float VelocityDamping;
             public float VerticalOffset;
             public bool EnableRecall;
-            [ReadOnly] public NativeArray<byte> RecallEligibleStableIds;
-            public bool UseRecallEligibleStableIds;
+            [ReadOnly] public NativeArray<byte> RecallEligibleBlobIds;
+            public bool UseRecallEligibleBlobIds;
             public float3 MainCenter; // 主体控制器中心，用于分离粒子排除指向主体的凝聚力分量
             public float3 MainVelocity; // 主体控制器速度，用于计算相对速度
             public float MaxDeformDistXZ; // 水平形变上限（模拟坐标）
@@ -276,9 +280,9 @@ namespace Revive.Slime
                 int controllerIndex = 0;
                 if (p.Type != ParticleType.MainBody)
                 {
-                    int sid = p.StableId;
-                    if (sid >= 0 && sid < StableIdToSlot.Length)
-                        controllerIndex = StableIdToSlot[sid];
+                    int blobId = p.BlobId;
+                    if (blobId >= 0 && blobId < BlobIdToControllerSlot.Length)
+                        controllerIndex = BlobIdToControllerSlot[blobId];
                     else
                         controllerIndex = -1;
                 }
@@ -312,9 +316,9 @@ namespace Revive.Slime
                     bool inFreeState = p.FreeFrames > 0; // 自由飞行状态，不受控制器影响
                     bool enableRecall = EnableRecall;
 
-                    int stableId = p.StableId;
-                    bool canRecallThisController = !UseRecallEligibleStableIds ||
-                                                   (stableId > 0 && stableId < RecallEligibleStableIds.Length && RecallEligibleStableIds[stableId] != 0);
+                    int blobId = p.BlobId;
+                    bool canRecallThisController = !UseRecallEligibleBlobIds ||
+                                                   (blobId > 0 && blobId < RecallEligibleBlobIds.Length && RecallEligibleBlobIds[blobId] != 0);
 
                     bool enableRecallThisController = enableRecall && canRecallThisController;
 
@@ -322,7 +326,7 @@ namespace Revive.Slime
                     // 自由飞行状态的粒子不受召回影响
                     if (enableRecallThisController && isSeparated && !inFreeState && len >= cl.Radius)
                     {
-                        // ControllerId=0 的分离粒子：计算指向主体的召回方向
+                        // ControllerSlot=0 的分离粒子：计算指向主体的召回方向
                         if (controllerIndex == 0)
                         {
                             float3 dirToMain = math.normalizesafe(new float3(toCenter.x, 0f, toCenter.z));
@@ -372,7 +376,7 @@ namespace Revive.Slime
                         // 分离粒子对主体控制器(index=0)在非召回模式：只保留重力，不向主体凝聚
                         else if (isSeparated && controllerIndex == 0 && !enableRecallThisController)
                         {
-                            // ControllerId=0 表示 CCA 还没分配分离组控制器
+                            // ControllerSlot=0 表示 CCA 还没分配分离组控制器
                             // 不做额外处理，保留重力效果（已在上面应用：velocity = Velocity[i] * VelocityDamping + Gravity * DeltaTime）
                             // 分离粒子靠自身重力下落，等待 CCA 分配分离组控制器后再凝聚
                         }
@@ -502,6 +506,7 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<float3> PosPredict;
             [WriteOnly] public NativeArray<float> Lambda;
             public float TargetDensity;
+            public float MinC;
 
             public void Execute(int i)
             {
@@ -536,7 +541,7 @@ namespace Revive.Slime
                 }
 
                 sigmaGrad += math.dot(grad_i, grad_i);
-                float c = math.max(-0.2f, rho / TargetDensity - 1.0f);
+                float c = math.max(MinC, rho / TargetDensity - 1.0f);
                 Lambda[i] = -c / (sigmaGrad + 1e-5f);
             }
         }
@@ -761,8 +766,8 @@ namespace Revive.Slime
                     {
                         Position = position, // 不修正位置
                         Type = originalP.Type,
-                        ControllerId = originalP.ControllerId,
-                        StableId = originalP.StableId,
+                        ControllerSlot = originalP.ControllerSlot,
+                        BlobId = originalP.BlobId,
                         SourceId = originalP.SourceId,
                         ClusterId = originalP.ClusterId,
                         FreeFrames = originalP.FreeFrames,
@@ -827,8 +832,8 @@ namespace Revive.Slime
                 {
                     Position = newPos,
                     Type = originalP.Type,
-                    ControllerId = originalP.ControllerId,
-                    StableId = originalP.StableId,
+                    ControllerSlot = originalP.ControllerSlot,
+                    BlobId = originalP.BlobId,
                     SourceId = originalP.SourceId,
                     ClusterId = originalP.ClusterId,
                     FreeFrames = originalP.FreeFrames,
@@ -849,7 +854,7 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<float> Lambda;
             public float TargetDensity;
             private const float TensileDq = 0.25f * PBF_Utils.h;
-            private const float TensileK = 0.1f;
+            public float TensileK;
 
             public void Execute(int i)
             {
@@ -894,6 +899,11 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<MyBoxCollider> Colliders;
             [ReadOnly] public NativeList<ParticleController> Controllers; // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
             public int ColliderCount;
+            public int UseStaticSdf;
+            public WorldSdfRuntime.Volume StaticSdf;
+            public int DisableStaticColliderFallback;
+            public float ParticleRadiusSim;
+            public float StaticFriction;
             [ReadOnly] public NativeArray<float3> PosOld;
             [ReadOnly] public NativeArray<float3> ClampDelta; // 【P4】ComputeDeltaPosJob 输出的钳制位移量
             public NativeArray<Particle> Ps;
@@ -922,30 +932,115 @@ namespace Revive.Slime
                 
                 // 所有粒子统一使用模拟坐标（内部坐标）
                 float3 simPos = p.Position;
+
+                bool hadSdfCollision = false;
+                float3 sdfNormal = new float3(0, 1, 0);
+                if (UseStaticSdf != 0 && StaticSdf.IsCreated)
+                {
+                    float d = StaticSdf.SampleDistance(simPos);
+                    if (d < ParticleRadiusSim)
+                    {
+                        float3 n = StaticSdf.SampleNormalForward(simPos, d);
+                        simPos += n * (ParticleRadiusSim - d);
+                        hadSdfCollision = true;
+                        sdfNormal = n;
+                    }
+                }
                 
                 // 碰撞检测（Colliders 也是模拟坐标，包含地面碰撞体）
                 // 记录碰撞轴，用于后续速度衰减
                 bool3 collisionAxes = false;
+                bool hadObbCollision = false;
+                float3 obbNormal = float3.zero;
+                float obbFriction = 0f;
+                float3 obbSurfaceVelocity = float3.zero;
                 for (int c = 0; c < ColliderCount; c++)
                 {
                     MyBoxCollider box = Colliders[c];
-                    float3 dir = simPos - box.Center;
-                    float3 vec = math.abs(dir);
-                    
-                    if (math.all(vec < box.Extent))
-                    {
-                        float3 remain = box.Extent - vec;
-                        int axis = 0;
-                        if (remain.y < remain[axis]) axis = 1;
-                        if (remain.z < remain[axis]) axis = 2;
-                        simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
-                        collisionAxes[axis] = true;
-                    }
+                    if (UseStaticSdf != 0 && box.IsDynamic == 0 && (DisableStaticColliderFallback != 0 || hadSdfCollision))
+                        continue;
+
+                     switch (box.Shape)
+                     {
+                         case ColliderShapes.Obb:
+                         {
+                             quaternion invRot = math.conjugate(box.Rotation);
+                             float3 local = math.mul(invRot, (simPos - box.Center));
+                             float3 vec = math.abs(local);
+                             if (math.all(vec < box.Extent))
+                             {
+                                 float3 remain = box.Extent - vec;
+                                 int axis = 0;
+                                 if (remain.y < remain[axis]) axis = 1;
+                                 if (remain.z < remain[axis]) axis = 2;
+
+                                 float sign = math.sign(local[axis]);
+                                 if (sign == 0f) sign = 1f;
+                                 local[axis] = sign * box.Extent[axis];
+                                 simPos = box.Center + math.mul(box.Rotation, local);
+
+                                 float3 nLocal = float3.zero;
+                                 nLocal[axis] = sign;
+                                 float3 nWorld = math.mul(box.Rotation, nLocal);
+
+                                 hadObbCollision = true;
+                                 obbNormal = nWorld;
+                                 obbFriction = math.max(obbFriction, box.Friction);
+                                 obbSurfaceVelocity = box.Velocity;
+                             }
+                             break;
+                         }
+                         case ColliderShapes.Capsule:
+                         {
+                             ColliderShapeUtils.ComputeCapsule(in box, out float3 a, out float3 b, out float r);
+                             float r2 = r * r;
+                             float d2 = simPos.udSqrSegment(a, b);
+                             if (d2 < r2)
+                             {
+                                 float3 closest = ColliderShapeUtils.ClosestPointOnSegment(simPos, a, b);
+                                 float3 d = simPos - closest;
+
+                                 float3 n;
+                                 if (d2 < 1e-10f)
+                                 {
+                                     float3 fallback = math.mul(box.Rotation, new float3(0, 1, 0));
+                                     float fb2 = math.lengthsq(fallback);
+                                     n = fb2 < 1e-10f ? new float3(0, 1, 0) : fallback * math.rsqrt(fb2);
+                                 }
+                                 else
+                                 {
+                                     n = d * math.rsqrt(d2);
+                                 }
+
+                                 simPos = closest + n * r;
+                                 hadObbCollision = true;
+                                 obbNormal = n;
+                                 obbFriction = math.max(obbFriction, box.Friction);
+                                 obbSurfaceVelocity = box.Velocity;
+                             }
+                             break;
+                         }
+                         default:
+                         {
+                             float3 dir = simPos - box.Center;
+                             float3 vec = math.abs(dir);
+                             if (math.all(vec < box.Extent))
+                             {
+                                 float3 remain = box.Extent - vec;
+                                 int axis = 0;
+                                 if (remain.y < remain[axis]) axis = 1;
+                                 if (remain.z < remain[axis]) axis = 2;
+                                 simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
+                                 collisionAxes[axis] = true;
+                             }
+                             break;
+                         }
+                     }
                 }
                 
-                // 【改进】只对主体粒子（ControllerId == 0）应用 GroundY 钳制
+                // 【改进】只对主体粒子（ControllerSlot == 0）应用 GroundY 钳制
                 // 分离团依靠碰撞体限制，避免因控制器中心射线护动导致粒子被错误抬高
-                if (p.Type == ParticleType.MainBody)
+                if (UseStaticSdf == 0 && p.Type == ParticleType.MainBody)
                 {
                     float groundY = FallbackGroundY;
                     if (Controllers.Length > 0)
@@ -968,7 +1063,7 @@ namespace Revive.Slime
                 // 否则发射速度会被位置差重算或碰撞衰减削减掉
                 if (p.FreeFrames > 0)
                 {
-                    bool hadCollision = collisionAxes.x || collisionAxes.y || collisionAxes.z;
+                    bool hadCollision = hadSdfCollision || hadObbCollision || collisionAxes.x || collisionAxes.y || collisionAxes.z;
                     if (hadCollision)
                     {
                         p.FreeFrames = 0;
@@ -996,6 +1091,27 @@ namespace Revive.Slime
                 if (collisionAxes.x) velCalc.x *= normalCollisionDamping;
                 if (collisionAxes.y) velCalc.y *= normalCollisionDamping;
                 if (collisionAxes.z) velCalc.z *= normalCollisionDamping;
+
+                if (hadSdfCollision)
+                {
+                    float vn = math.dot(velCalc, sdfNormal);
+                    float3 vN = sdfNormal * vn;
+                    float3 vT = velCalc - vN;
+                    vN *= normalCollisionDamping;
+                    vT *= math.max(0f, 1f - StaticFriction);
+                    velCalc = vN + vT;
+                }
+
+                if (hadObbCollision)
+                {
+                    float3 vRel = velCalc - obbSurfaceVelocity;
+                    float vn = math.dot(vRel, obbNormal);
+                    float3 vN = obbNormal * vn;
+                    float3 vT = vRel - vN;
+                    vN *= normalCollisionDamping;
+                    vT *= math.max(0f, 1f - math.saturate(obbFriction));
+                    velCalc = (vN + vT) + obbSurfaceVelocity;
+                }
                 
                 // 【形变上限-椭球约束】碰撞后应用椭球形变上限，防止落地时过度扩展
                 // 【关键】使用相对速度，避免影响整体移动

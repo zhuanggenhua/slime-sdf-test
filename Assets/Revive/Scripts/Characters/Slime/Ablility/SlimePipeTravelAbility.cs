@@ -14,10 +14,27 @@ namespace Revive.Slime
         private float _t;
         private bool _reverse;
         private float _speed;
-        private float _maxSpeed;
         private TravelRotationMode _rotationMode;
         private bool _isTravelling;
+        private bool _alignedToPath;
         private Vector3 _lastForward = Vector3.forward;
+        private Vector3 _lastTravelVelocity;
+
+        private float _dbgLastEffectiveSpeed;
+        private float _dbgLastDt;
+        private float _dbgLastMoveMagnitude;
+        private float _dbgLastMoveSpeed;
+
+        private float _travelElapsed;
+
+        private const float SpeedRampSeconds = 1.0f;
+
+        private float _cooldownUntilTime;
+        private CharacterController _cachedCharacterController;
+        private bool _prevDetectCollisions;
+        private bool _prevEnableOverlapRecovery;
+
+        private const float TravelReentryCooldownSeconds = 0.25f;
 
         // 保存的状态
         private CharacterStates.CharacterConditions _prevCondition;
@@ -25,18 +42,66 @@ namespace Revive.Slime
         private bool _prevGravityActive;
         private bool _prevInputAuthorized;
 
+        public bool IsTravelling => _isTravelling;
+
+        public float DebugLastEffectiveSpeed => _dbgLastEffectiveSpeed;
+        public float DebugLastDt => _dbgLastDt;
+        public float DebugLastMoveMagnitude => _dbgLastMoveMagnitude;
+        public float DebugLastMoveSpeed => _dbgLastMoveSpeed;
+
+        public bool CanStartTravel => !_isTravelling && Time.time >= _cooldownUntilTime;
+
         public override void ProcessAbility()
         {
             base.ProcessAbility();
+
+            if (_isTravelling)
+            {
+                return;
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            if (!_isTravelling || _path == null)
+            {
+                return;
+            }
+
+            float dt = Time.fixedDeltaTime;
+            if (dt <= 0f)
+            {
+                return;
+            }
+
+            _travelElapsed += dt;
+            float ramp01 = SpeedRampSeconds > 1e-4f ? Mathf.Clamp01(_travelElapsed / SpeedRampSeconds) : 1f;
+            ramp01 = ramp01 * ramp01 * (3f - 2f * ramp01);
+            float effectiveSpeed = _speed * ramp01;
+
+            _dbgLastEffectiveSpeed = effectiveSpeed;
+            _dbgLastDt = dt;
 
             if (!_isTravelling || _path == null)
             {
                 return;
             }
 
-            float dt = Time.deltaTime;
-            if (dt <= 0f)
-                return;
+            if (!_alignedToPath)
+            {
+                Vector3 startTargetPos = _path.EvaluatePosition(_t);
+                Vector3 startDelta = startTargetPos - transform.position;
+                if (startDelta.sqrMagnitude <= 0.0001f)
+                {
+                    _alignedToPath = true;
+                }
+                else
+                {
+                    if (UpdateMovement(dt, effectiveSpeed, out _))
+                        _alignedToPath = true;
+                    return;
+                }
+            }
 
             var length = _path.GetLength();
             if (length <= 0f)
@@ -45,11 +110,7 @@ namespace Revive.Slime
                 return;
             }
 
-            float currentSpeed = _speed;
-            if (_maxSpeed > 0f)
-                currentSpeed = Mathf.Min(currentSpeed, _maxSpeed);
-
-            float deltaT = (currentSpeed * dt) / Mathf.Max(length, 0.0001f);
+            float deltaT = (effectiveSpeed * dt) / Mathf.Max(length, 0.0001f);
             _t += (_reverse ? -deltaT : deltaT);
 
             if (_path.ClosedLoop)
@@ -61,37 +122,49 @@ namespace Revive.Slime
                 if (_t >= 1f || _t <= 0f)
                 {
                     _t = Mathf.Clamp01(_t);
-                    UpdateMovement(dt); // 最终位置/朝向
-                    StopTravel();
+                    bool reachedEnd = UpdateMovement(dt, effectiveSpeed, out _); // 最终位置/朝向
+                    if (reachedEnd)
+                    {
+                        StopTravel();
+                    }
                     return;
                 }
             }
 
-            UpdateMovement(dt);
+            UpdateMovement(dt, effectiveSpeed, out _);
         }
 
-        private void UpdateMovement(float dt)
+        private bool UpdateMovement(float dt, float speed, out Vector3 targetPos)
         {
-            Vector3 targetPos = _path.EvaluatePosition(_t);
-            Vector3 delta = targetPos - transform.position;
+            targetPos = _path.EvaluatePosition(_t);
+            Vector3 deltaToTarget = targetPos - transform.position;
 
-            var cc = _controller3D != null ? _controller3D.GetComponent<CharacterController>() : null;
-            if (cc != null)
+            float maxMove = Mathf.Max(0f, speed) * Mathf.Max(0f, dt);
+            Vector3 move = maxMove > 0f ? Vector3.ClampMagnitude(deltaToTarget, maxMove) : Vector3.zero;
+
+            if (_cachedCharacterController != null)
             {
-                cc.Move(delta);
+                _cachedCharacterController.Move(move);
             }
             else
             {
-                transform.position = targetPos;
+                transform.position += move;
             }
 
-            Vector3 velocity = dt > 0f ? delta / dt : Vector3.zero;
+            _dbgLastMoveMagnitude = move.magnitude;
+            _dbgLastMoveSpeed = dt > 0f ? (_dbgLastMoveMagnitude / dt) : 0f;
+
+            Vector3 velocity = dt > 0f ? move / dt : Vector3.zero;
+            _lastTravelVelocity = velocity;
             if (_controller3D != null)
             {
                 _controller3D.Velocity = velocity;
             }
 
             ApplyRotation();
+
+            Vector3 remain = targetPos - transform.position;
+            return remain.sqrMagnitude <= 0.0001f;
         }
 
         private void ApplyRotation()
@@ -131,20 +204,41 @@ namespace Revive.Slime
             transform.rotation = targetRot;
         }
 
-        public void StartTravel(SlimePipePath path, float startT, bool reverse, float speed, float maxSpeed, TravelRotationMode rotationMode)
+        public void StartTravel(SlimePipePath path, float startT, bool reverse, float speed, TravelRotationMode rotationMode)
         {
-            if (path == null || !path.TryGetSpline(out _))
+            if (path == null)
+            {
+                Debug.LogWarning($"[SlimePipeTravelAbility] StartTravel aborted: path=null character={_character?.name}", this);
+                return;
+            }
+
+            if (!path.TryGetSpline(out _))
+            {
+                Debug.LogWarning($"[SlimePipeTravelAbility] StartTravel aborted: path.TryGetSpline=false character={_character?.name} path={path.name}", this);
+                return;
+            }
+
+            if (_isTravelling)
+                return;
+
+            if (Time.time < _cooldownUntilTime)
                 return;
 
             _path = path;
             _t = Mathf.Clamp01(startT);
             _reverse = reverse;
             _speed = Mathf.Max(0f, speed);
-            _maxSpeed = maxSpeed;
             _rotationMode = rotationMode;
-            if (_rotationMode == TravelRotationMode.YawOnly && path != null)
+            _alignedToPath = false;
+            _travelElapsed = 0f;
+
+            _cachedCharacterController = _controller3D != null ? _controller3D.GetComponent<CharacterController>() : null;
+            if (_cachedCharacterController != null)
             {
-                _rotationMode = path.RotationModeDefault;
+                _prevDetectCollisions = _cachedCharacterController.detectCollisions;
+                _prevEnableOverlapRecovery = _cachedCharacterController.enableOverlapRecovery;
+                _cachedCharacterController.detectCollisions = false;
+                _cachedCharacterController.enableOverlapRecovery = false;
             }
 
             // 保存原状态
@@ -173,12 +267,22 @@ namespace Revive.Slime
                 return;
 
             _isTravelling = false;
+            _alignedToPath = false;
+            _travelElapsed = 0f;
+            _cooldownUntilTime = Time.time + TravelReentryCooldownSeconds;
+
+            if (_cachedCharacterController != null)
+            {
+                _cachedCharacterController.detectCollisions = _prevDetectCollisions;
+                _cachedCharacterController.enableOverlapRecovery = _prevEnableOverlapRecovery;
+                _cachedCharacterController = null;
+            }
 
             if (_controller3D != null)
             {
                 _controller3D.FreeMovement = _prevFreeMovement;
                 _controller3D.GravityActive = _prevGravityActive;
-                _controller3D.Velocity = Vector3.zero;
+                _controller3D.Velocity = _prevFreeMovement ? _lastTravelVelocity : Vector3.zero;
             }
 
             if (_characterMovement != null)

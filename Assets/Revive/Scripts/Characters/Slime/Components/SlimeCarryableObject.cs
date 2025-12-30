@@ -12,19 +12,9 @@ namespace Revive.Slime
             CharacterForward = 1,
         }
 
-        [Header("Pickup")]
+        [Header("拾取")]
         public bool PickupEnabled = true;
-
-        [Header("Throw")]
         public ThrowDirectionMode DirectionMode = ThrowDirectionMode.MouseXZ;
-
-        [Tooltip("Impulse strength applied when thrown (ForceMode.Impulse).")]
-        [Min(0f)]
-        public float ThrowImpulse = 10f;
-
-        [Tooltip("Optional upward impulse added on throw.")]
-        [Min(0f)]
-        public float UpwardImpulse = 0f;
 
         public Rigidbody Rigidbody { get; private set; }
         public Collider[] Colliders { get; private set; }
@@ -64,18 +54,18 @@ namespace Revive.Slime
 
         private void OnCollisionEnter(Collision collision)
         {
-            if (!PickupEnabled || IsHeld)
-                return;
-
             if (collision == null)
                 return;
 
-            var slot = collision.collider != null ? collision.collider.GetComponentInParent<SlimeCarrySlot>() : null;
-            if (slot == null)
-            {
-                slot = collision.gameObject != null ? collision.gameObject.GetComponentInParent<SlimeCarrySlot>() : null;
-            }
+            if (!PickupEnabled || IsHeld)
+                return;
 
+            var otherCol = collision.collider;
+            var slot = otherCol != null ? otherCol.GetComponentInParent<SlimeCarrySlot>() : null;
+            if (slot == null && collision.gameObject != null)
+            {
+                slot = collision.gameObject.GetComponentInParent<SlimeCarrySlot>();
+            }
             slot?.TryPickup(this);
         }
     }

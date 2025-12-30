@@ -28,7 +28,7 @@
             struct Particle {
                 float3 x;       // Position
                 int Type;       // ParticleType
-                int ID;         // ControllerId
+                int ControllerSlot; // ControllerSlot
                 int SourceId;   // SourceId
                 int ClusterId;  // ClusterId
                 int FreeFrames; // FreeFrames
@@ -61,7 +61,7 @@
                 // project into camera space
                 o.pos = TransformWorldToHClip(worldPosition);
                 o.normal = TransformObjectToWorldNormal(v.normal);
-                o.uv = float4(_ParticleBuffer[id].x, _ParticleBuffer[id].ID);
+                o.uv = float4(_ParticleBuffer[id].x, _ParticleBuffer[id].ControllerSlot);
                 
                 return o;
             }

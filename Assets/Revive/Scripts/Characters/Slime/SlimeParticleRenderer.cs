@@ -18,7 +18,7 @@ namespace Revive.Slime
         
         private Bounds _bounds;
         
-        // Particle 结构体大小：float3 Position + int Type + int ControllerId + int SourceId + int ClusterId + int FreeFrames = 32 bytes
+        // Particle 结构体大小：float3 Position + int Type + int ControllerSlot + int SourceId + int ClusterId + int FreeFrames = 32 bytes
         private const int PARTICLE_STRIDE = 32;
         private const int COVARIANCE_STRIDE = 64; // float4x4 = 16 floats
         
