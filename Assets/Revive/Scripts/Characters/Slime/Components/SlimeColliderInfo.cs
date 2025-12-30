@@ -22,10 +22,7 @@ namespace Revive.Slime
             Water = 2,
             
             /// <summary>粘性表面 - 史莱姆移动缓慢</summary>
-            Sticky = 3,
-            
-            /// <summary>弹跳平台 - 史莱姆接触后向上弹跳</summary>
-            JumpPad = 4
+            Sticky = 3
         }
         
         [Tooltip("碰撞体类型 - 决定史莱姆与此碰撞体的交互方式")]

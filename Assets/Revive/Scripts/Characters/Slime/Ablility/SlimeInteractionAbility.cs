@@ -77,8 +77,8 @@ namespace Revive.Slime
                 if (CarrySlot.ThrowHeld())
                 {
                     _lastEmitTime = Time.time;
+                    return;
                 }
-                return;
             }
 
             if (Time.time - _lastEmitTime < SlimePBF.EmitCooldown)

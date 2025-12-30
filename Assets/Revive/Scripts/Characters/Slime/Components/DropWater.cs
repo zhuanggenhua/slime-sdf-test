@@ -15,6 +15,12 @@ namespace Revive.Slime
             Consumed    // 已消耗：被吸收完毕
         }
 
+        public enum InitialMode
+        {
+            Cohesive = 0, // 凝聚态（默认，与原行为一致）
+            Liquid = 1    // 直接以液体态运行（禁用凝聚/粘性，液体迭代数）
+        }
+
         [Header("【粒子配置】")]
         [ChineseLabel("粒子数量"), Tooltip("该水珠包含的粒子数")]
         [Range(10, 5000), DefaultValue(100)]
@@ -47,6 +53,10 @@ namespace Revive.Slime
         [ChineseLabel("粘性强度"), Tooltip("粘性强度，越大形状越稳定（与主体一致=10）")]
         [Range(0f, 100f), DefaultValue(1f)]
         public float viscosityStrength = 1f;
+
+        [Header("【初始模式】")]
+        [ChineseLabel("激活时的初始模式"), Tooltip("Cohesive=凝聚态（默认）；Liquid=直接以液体态运行")]
+        public InitialMode initialMode = InitialMode.Cohesive;
 
         [Header("【激活配置（Streaming）】")]
         [ChineseLabel("激活半径"), Tooltip("玩家进入此范围时激活水珠")]

@@ -42,6 +42,7 @@ namespace Revive.Slime
         private struct StageData
         {
             public double CurrentMs;
+            public double CurrentFrameTotalMs;
             public double TotalMs;
             public double MaxMs;
             public int CallCount;
@@ -54,6 +55,9 @@ namespace Revive.Slime
         private static double _totalFrameTime = 0;
         private static double _maxFrameTime = 0;
         private static int _slowFrameCount = 0;
+
+        private static double _totalProfiledFrameTime = 0;
+        private static double _maxProfiledFrameTime = 0;
 
         private const int EndWithoutBeginWarningIntervalFrames = 120;
         private const int SlowFrameDetailLogIntervalFrames = 30;
@@ -86,6 +90,7 @@ namespace Revive.Slime
                 {
                     Timer = new Stopwatch(),
                     CurrentMs = 0,
+                    CurrentFrameTotalMs = 0,
                     TotalMs = 0,
                     MaxMs = 0,
                     CallCount = 0
@@ -125,6 +130,7 @@ namespace Revive.Slime
             data.Timer.Stop();
             double elapsed = data.Timer.Elapsed.TotalMilliseconds;
             data.CurrentMs = elapsed;
+            data.CurrentFrameTotalMs += elapsed;
             data.TotalMs += elapsed;
             data.MaxMs = Math.Max(data.MaxMs, elapsed);
             data.CallCount++;
@@ -132,6 +138,35 @@ namespace Revive.Slime
             
             if (_activeStages.Count > 0 && _activeStages.Peek() == stageName)
                 _activeStages.Pop();
+        }
+
+        public static void Add(string stageName, double elapsedMs)
+        {
+            if (!Enabled) return;
+
+            if (!_stages.TryGetValue(stageName, out var data))
+            {
+                data = new StageData
+                {
+                    Timer = new Stopwatch(),
+                    CurrentMs = 0,
+                    CurrentFrameTotalMs = 0,
+                    TotalMs = 0,
+                    MaxMs = 0,
+                    CallCount = 0
+                };
+                _stages[stageName] = data;
+            }
+
+            data.CurrentMs = elapsedMs;
+            data.CurrentFrameTotalMs += elapsedMs;
+            data.TotalMs += elapsedMs;
+            data.MaxMs = Math.Max(data.MaxMs, elapsedMs);
+            data.CallCount++;
+            _stages[stageName] = data;
+
+            if (!_currentFrameStages.Contains(stageName))
+                _currentFrameStages.Add(stageName);
         }
         
         /// <summary>
@@ -150,6 +185,7 @@ namespace Revive.Slime
             {
                 var data = _stages[key];
                 data.CurrentMs = 0;
+                data.CurrentFrameTotalMs = 0;
                 _stages[key] = data;
             }
         }
@@ -163,9 +199,13 @@ namespace Revive.Slime
             
             _frameTimer.Stop();
             double frameTime = _frameTimer.Elapsed.TotalMilliseconds;
+            double profiledFrameTime = CalculateCurrentFrameProfiledTimeMs();
             _frameCount++;
             _totalFrameTime += frameTime;
             _maxFrameTime = Math.Max(_maxFrameTime, frameTime);
+
+            _totalProfiledFrameTime += profiledFrameTime;
+            _maxProfiledFrameTime = Math.Max(_maxProfiledFrameTime, profiledFrameTime);
             
             bool isSlowFrame = frameTime > FrameTimeWarningThreshold;
             if (isSlowFrame)
@@ -174,12 +214,12 @@ namespace Revive.Slime
             // 输出详细日志
             if (VerboseMode)
             {
-                OutputFrameDetails(frameTime, isSlowFrame);
+                OutputFrameDetails(frameTime, profiledFrameTime, isSlowFrame);
             }
             else if (LogOnlySlowFrames && isSlowFrame)
             {
                 if (ShouldLogSlowFrameDetails(frameTime))
-                    OutputFrameDetails(frameTime, true);
+                    OutputFrameDetails(frameTime, profiledFrameTime, true);
             }
 
             _wasSlowFrameLastProfilerFrame = isSlowFrame;
@@ -202,6 +242,8 @@ namespace Revive.Slime
             _totalFrameTime = 0;
             _maxFrameTime = 0;
             _slowFrameCount = 0;
+            _totalProfiledFrameTime = 0;
+            _maxProfiledFrameTime = 0;
             _lastSlowFrameDetailLogProfilerFrame = -999999;
             _lastSlowFrameDetailSignature = 0;
             _wasSlowFrameLastProfilerFrame = false;
@@ -219,6 +261,7 @@ namespace Revive.Slime
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"========== 性能分析汇总 (累计 {_frameCount} 帧) ==========");
             sb.AppendLine($"帧时间: 平均={_totalFrameTime / _frameCount:F2}ms, 最大={_maxFrameTime:F2}ms");
+            sb.AppendLine($"包裹阶段合计: 平均={_totalProfiledFrameTime / _frameCount:F2}ms, 最大={_maxProfiledFrameTime:F2}ms");
             sb.AppendLine($"卡顿帧: {_slowFrameCount} ({100f * _slowFrameCount / _frameCount:F1}%)");
             sb.AppendLine("各阶段耗时:");
             
@@ -238,6 +281,21 @@ namespace Revive.Slime
             }
             
             sb.AppendLine("================================================");
+            Debug.Log(sb.ToString());
+        }
+
+        private static double CalculateCurrentFrameProfiledTimeMs()
+        {
+            double sum = 0;
+            for (int i = 0; i < _currentFrameStages.Count; i++)
+            {
+                string stageName = _currentFrameStages[i];
+                if (_stages.TryGetValue(stageName, out var data) && data.CurrentFrameTotalMs > 0)
+                {
+                    sum += data.CurrentFrameTotalMs;
+                }
+            }
+            return sum;
         }
         
         #endregion
@@ -281,7 +339,7 @@ namespace Revive.Slime
             }
         }
         
-        private static void OutputFrameDetails(double frameTime, bool isSlowFrame)
+        private static void OutputFrameDetails(double frameTime, double profiledFrameTime, bool isSlowFrame)
         {
             var sb = new System.Text.StringBuilder();
             
@@ -289,17 +347,19 @@ namespace Revive.Slime
                 sb.Append($"<color=red>[卡顿帧]</color> ");
             else
                 sb.Append("[帧详情] ");
-            
-            sb.Append($"帧#{Time.frameCount}({_frameCount}) 总耗时={frameTime:F2}ms | ");
+
+            sb.Append($"帧#{Time.frameCount}({_frameCount}) 总耗时={frameTime:F2}ms 包裹合计={profiledFrameTime:F2}ms | ");
             
             foreach (var stageName in _currentFrameStages)
             {
                 if (_stages.TryGetValue(stageName, out var data) && data.CurrentMs > 0)
                 {
                     string color = data.CurrentMs > StageTimeWarningThreshold ? "red" : "white";
-                    sb.Append($"<color={color}>{stageName}={data.CurrentMs:F2}ms</color> ");
+                    sb.Append($"<color={color}>{stageName}={data.CurrentMs:F2}ms/{data.CurrentFrameTotalMs:F2}ms</color> ");
                 }
             }
+            
+            Debug.Log(sb.ToString());
         }
         
         #endregion

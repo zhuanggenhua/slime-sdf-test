@@ -25,7 +25,16 @@ namespace Revive.Environment
         [Tooltip("进入时将角色投影到 spline 上的最近点。")]
         public bool AlignToPathOnEnter = true;
 
-        [Tooltip("朝向模式覆盖值。保持默认则使用路径设置。")]
+        [Tooltip("是否覆盖路径的默认移动速度。")]
+        public bool OverrideSpeed;
+
+        [Tooltip("当 OverrideSpeed=true 时使用的移动速度（世界单位/秒）。")]
+        public float SpeedOverride = 6f;
+
+        [Tooltip("是否覆盖路径的默认朝向模式。")]
+        public bool OverrideRotationMode;
+
+        [Tooltip("当 OverrideRotationMode=true 时使用的朝向模式。")]
         public TravelRotationMode RotationModeOverride = TravelRotationMode.YawOnly;
 
         private void Awake()
@@ -70,6 +79,11 @@ namespace Revive.Environment
                 return;
             }
 
+            if (ability.IsTravelling)
+            {
+                return;
+            }
+
             var pathLength = _path.GetLength();
             if (pathLength <= 0f)
             {
@@ -92,11 +106,9 @@ namespace Revive.Environment
                 startT = 1f;
             }
 
-            float speed = _path.DefaultSpeed;
-            float maxSpeed = _path.MaxSpeed;
-            var rotationMode = RotationModeOverride != 0 ? RotationModeOverride : _path.RotationModeDefault;
-
-            ability.StartTravel(_path, startT, reverse, speed, maxSpeed, rotationMode);
+            float speed = OverrideSpeed ? SpeedOverride : _path.DefaultSpeed;
+            var rotationMode = OverrideRotationMode ? RotationModeOverride : _path.RotationModeDefault;
+            ability.StartTravel(_path, startT, reverse, speed, rotationMode);
         }
     }
 }

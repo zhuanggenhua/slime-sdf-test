@@ -35,10 +35,6 @@ namespace Revive.Environment
         [SerializeField]
         private float _defaultSpeed = 6f;
 
-        [Tooltip("允许的最大移动速度。<=0 表示不限制。")]
-        [SerializeField]
-        private float _maxSpeed = 0f;
-
         [Tooltip("是否将该路径视为闭环。")]
         [SerializeField]
         private bool _closedLoop;
@@ -49,13 +45,14 @@ namespace Revive.Environment
 
         public int SplineIndex => _splineIndex;
         public float DefaultSpeed => _defaultSpeed;
-        public float MaxSpeed => _maxSpeed;
         public bool ClosedLoop => _closedLoop;
         public TravelRotationMode RotationModeDefault => _rotationModeDefault;
 
         public bool TryGetSpline(out Spline spline)
         {
             spline = null;
+            if (_container == null)
+                _container = GetComponent<SplineContainer>();
             if (_container == null)
                 return false;
 
@@ -66,6 +63,27 @@ namespace Revive.Environment
             var idx = Mathf.Clamp(_splineIndex, 0, splines.Count - 1);
             spline = splines[idx];
             return spline != null;
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            if (!TryGetSpline(out _))
+                return;
+
+            Vector3 p0 = EvaluatePosition(0f);
+            Vector3 p1 = EvaluatePosition(1f);
+            Vector3 t0 = EvaluateTangent(0f);
+            Vector3 t1 = EvaluateTangent(1f);
+
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawSphere(p0, 0.2f);
+            Gizmos.DrawSphere(p1, 0.2f);
+
+            if (t0.sqrMagnitude > 1e-6f)
+                Gizmos.DrawRay(p0, t0.normalized * 1.0f);
+
+            if (t1.sqrMagnitude > 1e-6f)
+                Gizmos.DrawRay(p1, t1.normalized * 1.0f);
         }
 
         public float GetLength()

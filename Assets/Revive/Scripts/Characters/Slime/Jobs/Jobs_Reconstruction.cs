@@ -206,6 +206,7 @@ namespace Revive.Slime
         {
             [ReadOnly] public NativeArray<Particle> Ps;
             public NativeHashMap<int3, int> GridLut;
+            public NativeList<int3> Keys;
             public float3 MinPos;
             public int ActiveCount;
 
@@ -226,10 +227,12 @@ namespace Revive.Slime
                     for (int bx = blockMin.x; bx <= blockMax.x; ++bx)
                     {
                         int3 key = new int3(bx, by, bz);
-                        if (GridLut.ContainsKey(key)) continue;
                         var offset = ptr * PBF_Utils.GridSize;
-                        GridLut.TryAdd(key, offset);
-                        ptr++;
+                        if (GridLut.TryAdd(key, offset))
+                        {
+                            Keys.Add(key);
+                            ptr++;
+                        }
                     }
                 }
             }

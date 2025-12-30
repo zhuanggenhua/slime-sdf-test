@@ -31,20 +31,20 @@ namespace Revive.Slime
             }
             
             // 规则3：主体粒子的ControllerId必须是0
-            if (p.Type == ParticleType.MainBody && p.ControllerId != 0)
+            if (p.Type == ParticleType.MainBody && p.ControllerSlot != 0)
             {
-                p.ControllerId = 0; // 自动修正
+                p.ControllerSlot = 0; // 自动修正
                 isValid = false;
             }
             
             // 规则4：休眠粒子不应有任何关联
             if (p.Type == ParticleType.Dormant)
             {
-                if (p.SourceId != -1 || p.ControllerId != 0 || p.FreeFrames != 0 || p.StableId != 0)
+                if (p.SourceId != -1 || p.ControllerSlot != 0 || p.FreeFrames != 0 || p.BlobId != 0)
                 {
                     p.SourceId = -1;
-                    p.ControllerId = 0;
-                    p.StableId = 0;
+                    p.ControllerSlot = 0;
+                    p.BlobId = 0;
                     p.FreeFrames = 0;
                     isValid = false;
                 }
@@ -73,8 +73,8 @@ namespace Revive.Slime
             
             // 粒子 Position 已经是模拟坐标（内部坐标），状态转换时无需坐标转换
             p.Type = ParticleType.MainBody;
-            p.ControllerId = 0;
-            p.StableId = 0;
+            p.ControllerSlot = 0;
+            p.BlobId = 0;
             p.FreeFrames = 0;
             p.SourceId = -1; // 确保清除SourceId
         }
@@ -83,7 +83,7 @@ namespace Revive.Slime
         /// 将粒子转换为分离粒子
         /// </summary>
         /// <param name="freeFrames">自由飞行帧数（期间不受召回影响），默认0，发射时主动传参</param>
-        public static void ConvertToSeparated(ref Particle p, float3 mainCenter, int controllerId = 0, int freeFrames = 0)
+        public static void ConvertToSeparated(ref Particle p, float3 mainCenter, int controllerSlot = 0, int freeFrames = 0)
         {
             // 场景水珠不能转换为分离粒子
             if (p.Type == ParticleType.SceneDroplet)
@@ -96,18 +96,18 @@ namespace Revive.Slime
             {
                 // 粒子 Position 已经是模拟坐标（内部坐标），状态转换时无需坐标转换
                 p.Type = ParticleType.Separated;
-                p.ControllerId = controllerId;
-                p.StableId = 0;
+                p.ControllerSlot = controllerSlot;
+                p.BlobId = 0;
                 p.FreeFrames = freeFrames; // 给分离粒子自由飞行时间
                 p.SourceId = -1; // 确保清除SourceId
-                // Debug.Log($"[ConvertToSeparated] 设置 FreeFrames={freeFrames}, Type={p.Type}, ControllerId={controllerId}");
+                // Debug.Log($"[ConvertToSeparated] 设置 FreeFrames={freeFrames}, Type={p.Type}, ControllerSlot={controllerSlot}");
             }
             else if (p.Type == ParticleType.Emitted && p.FreeFrames == 0)
             {
                 // 发射粒子自由飞行结束，变为普通分离粒子
                 p.Type = ParticleType.Separated;
-                p.ControllerId = controllerId;
-                p.StableId = 0;
+                p.ControllerSlot = controllerSlot;
+                p.BlobId = 0;
                 p.SourceId = -1;
             }
         }
@@ -125,8 +125,8 @@ namespace Revive.Slime
             
             // 粒子 Position 已经是模拟坐标（内部坐标），状态转换时无需坐标转换
             p.Type = ParticleType.Emitted;
-            p.ControllerId = 0; // 发射粒子暂不属于任何控制器
-            p.StableId = 0;
+            p.ControllerSlot = 0; // 发射粒子暂不属于任何控制器
+            p.BlobId = 0;
             p.FreeFrames = freeFrames;
             p.SourceId = -1; // 发射粒子不是场景水珠
         }
@@ -138,8 +138,8 @@ namespace Revive.Slime
         {
             p.Position = worldPos; // 注意：传入的 worldPos 应该已经是模拟坐标（内部坐标）
             p.Type = ParticleType.SceneDroplet;
-            p.ControllerId = 0;
-            p.StableId = 0;
+            p.ControllerSlot = 0;
+            p.BlobId = 0;
             p.SourceId = sourceId;
             p.FreeFrames = 0;
             p.ClusterId = 0;
@@ -152,8 +152,8 @@ namespace Revive.Slime
         {
             p.Position = new float3(0, -1000, 0);
             p.Type = ParticleType.Dormant;
-            p.ControllerId = 0;
-            p.StableId = 0;
+            p.ControllerSlot = 0;
+            p.BlobId = 0;
             p.SourceId = -1; // 清除所有源关联
             p.FreeFrames = 0;
             p.ClusterId = 0;
@@ -244,7 +244,7 @@ namespace Revive.Slime
                 case ParticleType.SceneDroplet: return $"场景水珠(源{p.SourceId})";
                 case ParticleType.Emitted: return $"发射中(剩{p.FreeFrames}帧)";
                 case ParticleType.Separated: 
-                    return p.ControllerId > 0 ? $"分离组{p.ControllerId}" : "分离";
+                    return p.ControllerSlot > 0 ? $"分离组{p.ControllerSlot}" : "分离";
                 default: return "未知";
             }
         }

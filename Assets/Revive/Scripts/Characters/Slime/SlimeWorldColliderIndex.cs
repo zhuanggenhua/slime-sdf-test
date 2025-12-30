@@ -40,6 +40,8 @@ namespace Revive.Slime
             public int Type;
             public float Friction;
             public bool IsDynamic;
+            public Vector3 PrevCenterWorld;
+            public Vector3 VelocityWorld;
             public bool InBuckets;
             public bool IsOversized;
             public int MinX;
@@ -184,6 +186,8 @@ namespace Revive.Slime
                 Type = type,
                 Friction = friction,
                 IsDynamic = isDynamic,
+                PrevCenterWorld = col.bounds.center,
+                VelocityWorld = Vector3.zero,
                 InBuckets = false,
                 IsOversized = false,
                 MinX = 0,
@@ -263,6 +267,20 @@ namespace Revive.Slime
                     }
 
                     Bounds b = col.bounds;
+
+                    Vector3 velocityWorld = Vector3.zero;
+                    var rb = col.attachedRigidbody;
+                    if (rb != null && !rb.isKinematic)
+                    {
+                        velocityWorld = rb.linearVelocity;
+                    }
+                    else
+                    {
+                        float dt = Time.fixedDeltaTime;
+                        float invDt = 1f / Mathf.Max(0.0001f, dt);
+                        velocityWorld = (b.center - entry.PrevCenterWorld) * invDt;
+                    }
+
                     int minX = WorldToBucket(b.min.x);
                     int maxX = WorldToBucket(b.max.x);
                     int minZ = WorldToBucket(b.min.z);
@@ -270,6 +288,8 @@ namespace Revive.Slime
 
                     bool changed = !entry.InBuckets || entry.MinX != minX || entry.MaxX != maxX || entry.MinZ != minZ || entry.MaxZ != maxZ;
                     entry.Bounds = b;
+                    entry.VelocityWorld = velocityWorld;
+                    entry.PrevCenterWorld = b.center;
 
                     if (changed)
                     {
@@ -432,12 +452,34 @@ namespace Revive.Slime
                         float3 extentRaw = (float3)(b.extents * PBF_Utils.InvScale);
                         float3 margin = new float3(1f, 1f, 1f);
 
+                        int shape = ColliderShapes.Obb;
+                        quaternion rot = quaternion.identity;
+                        float3 centerSim = (float3)(b.center * PBF_Utils.InvScale);
+                        float3 extentSim = extentRaw + margin;
+
+                        if (col is BoxCollider boxCol)
+                        {
+                            rot = (quaternion)boxCol.transform.rotation;
+                            Vector3 worldCenter = boxCol.transform.TransformPoint(boxCol.center);
+                            Vector3 halfSizeWorld = Vector3.Scale(boxCol.size * 0.5f, boxCol.transform.lossyScale);
+                            centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                            float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(halfSizeWorld.x), Mathf.Abs(halfSizeWorld.y), Mathf.Abs(halfSizeWorld.z)) * PBF_Utils.InvScale);
+                            extentSim = extentNoMargin + margin;
+
+                            shape = ColliderShapes.Obb;
+                        }
+
                         outBuffer[outCount] = new MyBoxCollider
                         {
-                            Center = (float3)(b.center * PBF_Utils.InvScale),
-                            Extent = extentRaw + margin,
+                            Center = centerSim,
+                            Extent = extentSim,
                             Type = entry.Type,
                             Friction = entry.Friction,
+                            IsDynamic = entry.IsDynamic ? 1 : 0,
+                            Velocity = entry.IsDynamic ? (float3)(entry.VelocityWorld * PBF_Utils.InvScale) : float3.zero,
+                            Shape = shape,
+                            Rotation = rot,
                         };
                         outCount++;
 
@@ -483,12 +525,34 @@ namespace Revive.Slime
                     float3 extentRaw = (float3)(b.extents * PBF_Utils.InvScale);
                     float3 margin = new float3(1f, 1f, 1f);
 
+                    int shape = ColliderShapes.Obb;
+                    quaternion rot = quaternion.identity;
+                    float3 centerSim = (float3)(b.center * PBF_Utils.InvScale);
+                    float3 extentSim = extentRaw + margin;
+
+                    if (col is BoxCollider boxCol)
+                    {
+                        rot = (quaternion)boxCol.transform.rotation;
+                        Vector3 worldCenter = boxCol.transform.TransformPoint(boxCol.center);
+                        Vector3 halfSizeWorld = Vector3.Scale(boxCol.size * 0.5f, boxCol.transform.lossyScale);
+                        centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                        float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(halfSizeWorld.x), Mathf.Abs(halfSizeWorld.y), Mathf.Abs(halfSizeWorld.z)) * PBF_Utils.InvScale);
+                        extentSim = extentNoMargin + margin;
+
+                        shape = ColliderShapes.Obb;
+                    }
+
                     outBuffer[outCount] = new MyBoxCollider
                     {
-                        Center = (float3)(b.center * PBF_Utils.InvScale),
-                        Extent = extentRaw + margin,
+                        Center = centerSim,
+                        Extent = extentSim,
                         Type = entry.Type,
                         Friction = entry.Friction,
+                        IsDynamic = entry.IsDynamic ? 1 : 0,
+                        Velocity = entry.IsDynamic ? (float3)(entry.VelocityWorld * PBF_Utils.InvScale) : float3.zero,
+                        Shape = shape,
+                        Rotation = rot,
                     };
                     outCount++;
                 }
