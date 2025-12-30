@@ -840,8 +840,6 @@ namespace Revive.Slime
         private NativeList<ParticleController> _controllerBuffer;
         private NativeArray<ParticleController> _sourceControllers;
         private int[] _componentToGroup;
-
-        private bool _useRecallEligibleMask;
         private Stack<int> _freeSeparatedControllerIds;
         
         private ComputeBuffer _bubblesDataBuffer;
@@ -867,7 +865,6 @@ namespace Revive.Slime
         private Bounds _bounds;
         private Vector3 _velocity = Vector3.zero;
         private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
-        private float _dbgPipeSpeedSpikeLogTime;
         private bool _runtimeInitialized;
         private float _lastMainRadius; // 用于 mainRadius 防抖
         private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
@@ -899,6 +896,8 @@ namespace Revive.Slime
         private float _connectStartTime;
         private NativeArray<int> _blobIdToControllerSlot;
         private NativeArray<byte> _recallEligibleBlobIds;
+
+        private int[] _recallEligibleBlobAbsentFrames;
         private NativeList<SlimeInstance> _slimeInstances;
         private int _controlledInstance;
         private Stack<int> _instancePool;
@@ -979,17 +978,26 @@ namespace Revive.Slime
         
         public void StartRecall()
         {
-            bool hasEligible = PrepareRecallEligibleControllers();
+            if (!PrepareRecallEligibleControllers())
+            {
+                Debug.Log($"[Recall] StartRecall ignored: no eligible separated/emitted blobs. activeParticles={activeParticles} controllers={(_controllerBuffer.IsCreated ? _controllerBuffer.Length : -1)}");
+                return;
+            }
 
             _connect = true;
             _connectStartTime = Time.time;
 
-            // 召回掩码始终启用：实际 eligibility 由 Control() 每帧动态更新。
-            // blobId==0 的分离粒子在 Job 内特判为可召回。
-            _useRecallEligibleMask = true;
-            if (!hasEligible)
+            // 召回是一次性快照：记录 eligible blobId 的“缺席帧数”。
+            // 规则：eligible blobId 一旦在召回期间缺席过（>0帧），后续不允许被新组件继承，避免“发射后才出现的团”复用旧 eligible id 被预埋召回。
+            int required = _recallEligibleBlobIds.IsCreated ? _recallEligibleBlobIds.Length : 0;
+            if (_recallEligibleBlobAbsentFrames == null || _recallEligibleBlobAbsentFrames.Length < required)
+                _recallEligibleBlobAbsentFrames = new int[required];
+            for (int i = 0; i < required; i++)
+                _recallEligibleBlobAbsentFrames[i] = -1;
+            for (int i = 1; i < required; i++)
             {
-                Debug.Log($"[Recall] StartRecall: no eligible blobs snapshot, will use dynamic eligibility map. activeParticles={activeParticles} controllers={(_controllerBuffer.IsCreated ? _controllerBuffer.Length : -1)}");
+                if (_recallEligibleBlobIds[i] != 0)
+                    _recallEligibleBlobAbsentFrames[i] = 0;
             }
         }
 
@@ -1013,15 +1021,7 @@ namespace Revive.Slime
                 _recallEligibleBlobIds[i] = 0;
 
             if (_recallEligibleBlobIds.Length > 0)
-                _recallEligibleBlobIds[0] = 1;
-
-            int countSep = 0;
-            int countEmit = 0;
-            int countSkipFree = 0;
-            int countSkipBlob0 = 0;
-            int countSkipBlobOor = 0;
-            int maxBlobId = 0;
-            int eligibleBlobCount = 0;
+                _recallEligibleBlobIds[0] = 0;
 
             bool hasAny = false;
             for (int i = 0; i < activeParticles; i++)
@@ -1031,39 +1031,19 @@ namespace Revive.Slime
                     continue;
                 if (p.Type != ParticleType.Separated && p.Type != ParticleType.Emitted)
                     continue;
-
-                if (p.Type == ParticleType.Separated) countSep++;
-                else if (p.Type == ParticleType.Emitted) countEmit++;
-
                 if (p.FreeFrames > 0)
-                {
-                    countSkipFree++;
                     continue;
-                }
                 int blobId = p.BlobId;
                 if (blobId <= 0)
-                {
-                    countSkipBlob0++;
                     continue;
-                }
-                if (blobId > maxBlobId) maxBlobId = blobId;
                 if (blobId < 0 || blobId >= _recallEligibleBlobIds.Length)
-                {
-                    countSkipBlobOor++;
                     continue;
-                }
                 if (_recallEligibleBlobIds[blobId] == 0)
                 {
                     GetOrCreateControllerSlotForBlobId(blobId);
                     _recallEligibleBlobIds[blobId] = 1;
-                    eligibleBlobCount++;
                 }
                 hasAny = true;
-            }
-
-            if (!hasAny)
-            {
-                Debug.Log($"[Recall] PrepareRecallEligibleControllers: no eligible blobs. sep={countSep} emit={countEmit} skipFree={countSkipFree} skipBlob0={countSkipBlob0} skipBlobOor={countSkipBlobOor} maxBlobId={maxBlobId} eligibleLen={_recallEligibleBlobIds.Length}");
             }
 
             return hasAny;
@@ -1856,36 +1836,8 @@ namespace Revive.Slime
             // 这样高速位置补偿的方向和控制器中心的移动方向一致，不会导致粒子飞散
             if (trans != null && Time.fixedDeltaTime > 0)
             {
-                Vector3 deltaW = trans.position - _prevTransPosition;
-                float dtFixed = Time.fixedDeltaTime;
-                _velocity = deltaW / dtFixed;
+                _velocity = (trans.position - _prevTransPosition) / Time.fixedDeltaTime;
                 _prevTransPosition = trans.position;
-
-                var ability = GetComponent<SlimePipeTravelAbility>();
-                if (ability != null && ability.IsTravelling)
-                {
-                    float pipeEffSpeed = ability.DebugLastEffectiveSpeed;
-                    float pipeDt = ability.DebugLastDt;
-                    float pipeMove = ability.DebugLastMoveMagnitude;
-                    float pipeMoveSpeed = ability.DebugLastMoveSpeed;
-
-                    float vFromFixed = dtFixed > 0f ? (deltaW.magnitude / dtFixed) : 0f;
-
-                    const float eps = 0.05f;
-                    float allowed = Mathf.Max(0f, pipeEffSpeed) + 0.25f;
-                    bool spike = vFromFixed > allowed && pipeEffSpeed > eps;
-
-                    float tNow = Time.time;
-                    if (spike && (tNow - _dbgPipeSpeedSpikeLogTime) > 0.25f)
-                    {
-                        _dbgPipeSpeedSpikeLogTime = tNow;
-                        Debug.Log(
-                            $"[PipeSpeedSpike] vFixed={vFromFixed:F3} effSpeed={pipeEffSpeed:F3} allowed={allowed:F3} " +
-                            $"deltaW={deltaW.magnitude:F4} dtFixed={dtFixed:F4} " +
-                            $"pipeMove={pipeMove:F4} pipeDt={pipeDt:F4} pipeMoveSpeed={pipeMoveSpeed:F3} " +
-                            $"note=FixedUpdate用fixedDeltaTime反推速度；PipeTravel在Update(Time.deltaTime)移动时会出现时间基不一致，导致vFixed瞬间偏大" );
-                    }
-                }
             }
             
             // 原版时序：不在 Simulate() 前更新 Center，让 ApplyForceJob 使用上一帧的 Center 和 Radius
@@ -2492,7 +2444,7 @@ namespace Revive.Slime
                 VerticalOffset = verticalOffset,
                 EnableRecall = _connect,
                 RecallEligibleBlobIds = _recallEligibleBlobIds,
-                UseRecallEligibleBlobIds = _connect && _useRecallEligibleMask && _recallEligibleBlobIds.IsCreated,
+                UseRecallEligibleBlobIds = _connect && _recallEligibleBlobIds.IsCreated,
                 MainCenter = mainCenterForJob,
                 MainVelocity = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Velocity : float3.zero,
                 MaxDeformDistXZ = maxDeformDistXZ * PBF_Utils.InvScale, // 水平形变上限
@@ -2815,15 +2767,6 @@ namespace Revive.Slime
         {
             RefreshBlobIdToControllerSlotMapping();
 
-            // 召回期间：每帧动态重建 eligibility（避免 blobId 随 stableId 解析变化导致“半途不可召回”）
-            if (_connect && _useRecallEligibleMask && _recallEligibleBlobIds.IsCreated)
-            {
-                for (int i = 0; i < _recallEligibleBlobIds.Length; i++)
-                    _recallEligibleBlobIds[i] = 0;
-                if (_recallEligibleBlobIds.Length > 0)
-                    _recallEligibleBlobIds[0] = 1;
-            }
-
             PerformanceProfiler.Begin("Control_MainController");
             // === 稳定控制器：不再每帧清空，而是更新属性 ===
             
@@ -3050,13 +2993,11 @@ namespace Revive.Slime
                 ticksAssignGetSlot += System.Diagnostics.Stopwatch.GetTimestamp() - tGetSlot0;
 
                 float3 toMain = float3.zero;
-                bool allowRecallForController = _connect && !suppressRecallByRecentProtection;
-
-                if (allowRecallForController && _connect && _useRecallEligibleMask && _recallEligibleBlobIds.IsCreated &&
-                    blobId > 0 && blobId < _recallEligibleBlobIds.Length)
-                {
-                    _recallEligibleBlobIds[blobId] = 1;
-                }
+                bool allowRecallForController = _connect &&
+                                               _recallEligibleBlobIds.IsCreated &&
+                                               blobId > 0 && blobId < _recallEligibleBlobIds.Length &&
+                                               _recallEligibleBlobIds[blobId] != 0 &&
+                                               !suppressRecallByRecentProtection;
 
                 if (_connect && !allowRecallForController && particleCount > 0)
                 {
@@ -3424,7 +3365,6 @@ namespace Revive.Slime
             if (_connect && Time.time - _connectStartTime > 5f)
             {
                 _connect = false;
-                _useRecallEligibleMask = false;
                 Debug.Log($"[Recall] stopped by timeout. elapsed={(Time.time - _connectStartTime):F2}s");
             }
 
@@ -6369,6 +6309,15 @@ namespace Revive.Slime
                 int sid = _stableResolveCandStable[idx];
                 if (_stableResolveAssignedStable[c] != 0)
                     continue;
+
+                // 召回期间：eligible 的稳定ID一旦缺席过（>0帧），就不允许再被新组件继承。
+                // 这样“召回快照”不会被后续发射出来的新团块通过 stableId 复用而扩大作用范围。
+                if (_connect && _recallEligibleBlobAbsentFrames != null &&
+                    sid > 0 && sid < _recallEligibleBlobAbsentFrames.Length &&
+                    _recallEligibleBlobAbsentFrames[sid] > 0)
+                {
+                    continue;
+                }
                 if (_tmpStableIdSet.Contains(sid))
                     continue;
                 _stableResolveAssignedStable[c] = sid;
@@ -6394,6 +6343,25 @@ namespace Revive.Slime
 
                 _compToBlobId[c] = finalBlobId;
                 _blobIdToCenter[finalBlobId] = _stableResolveCenters[c];
+            }
+
+            // 召回期间：更新 eligible blobId 的缺席帧数。
+            // - 若该 id 本帧被匹配到组件：缺席=0
+            // - 若该 id 本帧未匹配到组件：缺席++（一旦>0，将被上面的规则阻止再次被新组件继承）
+            if (_connect && _recallEligibleBlobAbsentFrames != null && _recallEligibleBlobIds.IsCreated)
+            {
+                int max = math.min(_recallEligibleBlobAbsentFrames.Length, _recallEligibleBlobIds.Length);
+                for (int sid = 1; sid < max; sid++)
+                {
+                    if (_recallEligibleBlobAbsentFrames[sid] < 0)
+                        continue; // 非召回快照 eligible id
+
+                    bool assignedThisFrame = _stableResolveStableAssignedToComp != null && _stableResolveStableAssignedToComp.ContainsKey(sid);
+                    if (assignedThisFrame)
+                        _recallEligibleBlobAbsentFrames[sid] = 0;
+                    else
+                        _recallEligibleBlobAbsentFrames[sid] = _recallEligibleBlobAbsentFrames[sid] + 1;
+                }
             }
             
             // 清理不再使用的稳定ID（超过32个时）

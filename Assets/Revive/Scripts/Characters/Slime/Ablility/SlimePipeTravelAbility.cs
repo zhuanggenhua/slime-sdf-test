@@ -20,11 +20,6 @@ namespace Revive.Slime
         private Vector3 _lastForward = Vector3.forward;
         private Vector3 _lastTravelVelocity;
 
-        private float _dbgLastEffectiveSpeed;
-        private float _dbgLastDt;
-        private float _dbgLastMoveMagnitude;
-        private float _dbgLastMoveSpeed;
-
         private float _travelElapsed;
 
         private const float SpeedRampSeconds = 1.0f;
@@ -43,11 +38,6 @@ namespace Revive.Slime
         private bool _prevInputAuthorized;
 
         public bool IsTravelling => _isTravelling;
-
-        public float DebugLastEffectiveSpeed => _dbgLastEffectiveSpeed;
-        public float DebugLastDt => _dbgLastDt;
-        public float DebugLastMoveMagnitude => _dbgLastMoveMagnitude;
-        public float DebugLastMoveSpeed => _dbgLastMoveSpeed;
 
         public bool CanStartTravel => !_isTravelling && Time.time >= _cooldownUntilTime;
 
@@ -78,9 +68,6 @@ namespace Revive.Slime
             float ramp01 = SpeedRampSeconds > 1e-4f ? Mathf.Clamp01(_travelElapsed / SpeedRampSeconds) : 1f;
             ramp01 = ramp01 * ramp01 * (3f - 2f * ramp01);
             float effectiveSpeed = _speed * ramp01;
-
-            _dbgLastEffectiveSpeed = effectiveSpeed;
-            _dbgLastDt = dt;
 
             if (!_isTravelling || _path == null)
             {
@@ -150,9 +137,6 @@ namespace Revive.Slime
             {
                 transform.position += move;
             }
-
-            _dbgLastMoveMagnitude = move.magnitude;
-            _dbgLastMoveSpeed = dt > 0f ? (_dbgLastMoveMagnitude / dt) : 0f;
 
             Vector3 velocity = dt > 0f ? move / dt : Vector3.zero;
             _lastTravelVelocity = velocity;
