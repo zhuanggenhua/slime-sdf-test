@@ -98,8 +98,7 @@ namespace Revive.Slime
                 for (int dx = -1; dx <= 1; ++dx)
                 {
                     int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
-                    if (!Lut.ContainsKey(key)) continue;
-                    int2 range = Lut[key];
+                    if (!Lut.TryGetValue(key, out int2 range)) continue;
                     for (int j = range.x; j < range.y; j++)
                     {
                         float3 neighborPos = Ps[j].Position;
@@ -146,8 +145,7 @@ namespace Revive.Slime
                 for (int dx = -1; dx <= 1; ++dx)
                 {
                     int key = PBF_Utils.GetKey(coord + math.int3(dx, dy, dz));
-                    if (!Lut.ContainsKey(key)) continue;
-                    int2 range = Lut[key];
+                    if (!Lut.TryGetValue(key, out int2 range)) continue;
                     for (int j = range.x; j < range.y; j++)
                     {
                         float3 neighborPos = Ps[j].Position;
@@ -297,9 +295,8 @@ namespace Revive.Slime
                 for (int x = blockMin.x; x <= blockMax.x; ++x)
                 {
                     int coordIdx = PBF_Utils.GetKey(new int3(x, y, z));
-                    if (!ParticleLut.ContainsKey(coordIdx))
+                    if (!ParticleLut.TryGetValue(coordIdx, out int2 range))
                         continue;
-                    int2 range = ParticleLut[coordIdx];
                     for (int j = range.x; j < range.y; j++)
                     {
                         Particle p = Ps[j];
@@ -334,9 +331,8 @@ namespace Revive.Slime
                 for (int gx = 0; gx < 4; ++gx)
                 {
                     int3 key = (tempBlockMin + new int3(gx * 2, gy * 2, gz * 2)) >> 2;
-                    if (!GridLut.ContainsKey(key))
+                    if (!GridLut.TryGetValue(key, out int offset))
                         continue;
-                    var offset = GridLut[key];
 
                     for (int lz = 0; lz < 2; ++lz)
                     for (int ly = 0; ly < 2; ++ly)
@@ -441,9 +437,8 @@ namespace Revive.Slime
                 for (int x = -1; x < 3; ++x)
                 {
                     int key = PBF_Utils.GetKey(blockMin + math.int3(x, y, z));
-                    if (!ParticleLut.ContainsKey(key))
+                    if (!ParticleLut.TryGetValue(key, out int2 range))
                         continue;
-                    int2 range = ParticleLut[key];
                     for (int j = range.x; j < range.y; j++)
                     {
                         Particle p = Ps[j];
@@ -494,7 +489,7 @@ namespace Revive.Slime
             {
                 int3 key = Keys[i];
 
-                if (!GridLut.ContainsKey(key))
+                if (!GridLut.TryGetValue(key, out int offset))
                     return;
 
                 float* block = stackalloc float[6 * 6 * 6];
@@ -507,9 +502,7 @@ namespace Revive.Slime
                 for (int dx = -1; dx <= 1; ++dx)
                 {
                     int3 nKey = key + new int3(dx, dy, dz);
-                    if (!GridLut.ContainsKey(nKey)) continue;
-
-                    int nOff = GridLut[nKey];
+                    if (!GridLut.TryGetValue(nKey, out int nOff)) continue;
                     for (int j = 0; j < PBF_Utils.GridSize; j++)
                     {
                         int3 coord = (nKey << 2) + GetLocalCoord(j) - minCoord;
@@ -520,7 +513,6 @@ namespace Revive.Slime
                     }
                 }
 
-                int offset = GridLut[key];
                 for (int j = 0; j < PBF_Utils.GridSize; j++)
                 {
                     int3 coord = GetLocalCoord(j) + 1;

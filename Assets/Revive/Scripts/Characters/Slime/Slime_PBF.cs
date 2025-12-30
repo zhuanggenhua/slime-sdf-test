@@ -148,12 +148,12 @@ namespace Revive.Slime
         
         [ChineseHeader("粒子池扩展（B2架构）")]
         [ChineseLabel("最大粒子数"), Tooltip("预分配的最大粒子池容量，最小16384以支持水珠固定分区")]
-        [SerializeField, Range(16384, 32768), DefaultValue(16384)]  // 最小值改为16384
-        private int maxParticles = 16384;  // 必须≥16384，水珠使用固定分区[8192-16383]
+        [SerializeField, Range(MinParticlePoolCapacity, MaxParticlePoolCapacity), DefaultValue(MinParticlePoolCapacity)]  // 最小值改为16384
+        private int maxParticles = MinParticlePoolCapacity;  // 必须≥16384，水珠使用固定分区[8192-16383]
         
         [ChineseLabel("活跃粒子数"), Tooltip("当前参与模拟的粒子数（只读）")]
         [SerializeField]
-        private int activeParticles = 800;
+        private int activeParticles = DefaultInitialMainCount;
         
         #endregion
         
@@ -309,6 +309,23 @@ namespace Revive.Slime
         [ChineseLabel("水珠MarchingCubes间隔(帧)"), Tooltip("Surface模式下水珠表面重建的间隔帧数，数值越大越省CPU但更新更不及时")]
         [SerializeField, Range(1, 10), DefaultValue(3)]
         private int dropletMarchingCubesIntervalFrames = 3;
+
+        [ChineseHeader("脸部缩放")]
+        [ChineseLabel("脸部缩放系数"), Tooltip("脸部/眼睛的基础缩放系数")]
+        [SerializeField, Range(0.01f, 1f), DefaultValue(0.2f)]
+        private float faceScale = 0.2f;
+
+        [ChineseLabel("脸部缩放基准粒子数"), Tooltip("当主体粒子数等于该值时，脸部大小为基准大小（默认按2048粒子标定）")]
+        [SerializeField, Range(1, 4096), DefaultValue(2048)]
+        private int faceScaleBaseParticles = 2048;
+
+        [ChineseLabel("脸部缩放下限"), Tooltip("按粒子数计算的缩放倍率下限")]
+        [SerializeField, Range(0.05f, 2f), DefaultValue(0.5f)]
+        private float faceScaleCountFactorMin = 0.5f;
+
+        [ChineseLabel("脸部缩放上限"), Tooltip("按粒子数计算的缩放倍率上限")]
+        [SerializeField, Range(0.05f, 4f), DefaultValue(1.5f)]
+        private float faceScaleCountFactorMax = 1.5f;
         
         #endregion
         
@@ -852,6 +869,8 @@ namespace Revive.Slime
 
         private int _lastParticleRenderUploadFrame = -999999;
 
+        private int _lastFixedExpensiveWorkFrame = -999999;
+
         private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
         private NativeParallelMultiHashMap<int, int> _mergeAbsorbLut;
         private NativeArray<int> _autoSeparateClusterCounts;
@@ -921,6 +940,44 @@ namespace Revive.Slime
         // Job System 批处理大小
         private const int batchCount = 64;
 
+        /// <summary>
+        /// 未挂 SlimeVolume 时的默认主体粒子数（也是 activeParticles 字段的默认值）。
+        /// 真正影响性能的是 activeParticles；建议优先通过 SlimeVolume.initialMainVolume/maxVolume 控制。
+        /// </summary>
+        private const int DefaultInitialMainCount = 800;
+
+        /// <summary>
+        /// 主体粒子分区容量上限（[0 .. DROPLET_START-1]）。
+        /// 注意：DROPLET_START 之后是场景水珠固定分区，不能占用。
+        /// </summary>
+        private const int MainBodyMaxParticles = DropletSubsystem.DROPLET_START;
+
+        /// <summary>
+        /// 粒子池最小容量：主体分区 + 水珠分区。
+        /// </summary>
+        private const int MinParticlePoolCapacity = DropletSubsystem.DROPLET_START + DropletSubsystem.DROPLET_CAPACITY;
+
+        /// <summary>
+        /// Inspector 允许设置的粒子池最大容量（只是上限约束）。
+        /// </summary>
+        private const int MaxParticlePoolCapacity = 32768;
+
+        /// <summary>
+        /// 主体初始化生成间距（模拟坐标）。
+        /// 调大：初始更稀疏（视觉可能变薄/破洞，需要配合 threshold 调整），但不会自动减少 activeParticles。
+        /// </summary>
+        private const float MainInitSpacingSim = 0.5f;
+
+        /// <summary>
+        /// 主体“补回主体粒子”时的随机偏移尺度（offset = random[-0.5,0.5] * (h * scale)）。
+        /// </summary>
+        private const float MainRespawnRandomOffsetScale = 0.5f;
+
+        /// <summary>
+        /// Random.value 的中心偏移（Random.value - 0.5）。
+        /// </summary>
+        private const float RandomCenterOffset = 0.5f;
+
         
         void Awake()
         {
@@ -930,7 +987,7 @@ namespace Revive.Slime
             _runtimeInitialized = false;
 
             // 确保maxParticles足够支持水珠分区[8192-16383]
-            maxParticles = math.max(maxParticles, 16384);
+            maxParticles = math.max(maxParticles, MinParticlePoolCapacity);
 
             if (trans == null)
             {
@@ -1181,10 +1238,10 @@ namespace Revive.Slime
                     if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
                     {
                         float3 offset = new float3(
-                            UnityEngine.Random.value - 0.5f,
-                            UnityEngine.Random.value - 0.5f,
-                            UnityEngine.Random.value - 0.5f
-                        ) * (PBF_Utils.h * 0.5f);
+                            UnityEngine.Random.value - RandomCenterOffset,
+                            UnityEngine.Random.value - RandomCenterOffset,
+                            UnityEngine.Random.value - RandomCenterOffset
+                        ) * (PBF_Utils.h * MainRespawnRandomOffsetScale);
 
                         _particles[activeParticles] = new Particle
                         {
@@ -1229,10 +1286,10 @@ namespace Revive.Slime
                     if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
                     {
                         float3 offset = new float3(
-                            UnityEngine.Random.value - 0.5f,
-                            UnityEngine.Random.value - 0.5f,
-                            UnityEngine.Random.value - 0.5f
-                        ) * (PBF_Utils.h * 0.5f);
+                            UnityEngine.Random.value - RandomCenterOffset,
+                            UnityEngine.Random.value - RandomCenterOffset,
+                            UnityEngine.Random.value - RandomCenterOffset
+                        ) * (PBF_Utils.h * MainRespawnRandomOffsetScale);
 
                         _particles[activeParticles] = new Particle
                         {
@@ -1271,10 +1328,10 @@ namespace Revive.Slime
                 if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
                 {
                     float3 offset = new float3(
-                        UnityEngine.Random.value - 0.5f,
-                        UnityEngine.Random.value - 0.5f,
-                        UnityEngine.Random.value - 0.5f
-                    ) * (PBF_Utils.h * 0.5f);
+                        UnityEngine.Random.value - RandomCenterOffset,
+                        UnityEngine.Random.value - RandomCenterOffset,
+                        UnityEngine.Random.value - RandomCenterOffset
+                    ) * (PBF_Utils.h * MainRespawnRandomOffsetScale);
 
                     _particles[activeParticles] = new Particle
                     {
@@ -1317,13 +1374,13 @@ namespace Revive.Slime
             _particlesRenderBuffer = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
             
             // 从 SlimeVolume 获取初始主体粒子数
-            int initialMainCount = 800; // 默认值
+            int initialMainCount = DefaultInitialMainCount; // 默认值
             if (_slimeVolume != null)
             {
                 initialMainCount = Mathf.Min(_slimeVolume.initialMainVolume, maxParticles);
             }
             // 主体粒子分区为[0-8191]，最大8192个
-            initialMainCount = Mathf.Min(initialMainCount, 8192);
+            initialMainCount = Mathf.Min(initialMainCount, MainBodyMaxParticles);
             
         // 初始化主体粒子 - 使用简单的线性循环，确保所有粒子都被初始化
             // 获取玩家位置作为粒子生成中心（转换为模拟坐标系）
@@ -1345,7 +1402,7 @@ namespace Revive.Slime
                     int z = idx / (cubeSize * cubeSize);
                     
                     // XZ 居中，Y 从底部向上
-                    float3 offset = new float3(x - cubeHalf, y, z - cubeHalf) * 0.5f;
+                    float3 offset = new float3(x - cubeHalf, y, z - cubeHalf) * MainInitSpacingSim;
                     _particles[idx] = new Particle
                     {
                         Position = spawnCenter + offset,
@@ -1805,9 +1862,31 @@ namespace Revive.Slime
                         renderDir.y = 0f;
                         if (renderDir.sqrMagnitude > 0.001f)
                         {
+                            int controllerIdForScale = slime.ControllerSlot;
+                            int countForScale = 0;
+                            if (controllerIdForScale == 0)
+                            {
+                                if (_controllerMainBodyCount.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerMainBodyCount.Length)
+                                    countForScale = _controllerMainBodyCount[controllerIdForScale];
+                            }
+                            else
+                            {
+                                if (_controllerCountAll.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerCountAll.Length)
+                                    countForScale = _controllerCountAll[controllerIdForScale];
+                            }
+
+                            float countFactor = 1f;
+                            if (faceScaleBaseParticles > 0 && countForScale > 0)
+                            {
+                                float ratio = (float)countForScale / faceScaleBaseParticles;
+                                countFactor = math.pow(math.max(1e-4f, ratio), 1f / 3f);
+                                countFactor = math.clamp(countFactor, faceScaleCountFactorMin, faceScaleCountFactorMax);
+                            }
+
+                            float faceWorldScale = faceScale * countFactor * math.sqrt(slime.Radius * PBF_Utils.Scale);
                             Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * PBF_Utils.Scale,
                                 Quaternion.LookRotation(-renderDir),
-                                0.2f * math.sqrt(slime.Radius * PBF_Utils.Scale) * Vector3.one), faceMat, 0);
+                                faceWorldScale * Vector3.one), faceMat, 0);
                         }
                     }
                 }
@@ -1821,16 +1900,23 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
             PerformanceProfiler.BeginFrame();
+
+            bool doExpensiveWorkThisFrame = _lastFixedExpensiveWorkFrame != Time.frameCount;
+            if (doExpensiveWorkThisFrame)
+                _lastFixedExpensiveWorkFrame = Time.frameCount;
             
             // 不再移除场景水珠，让它们留在主粒子系统中以便渲染和交互
             
-            PerformanceProfiler.Begin("RefreshMainColliders");
-            RefreshMainNearbyColliders();
-            PerformanceProfiler.End("RefreshMainColliders");
-            
-            PerformanceProfiler.Begin("RefreshDropletColliders");
-            RefreshDropletNearbyColliders();
-            PerformanceProfiler.End("RefreshDropletColliders");
+            if (doExpensiveWorkThisFrame)
+            {
+                PerformanceProfiler.Begin("RefreshMainColliders");
+                RefreshMainNearbyColliders();
+                PerformanceProfiler.End("RefreshMainColliders");
+                
+                PerformanceProfiler.Begin("RefreshDropletColliders");
+                RefreshDropletNearbyColliders();
+                PerformanceProfiler.End("RefreshDropletColliders");
+            }
 
             // 使用 trans.position 变化量计算速度，保证位置和速度同步
             // 这样高速位置补偿的方向和控制器中心的移动方向一致，不会导致粒子飞散
@@ -1903,9 +1989,12 @@ namespace Revive.Slime
             PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
 
-            PerformanceProfiler.Begin("Surface");
-            Surface();
-            PerformanceProfiler.End("Surface");
+            if (doExpensiveWorkThisFrame)
+            {
+                PerformanceProfiler.Begin("Surface");
+                Surface();
+                PerformanceProfiler.End("Surface");
+            }
             
             // Unshuffle 必须在 Surface() 之后执行，因为 Surface() 使用 Lut（基于排序后索引）
             // 关键修复：只处理 activeParticles 范围，避免越界读取垃圾数据覆盖有效粒子
@@ -5204,7 +5293,20 @@ namespace Revive.Slime
                     var c = _colliderBuffer[i];
                     if (useWorldStaticSdf && _worldStaticSdf.IsCreated && disableStaticColliderFallbackWhenUsingSdf && c.IsDynamic == 0)
                         continue;
-                    Gizmos.DrawWireCube(c.Center * PBF_Utils.Scale, c.Extent * PBF_Utils.Scale * 2);
+
+                    Vector3 centerW = (Vector3)(c.Center * PBF_Utils.Scale);
+                    Vector3 sizeW = (Vector3)(c.Extent * PBF_Utils.Scale * 2);
+                    if (c.Shape == ColliderShapes.Obb)
+                    {
+                        Matrix4x4 old = Gizmos.matrix;
+                        Gizmos.matrix = Matrix4x4.TRS(centerW, (Quaternion)c.Rotation, Vector3.one);
+                        Gizmos.DrawWireCube(Vector3.zero, sizeW);
+                        Gizmos.matrix = old;
+                    }
+                    else
+                    {
+                        Gizmos.DrawWireCube(centerW, sizeW);
+                    }
                 }
             }
         }

@@ -82,11 +82,52 @@ namespace Revive.Slime
         public const int GridSize = 4 * 4 * 4;
         public const int GridNum = 768;
 
+        /// <summary>
+        /// PBF 核半径（模拟坐标）。
+        /// 调大：邻域更大、形体更“糊/粘”，但需要重新标定 targetDensity/threshold 等参数；风险高。
+        /// 调小：邻域更小、更“散”，也可能变不稳定。
+        /// </summary>
         public const float h = 1.0f;
         public const float h2 = h * h;
+        /// <summary>
+        /// 空间哈希/网格的单元尺寸（模拟坐标）。通常与 h 绑定。
+        /// </summary>
         public const float CellSize = 0.5f * h;
+
+        /// <summary>
+        /// 模拟坐标 -> 世界坐标缩放（world = sim * Scale）。
+        /// </summary>
         public const float Scale = 0.1f;
+
+        /// <summary>
+        /// 世界坐标 -> 模拟坐标缩放（sim = world * InvScale）。
+        /// </summary>
         public const float InvScale = 10f;
+
+        /// <summary>
+        /// 邻域判定/归一化的 r^2 下限（避免 0 距离导致的数值问题）。
+        /// </summary>
+        public const float NeighborR2Epsilon = 1e-10f;
+
+        /// <summary>
+        /// Lambda/约束求解除零保护项（越大越“软”，越小越可能数值爆炸）。
+        /// </summary>
+        public const float LambdaEpsilon = 1e-5f;
+
+        /// <summary>
+        /// 主体粒子密度约束 c 的下限（用于避免过强的拉伸导致不稳定）。
+        /// </summary>
+        public const float MainBodyMinC = -0.2f;
+
+        /// <summary>
+        /// Tensile 修正采样点系数（dq = TensileDqFactor * h）。
+        /// </summary>
+        public const float TensileDqFactor = 0.25f;
+
+        /// <summary>
+        /// Tensile 修正强度（越大越抗“结团/起泡”，但也可能带来抖动）。
+        /// </summary>
+        public const float TensileK = 0.1f;
         
         /// <summary>CCA连通组件判定阈值：网格密度高于此值才被视为有效单元</summary>
         public const float CCAThreshold = 1e-4f;
@@ -530,7 +571,7 @@ namespace Revive.Slime
 
                         float3 dir = pos - PosPredict[j];
                         float r2 = math.lengthsq(dir);
-                        if (r2 > PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        if (r2 > PBF_Utils.h2 || r2 < PBF_Utils.NeighborR2Epsilon) continue;
 
                         float r = math.sqrt(r2);
                         rho += PBF_Utils.SmoothingKernelPoly6(r2) / TargetDensity;
@@ -542,7 +583,7 @@ namespace Revive.Slime
 
                 sigmaGrad += math.dot(grad_i, grad_i);
                 float c = math.max(MinC, rho / TargetDensity - 1.0f);
-                Lambda[i] = -c / (sigmaGrad + 1e-5f);
+                Lambda[i] = -c / (sigmaGrad + PBF_Utils.LambdaEpsilon);
             }
         }
         
@@ -598,7 +639,7 @@ namespace Revive.Slime
 
                         float3 dir = pos - PosPredict[j];
                         float r2 = math.lengthsq(dir);
-                        if (r2 > PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        if (r2 > PBF_Utils.h2 || r2 < PBF_Utils.NeighborR2Epsilon) continue;
 
                         float r = math.sqrt(r2);
                         rho += PBF_Utils.SmoothingKernelPoly6(r2) / TargetDensity;
@@ -609,8 +650,8 @@ namespace Revive.Slime
                 }
 
                 sigmaGrad += math.dot(grad_i, grad_i);
-                float c = math.max(-0.2f, rho / TargetDensity - 1.0f);
-                Lambda[i] = -c / (sigmaGrad + 1e-5f);
+                float c = math.max(PBF_Utils.MainBodyMinC, rho / TargetDensity - 1.0f);
+                Lambda[i] = -c / (sigmaGrad + PBF_Utils.LambdaEpsilon);
             }
         }
 
@@ -627,8 +668,8 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<float> Lambda;
             public float TargetDensity;
             
-            private const float TensileDq = 0.25f * PBF_Utils.h;
-            private const float TensileK = 0.1f;
+            private const float TensileDq = PBF_Utils.TensileDqFactor * PBF_Utils.h;
+            private const float TensileK = PBF_Utils.TensileK;
             
             public void Execute(int i)
             {
@@ -653,7 +694,7 @@ namespace Revive.Slime
                         
                         float3 diff = pos - PosPredictIn[j];
                         float r2 = math.lengthsq(diff);
-                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        if (r2 >= PBF_Utils.h2 || r2 < PBF_Utils.NeighborR2Epsilon) continue;
                         
                         float r = math.sqrt(r2);
                         float3 grad = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(diff);
@@ -741,8 +782,8 @@ namespace Revive.Slime
             public float MaxDeformDistXZ; // 水平形变上限（模拟坐标）
             public float MaxDeformDistY;  // 垂直形变上限（模拟坐标）
             public float3 MainCenter; // 主体控制器中心
-            private const float TensileDq = 0.25f * PBF_Utils.h;
-            private const float TensileK = 0.1f;
+            private const float TensileDq = PBF_Utils.TensileDqFactor * PBF_Utils.h;
+            private const float TensileK = PBF_Utils.TensileK;
 
             public void Execute(int i)
             {
@@ -795,7 +836,7 @@ namespace Revive.Slime
 
                         float3 dir = position - PosPredict[j];
                         float r2 = math.dot(dir, dir);
-                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        if (r2 >= PBF_Utils.h2 || r2 < PBF_Utils.NeighborR2Epsilon) continue;
 
                         float r = math.sqrt(r2);
                         float3 w_spiky = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(dir);
@@ -853,7 +894,7 @@ namespace Revive.Slime
             [WriteOnly] public NativeArray<float3> PosPredictOut;
             [ReadOnly] public NativeArray<float> Lambda;
             public float TargetDensity;
-            private const float TensileDq = 0.25f * PBF_Utils.h;
+            private const float TensileDq = PBF_Utils.TensileDqFactor * PBF_Utils.h;
             public float TensileK;
 
             public void Execute(int i)
@@ -878,7 +919,7 @@ namespace Revive.Slime
 
                         float3 dir = position - PosPredictIn[j];
                         float r2 = math.dot(dir, dir);
-                        if (r2 >= PBF_Utils.h2 || r2 < 1e-10f) continue;
+                        if (r2 >= PBF_Utils.h2 || r2 < PBF_Utils.NeighborR2Epsilon) continue;
 
                         float r = math.sqrt(r2);
                         float3 w_spiky = PBF_Utils.SpikyKernelPow3(r) * math.normalizesafe(dir);
@@ -1001,15 +1042,15 @@ namespace Revive.Slime
                                  float3 d = simPos - closest;
 
                                  float3 n;
-                                 if (d2 < 1e-10f)
+                                 if (d2 < PBF_Utils.NeighborR2Epsilon)
                                  {
                                      float3 fallback = math.mul(box.Rotation, new float3(0, 1, 0));
                                      float fb2 = math.lengthsq(fallback);
-                                     n = fb2 < 1e-10f ? new float3(0, 1, 0) : fallback * math.rsqrt(fb2);
+                                     n = fb2 < PBF_Utils.NeighborR2Epsilon ? new float3(0, 1, 0) : fallback * math.rsqrt(fb2);
                                  }
                                  else
                                  {
-                                     n = d * math.rsqrt(d2);
+                                    n = d * math.rsqrt(d2);
                                  }
 
                                  simPos = closest + n * r;

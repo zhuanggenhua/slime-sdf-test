@@ -339,7 +339,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 529b7b02b3e5cb14cad207748729173e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  initialMainVolume: 2504
+  initialMainVolume: 600
   minVolume: 500
   maxVolume: 2600
   updateIntervalFrames: 10
@@ -416,6 +416,10 @@ MonoBehaviour:
   rearrangeInstancesIntervalFrames: 4
   nonControlledRaycastIntervalFrames: 6
   dropletMarchingCubesIntervalFrames: 1
+  faceScale: 0.2
+  faceScaleBaseParticles: 2048
+  faceScaleCountFactorMin: 0.5
+  faceScaleCountFactorMax: 1.5
   blockNum: 0
   bubblesNum: 0
   minPos:
@@ -437,7 +441,7 @@ MonoBehaviour:
     m_Bits: 16777216
   useWorldStaticSdf: 1
   worldStaticSdfBytes: {fileID: 4900000, guid: dec04e336a0218b438b2816f0f5dbbc8, type: 3}
-  disableStaticColliderFallbackWhenUsingSdf: 1
+  disableStaticColliderFallbackWhenUsingSdf: 0
   worldStaticSdfFriction: 0.2
   particleRadiusWorld: 0.05
   dropletColliderIndexQueryCacheCapacity: 128

@@ -27,6 +27,17 @@ namespace Revive.Slime
         public const int DROPLET_START = 8192;
         public const int DROPLET_CAPACITY = 8192;
         public const int DROPLET_END = DROPLET_START + DROPLET_CAPACITY - 1;
+
+        /// <summary>
+        /// 水珠初始生成间距（模拟坐标）。
+        /// 调大：初始更稀疏、更稳定，但视觉/体积可能变薄。
+        /// </summary>
+        public const float DropletInitSpacingSim = 0.8f;
+
+        /// <summary>
+        /// 水珠保护期帧数（期间不会被主体吸收）。
+        /// </summary>
+        public const int DropletFreeFrames = 60;
         
         private NativeSlice<Particle> particles;
         private NativeSlice<float3> velocities;
@@ -386,7 +397,7 @@ namespace Revive.Slime
             // 间距需要匹配 PBF 目标密度（1.5），避免第一帧因密度不匹配而爆炸
             // 经验值：h/2 ≈ 0.5 太密会被推开，h*0.8 ≈ 0.8 更稳定
             int gridSize = Mathf.CeilToInt(Mathf.Pow(allocatedCount, 1f/3f));
-            float spacingInternal = 0.8f; // 增大间距，降低初始密度
+            float spacingInternal = DropletInitSpacingSim;
             
             for (int i = 0; i < allocatedCount; i++)
             {
@@ -409,7 +420,7 @@ namespace Revive.Slime
                     Position = sourcePosition + offset,
                     SourceId = sourceId,
                     ControllerSlot = -1,  // -1 让 shader 使用 _Color 而不是 colors 数组
-                    FreeFrames = 60,  // 保护期：约1秒内不会被吸收，让水珠有时间进行物理模拟
+                    FreeFrames = DropletFreeFrames,
                     ClusterId = 0,
                     BlobId = 0,
                     FramesOutsideMain = 0

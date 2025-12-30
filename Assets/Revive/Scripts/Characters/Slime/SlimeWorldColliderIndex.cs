@@ -390,6 +390,114 @@ namespace Revive.Slime
             }
         }
 
+        private static MyBoxCollider BuildMyBoxCollider(Collider col, in Entry entry, in Bounds b)
+        {
+            Vector3 lossy = col.transform != null ? col.transform.lossyScale : Vector3.one;
+            float sx = Mathf.Abs(lossy.x);
+            float sy = Mathf.Abs(lossy.y);
+            float sz = Mathf.Abs(lossy.z);
+
+            float3 margin = new float3(1f, 1f, 1f);
+
+            int shape = ColliderShapes.Obb;
+            quaternion rot = quaternion.identity;
+            float3 centerSim = (float3)(b.center * PBF_Utils.InvScale);
+            float3 extentSim = (float3)(b.extents * PBF_Utils.InvScale) + margin;
+
+            if (col is BoxCollider boxCol)
+            {
+                rot = (quaternion)boxCol.transform.rotation;
+                Vector3 worldCenter = boxCol.transform.TransformPoint(boxCol.center);
+                Vector3 halfSizeWorld = Vector3.Scale(boxCol.size * 0.5f, boxCol.transform.lossyScale);
+                centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(halfSizeWorld.x), Mathf.Abs(halfSizeWorld.y), Mathf.Abs(halfSizeWorld.z)) * PBF_Utils.InvScale);
+                extentSim = extentNoMargin + margin;
+
+                shape = ColliderShapes.Obb;
+            }
+            else if (col is MeshCollider meshCol && meshCol.sharedMesh != null)
+            {
+                rot = (quaternion)meshCol.transform.rotation;
+                Bounds localBounds = meshCol.sharedMesh.bounds;
+
+                Vector3 worldCenter = meshCol.transform.TransformPoint(localBounds.center);
+                Vector3 extentWorld = Vector3.Scale(localBounds.extents, new Vector3(sx, sy, sz));
+
+                centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+                float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(extentWorld.x), Mathf.Abs(extentWorld.y), Mathf.Abs(extentWorld.z)) * PBF_Utils.InvScale);
+                extentSim = extentNoMargin + margin;
+                shape = ColliderShapes.Obb;
+            }
+            else if (col is CapsuleCollider capsuleCol)
+            {
+                rot = (quaternion)capsuleCol.transform.rotation;
+                Vector3 worldCenter = capsuleCol.transform.TransformPoint(capsuleCol.center);
+                centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                float radiusWorld;
+                float halfHeightWorld = capsuleCol.height * 0.5f;
+                Vector3 extentWorld;
+                switch (capsuleCol.direction)
+                {
+                    case 0:
+                        radiusWorld = capsuleCol.radius * Mathf.Max(sy, sz);
+                        halfHeightWorld *= sx;
+                        extentWorld = new Vector3(halfHeightWorld, radiusWorld, radiusWorld);
+                        break;
+                    case 2:
+                        radiusWorld = capsuleCol.radius * Mathf.Max(sx, sy);
+                        halfHeightWorld *= sz;
+                        extentWorld = new Vector3(radiusWorld, radiusWorld, halfHeightWorld);
+                        break;
+                    default:
+                        radiusWorld = capsuleCol.radius * Mathf.Max(sx, sz);
+                        halfHeightWorld *= sy;
+                        extentWorld = new Vector3(radiusWorld, halfHeightWorld, radiusWorld);
+                        break;
+                }
+
+                float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(extentWorld.x), Mathf.Abs(extentWorld.y), Mathf.Abs(extentWorld.z)) * PBF_Utils.InvScale);
+                extentSim = extentNoMargin + margin;
+                shape = ColliderShapes.Capsule;
+            }
+            else if (col is SphereCollider sphereCol)
+            {
+                rot = (quaternion)sphereCol.transform.rotation;
+                Vector3 worldCenter = sphereCol.transform.TransformPoint(sphereCol.center);
+                centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                float rWorld = sphereCol.radius * Mathf.Max(sx, Mathf.Max(sy, sz));
+                float3 extentNoMargin = (float3)(new Vector3(rWorld, rWorld, rWorld) * PBF_Utils.InvScale);
+                extentSim = extentNoMargin + margin;
+                shape = ColliderShapes.Capsule;
+            }
+            else if (col is CharacterController cc)
+            {
+                rot = (quaternion)cc.transform.rotation;
+                Vector3 worldCenter = cc.transform.TransformPoint(cc.center);
+                centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
+
+                float radiusWorld = cc.radius * Mathf.Max(sx, sz);
+                float halfHeightWorld = (cc.height * 0.5f) * sy;
+                float3 extentNoMargin = (float3)(new Vector3(radiusWorld, halfHeightWorld, radiusWorld) * PBF_Utils.InvScale);
+                extentSim = extentNoMargin + margin;
+                shape = ColliderShapes.Capsule;
+            }
+
+            return new MyBoxCollider
+            {
+                Center = centerSim,
+                Extent = extentSim,
+                Type = entry.Type,
+                Friction = entry.Friction,
+                IsDynamic = entry.IsDynamic ? 1 : 0,
+                Velocity = entry.IsDynamic ? (float3)(entry.VelocityWorld * PBF_Utils.InvScale) : float3.zero,
+                Shape = shape,
+                Rotation = rot,
+            };
+        }
+
         public void AppendMyBoxColliders(
             Vector3 centerWorld,
             float radiusWorld,
@@ -449,38 +557,7 @@ namespace Revive.Slime
                         if (dist2 > r2)
                             continue;
 
-                        float3 extentRaw = (float3)(b.extents * PBF_Utils.InvScale);
-                        float3 margin = new float3(1f, 1f, 1f);
-
-                        int shape = ColliderShapes.Obb;
-                        quaternion rot = quaternion.identity;
-                        float3 centerSim = (float3)(b.center * PBF_Utils.InvScale);
-                        float3 extentSim = extentRaw + margin;
-
-                        if (col is BoxCollider boxCol)
-                        {
-                            rot = (quaternion)boxCol.transform.rotation;
-                            Vector3 worldCenter = boxCol.transform.TransformPoint(boxCol.center);
-                            Vector3 halfSizeWorld = Vector3.Scale(boxCol.size * 0.5f, boxCol.transform.lossyScale);
-                            centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
-
-                            float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(halfSizeWorld.x), Mathf.Abs(halfSizeWorld.y), Mathf.Abs(halfSizeWorld.z)) * PBF_Utils.InvScale);
-                            extentSim = extentNoMargin + margin;
-
-                            shape = ColliderShapes.Obb;
-                        }
-
-                        outBuffer[outCount] = new MyBoxCollider
-                        {
-                            Center = centerSim,
-                            Extent = extentSim,
-                            Type = entry.Type,
-                            Friction = entry.Friction,
-                            IsDynamic = entry.IsDynamic ? 1 : 0,
-                            Velocity = entry.IsDynamic ? (float3)(entry.VelocityWorld * PBF_Utils.InvScale) : float3.zero,
-                            Shape = shape,
-                            Rotation = rot,
-                        };
+                        outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b);
                         outCount++;
 
                         if (outCount >= maxCount)
@@ -522,38 +599,7 @@ namespace Revive.Slime
                     if (dist2 > r2)
                         continue;
 
-                    float3 extentRaw = (float3)(b.extents * PBF_Utils.InvScale);
-                    float3 margin = new float3(1f, 1f, 1f);
-
-                    int shape = ColliderShapes.Obb;
-                    quaternion rot = quaternion.identity;
-                    float3 centerSim = (float3)(b.center * PBF_Utils.InvScale);
-                    float3 extentSim = extentRaw + margin;
-
-                    if (col is BoxCollider boxCol)
-                    {
-                        rot = (quaternion)boxCol.transform.rotation;
-                        Vector3 worldCenter = boxCol.transform.TransformPoint(boxCol.center);
-                        Vector3 halfSizeWorld = Vector3.Scale(boxCol.size * 0.5f, boxCol.transform.lossyScale);
-                        centerSim = (float3)(worldCenter * PBF_Utils.InvScale);
-
-                        float3 extentNoMargin = (float3)(new Vector3(Mathf.Abs(halfSizeWorld.x), Mathf.Abs(halfSizeWorld.y), Mathf.Abs(halfSizeWorld.z)) * PBF_Utils.InvScale);
-                        extentSim = extentNoMargin + margin;
-
-                        shape = ColliderShapes.Obb;
-                    }
-
-                    outBuffer[outCount] = new MyBoxCollider
-                    {
-                        Center = centerSim,
-                        Extent = extentSim,
-                        Type = entry.Type,
-                        Friction = entry.Friction,
-                        IsDynamic = entry.IsDynamic ? 1 : 0,
-                        Velocity = entry.IsDynamic ? (float3)(entry.VelocityWorld * PBF_Utils.InvScale) : float3.zero,
-                        Shape = shape,
-                        Rotation = rot,
-                    };
+                    outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b);
                     outCount++;
                 }
             }
