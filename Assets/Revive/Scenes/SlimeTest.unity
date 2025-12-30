@@ -187,8 +187,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   TravelDirection: 2
   AlignToPathOnEnter: 1
-  OverrideSpeed: 0
-  SpeedOverride: 6
   OverrideRotationMode: 0
   RotationModeOverride: 0
 --- !u!1 &24743331

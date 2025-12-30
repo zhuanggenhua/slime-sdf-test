@@ -33,7 +33,7 @@ namespace Revive.Environment
         [Header("Travel Settings")]
         [Tooltip("默认移动速度（世界单位/秒）。")]
         [SerializeField]
-        private float _defaultSpeed = 6f;
+        private float _defaultSpeed = 4f;
 
         [Tooltip("是否将该路径视为闭环。")]
         [SerializeField]

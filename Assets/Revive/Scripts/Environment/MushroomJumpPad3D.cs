@@ -18,10 +18,10 @@ namespace Revive.Environment
         [SerializeField] private float _jumpSpeed = 4f;
         
         [Tooltip("保持最大速度的时间（秒）")]
-        [SerializeField] private float _sustainDuration = 0.3f;
+        [SerializeField] private float _sustainDuration = 1f;
 
         [Tooltip("上升到最大速度所需时间（秒），0=立即达到最大速度")]
-        [SerializeField] private float _rampUpDuration = 0.1f;
+        [SerializeField] private float _rampUpDuration = 1f;
 
         [Tooltip("起步上升速度（避免刚脱离地面时速度过低导致重新接地）")]
         [SerializeField] private float _startJumpSpeed = 0.5f;

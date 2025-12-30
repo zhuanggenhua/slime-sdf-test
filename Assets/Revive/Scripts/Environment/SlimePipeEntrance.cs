@@ -25,12 +25,6 @@ namespace Revive.Environment
         [Tooltip("进入时将角色投影到 spline 上的最近点。")]
         public bool AlignToPathOnEnter = true;
 
-        [Tooltip("是否覆盖路径的默认移动速度。")]
-        public bool OverrideSpeed;
-
-        [Tooltip("当 OverrideSpeed=true 时使用的移动速度（世界单位/秒）。")]
-        public float SpeedOverride = 6f;
-
         [Tooltip("是否覆盖路径的默认朝向模式。")]
         public bool OverrideRotationMode;
 
@@ -105,10 +99,8 @@ namespace Revive.Environment
             {
                 startT = 1f;
             }
-
-            float speed = OverrideSpeed ? SpeedOverride : _path.DefaultSpeed;
             var rotationMode = OverrideRotationMode ? RotationModeOverride : _path.RotationModeDefault;
-            ability.StartTravel(_path, startT, reverse, speed, rotationMode);
+            ability.StartTravel(_path, startT, reverse, rotationMode);
         }
     }
 }

@@ -188,7 +188,7 @@ namespace Revive.Slime
             transform.rotation = targetRot;
         }
 
-        public void StartTravel(SlimePipePath path, float startT, bool reverse, float speed, TravelRotationMode rotationMode)
+        public void StartTravel(SlimePipePath path, float startT, bool reverse, TravelRotationMode rotationMode)
         {
             if (path == null)
             {
@@ -211,7 +211,7 @@ namespace Revive.Slime
             _path = path;
             _t = Mathf.Clamp01(startT);
             _reverse = reverse;
-            _speed = Mathf.Max(0f, speed);
+            _speed = Mathf.Max(0f, path.DefaultSpeed);
             _rotationMode = rotationMode;
             _alignedToPath = false;
             _travelElapsed = 0f;

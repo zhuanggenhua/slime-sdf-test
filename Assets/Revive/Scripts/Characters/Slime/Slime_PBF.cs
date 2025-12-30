@@ -5110,11 +5110,19 @@ namespace Revive.Slime
         /// <returns>总渲染粒子数（activeParticles + dropletCount）</returns>
         private int ConvertToWorldPositionsForRendering()
         {
+            float predictDt = Time.time - Time.fixedTime;
+            if (predictDt < 0f) predictDt = 0f;
+            float fixedDt = Time.fixedDeltaTime;
+            if (predictDt > fixedDt) predictDt = fixedDt;
+            float3 predictOffset = (float3)(_velocity * PBF_Utils.InvScale) * predictDt;
+
             // 1. 主体粒子 [0, activeParticles)
             for (int i = 0; i < activeParticles; i++)
             {
                 var p = _particles[i];
                 float3 worldPos = Simulation_PBF.GetWorldPosition(p, _controllerBuffer, _sourceControllers);
+                if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Separated)
+                    worldPos += predictOffset;
                 p.Position = worldPos;
                 _particlesRenderBuffer[i] = p;
             }
