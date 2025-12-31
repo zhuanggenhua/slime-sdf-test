@@ -34,6 +34,7 @@ namespace Revive.Slime
             _vertPos = new NativeArray<int3>(MarchingCubesTables.VertPos, Allocator.Persistent);
             _mesh = new Mesh();
             _mesh.indexFormat = IndexFormat.UInt32;
+            _mesh.MarkDynamic();
         }
 
         public void Dispose()
@@ -75,15 +76,14 @@ namespace Revive.Slime
             {
                 mesh.SetVertices(vertices.AsArray());
                 mesh.SetNormals(normals.AsArray());
-                mesh.SetIndices(triangles.AsArray(), MeshTopology.Triangles, 0);
+                mesh.SetIndices(triangles.AsArray(), MeshTopology.Triangles, 0, false);
             }
             else
             {
-                mesh.SetIndices(triangles.AsArray(), MeshTopology.Triangles, 0);
+                mesh.SetIndices(triangles.AsArray(), MeshTopology.Triangles, 0, false);
                 mesh.SetVertices(vertices.AsArray());
                 mesh.SetNormals(normals.AsArray());
             }
-            mesh.UploadMeshData(false);
             
             _lastVertexCount = vertices.Length;
             vertices.Dispose();
@@ -200,11 +200,11 @@ namespace Revive.Slime
             {
                 mesh.SetVertices(vertices);
                 mesh.SetNormals(normals);
-                mesh.SetIndices(triangles, MeshTopology.Triangles, 0);
+                mesh.SetIndices(triangles, MeshTopology.Triangles, 0, false);
             }
             else
             {
-                mesh.SetIndices(triangles, MeshTopology.Triangles, 0);
+                mesh.SetIndices(triangles, MeshTopology.Triangles, 0, false);
                 mesh.SetVertices(vertices);
                 mesh.SetNormals(normals);
             }
@@ -212,14 +212,6 @@ namespace Revive.Slime
             UnityEngine.Profiling.Profiler.EndSample();
 
             PerformanceProfiler.Add("MC_MeshSet", (Stopwatch.GetTimestamp() - tMeshSet0) * invFreqMs);
-
-            UnityEngine.Profiling.Profiler.BeginSample("MC.UploadMeshData");
-            long tUpload0 = Stopwatch.GetTimestamp();
-            mesh.UploadMeshData(false);
-
-            UnityEngine.Profiling.Profiler.EndSample();
-
-            PerformanceProfiler.Add("MC_UploadMeshData", (Stopwatch.GetTimestamp() - tUpload0) * invFreqMs);
 
             _lastVertexCount = vertices.Length;
 
@@ -245,11 +237,8 @@ namespace Revive.Slime
                 float* block = stackalloc float[8 * 8 * 8];
 
                 int3 key = Keys[index];
-                
-                for (int z = 0; z < 8; z++)
-                for (int y = 0; y < 8; y++)
-                for (int x = 0; x < 8; x++)
-                    block[GetBlockIndex(new int3(x, y, z))] = 0;
+
+                UnsafeUtility.MemClear(block, 8 * 8 * 8 * sizeof(float));
 
                 int3 minCoord = (key << 2) - 2;
                 for (int dz = -1; dz <= 1; ++dz)

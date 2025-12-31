@@ -2373,6 +2373,15 @@ namespace Revive.Slime
                 return;
             }
 
+            if (renderMode != RenderMode.Surface)
+                return;
+
+            bool shouldUpdateDropletMesh = (Time.frameCount - _lastDropletMarchingCubesFrame) >= dropletMarchingCubesIntervalFrames;
+            if (!shouldUpdateDropletMesh)
+            {
+                return;
+            }
+
             if (_cachedMainCamera == null)
                 _cachedMainCamera = Camera.main;
             var cam = _cachedMainCamera;
@@ -2545,20 +2554,15 @@ namespace Revive.Slime
             PerformanceProfiler.End("SurfaceDroplet_Blur");
 
             PerformanceProfiler.Begin("SurfaceDroplet_MarchingCubes");
-            bool needDropletMesh = renderMode == RenderMode.Surface;
-            bool shouldUpdateDropletMesh = needDropletMesh && (Time.frameCount - _lastDropletMarchingCubesFrame) >= dropletMarchingCubesIntervalFrames;
-            if (shouldUpdateDropletMesh)
+            _dropletMesh = _marchingCubesDroplet.MarchingCubesParallel(keys, _dropletGridLut, _dropletGridTempBuffer, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
+            _dropletMeshOriginWorld = (Vector3)(dropletMinPos * PBF_Utils.Scale);
+            if (_dropletMesh != null)
             {
-                _dropletMesh = _marchingCubesDroplet.MarchingCubesParallel(keys, _dropletGridLut, _dropletGridTempBuffer, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
-                _dropletMeshOriginWorld = (Vector3)(dropletMinPos * PBF_Utils.Scale);
-                if (_dropletMesh != null)
-                {
-                    Vector3 baseSizeW = (Vector3)((dropletMaxPos - dropletMinPos) * PBF_Utils.Scale);
-                    float marginW = PBF_Utils.CellSize * PBF_Utils.Scale * 8f;
-                    _dropletMesh.bounds = new Bounds(baseSizeW * 0.5f, baseSizeW + Vector3.one * marginW);
-                }
-                _lastDropletMarchingCubesFrame = Time.frameCount;
+                Vector3 baseSizeW = (Vector3)((dropletMaxPos - dropletMinPos) * PBF_Utils.Scale);
+                float marginW = PBF_Utils.CellSize * PBF_Utils.Scale * 8f;
+                _dropletMesh.bounds = new Bounds(baseSizeW * 0.5f, baseSizeW + Vector3.one * marginW);
             }
+            _lastDropletMarchingCubesFrame = Time.frameCount;
             PerformanceProfiler.End("SurfaceDroplet_MarchingCubes");
 
             PerformanceProfiler.Begin("SurfaceDroplet_DisposeKeys");

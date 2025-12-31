@@ -759,8 +759,6 @@ namespace Revive.Slime
                     for (int c = 0; c < colliderCount; c++)
                     {
                         MyBoxCollider box = colliders[c];
-                        if (useStaticSdf != 0 && disableStaticColliderFallback != 0 && box.IsDynamic == 0)
-                            continue;
 
                         float3 bMin;
                         float3 bMax;
@@ -835,8 +833,6 @@ namespace Revive.Slime
                         for (int c = 0; c < colliderCount; c++)
                         {
                             MyBoxCollider box = colliders[c];
-                            if (useStaticSdf != 0 && disableStaticColliderFallback != 0 && box.IsDynamic == 0)
-                                continue;
 
                             float3 bMin;
                             float3 bMax;
@@ -1076,28 +1072,63 @@ namespace Revive.Slime
                 float lastFriction = 0f;
                 float3 v = velocities[i];
 
+                bool canUseSdf = useStaticSdf != 0 && staticSdf.IsCreated;
+                bool sdfInBoundsStrict = false;
+                if (canUseSdf)
+                {
+                    float3 minSim = staticSdf.AabbMinSim;
+                    float3 maxSim = staticSdf.AabbMaxSim;
+                    sdfInBoundsStrict = !(newPos.x < minSim.x || newPos.y < minSim.y || newPos.z < minSim.z ||
+                                        newPos.x > maxSim.x || newPos.y > maxSim.y || newPos.z > maxSim.z);
+                }
+                bool skipStaticColliders = canUseSdf && disableStaticColliderFallback != 0 && sdfInBoundsStrict;
+
                 float3 sdfNormal = new float3(0, 1, 0);
-                if (useStaticSdf != 0 && staticSdf.IsCreated)
+                if (canUseSdf)
                 {
                     long tSdf0 = Stopwatch.GetTimestamp();
                     long tSdfDist0 = Stopwatch.GetTimestamp();
                     dbgSdfDistanceSamples++;
+                    float voxel = math.max(staticSdf.VoxelSizeSim, 1e-3f);
+                    float contactSkin = math.min(voxel * 0.25f, particleRadiusSim * 0.25f);
+                    float contactRadius = particleRadiusSim + contactSkin;
+                    float contactSlop = math.min(voxel * 0.05f, particleRadiusSim * 0.1f);
+
                     float d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out float3 sdfLocal, out int3 sdfI0, out int3 sdfI1, out float3 sdfF);
                     ticksCollSdfDistance += Stopwatch.GetTimestamp() - tSdfDist0;
-                    if (d < particleRadiusSim)
+                    if (d < contactRadius)
                     {
                         dbgSdfPenetrations++;
-                        long tSdfN0 = Stopwatch.GetTimestamp();
-                        dbgSdfNormalSamples++;
-                        float3 n = staticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d);
-                        ticksCollSdfNormal += Stopwatch.GetTimestamp() - tSdfN0;
-                        newPos += n * (particleRadiusSim - d);
-                        hadCollision = true;
                         hadSdfCollision = true;
-                        sdfNormal = n;
-                        lastNormal = n;
-                        lastColliderVelocity = float3.zero;
+                        hadCollision = true;
                         lastFriction = math.max(lastFriction, staticFriction);
+
+                        float maxStep = voxel * 1.25f;
+                        for (int it = 0; it < 4 && d < contactRadius; it++)
+                        {
+                            long tSdfN0 = Stopwatch.GetTimestamp();
+                            dbgSdfNormalSamples++;
+                            float3 n = staticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d);
+                            ticksCollSdfNormal += Stopwatch.GetTimestamp() - tSdfN0;
+
+                            float stepOut = contactRadius - d;
+                            if (stepOut <= contactSlop)
+                            {
+                                sdfNormal = math.normalizesafe(n, new float3(0, 1, 0));
+                                break;
+                            }
+
+                            stepOut = math.min(stepOut, maxStep);
+                            newPos += n * stepOut;
+                            sdfNormal = math.normalizesafe(n, new float3(0, 1, 0));
+
+                            long tSdfDist1 = Stopwatch.GetTimestamp();
+                            d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF);
+                            ticksCollSdfDistance += Stopwatch.GetTimestamp() - tSdfDist1;
+                        }
+
+                        lastNormal = sdfNormal;
+                        lastColliderVelocity = float3.zero;
                     }
 
                     ticksCollSdf += Stopwatch.GetTimestamp() - tSdf0;
@@ -1130,14 +1161,10 @@ namespace Revive.Slime
                             {
                                 int c = _sourceColliderIndices[baseOffset + ci];
                                 MyBoxCollider box = colliders[c];
-                                if (useStaticSdf != 0 && disableStaticColliderFallback != 0 && box.IsDynamic == 0)
-                                    continue;
                                 dbgColliderChecks++;
                                 dbgCandidateColliderChecks++;
-                                if (useStaticSdf != 0 && box.IsDynamic == 0 && (disableStaticColliderFallback != 0 || hadSdfCollision))
-                                {
+                                if (box.IsDynamic == 0 && (skipStaticColliders || hadSdfCollision))
                                     continue;
-                                }
 
                                 switch (box.Shape)
                                 {
@@ -1321,14 +1348,10 @@ namespace Revive.Slime
                         for (int c = 0; c < colliderCount; c++)
                         {
                             MyBoxCollider box = colliders[c];
-                            if (useStaticSdf != 0 && disableStaticColliderFallback != 0 && box.IsDynamic == 0)
-                                continue;
                             dbgColliderChecks++;
                             dbgFullScanColliderChecks++;
-                            if (useStaticSdf != 0 && box.IsDynamic == 0 && (disableStaticColliderFallback != 0 || hadSdfCollision))
-                            {
+                            if (box.IsDynamic == 0 && (skipStaticColliders || hadSdfCollision))
                                 continue;
-                            }
 
                             switch (box.Shape)
                             {
@@ -1543,29 +1566,7 @@ namespace Revive.Slime
                     ticksCollFriction += Stopwatch.GetTimestamp() - tFriction0;
                 }
                 velocities[i] = v;
-                
-                // 【改进】地面限制：根据粒子的 SourceId 获取对应源的地面高度
-                if (useStaticSdf == 0 && !liquidMode)
-                {
-                    long tGround0 = Stopwatch.GetTimestamp();
-                    float groundY = fallbackGroundY;
-                    int sid = p.SourceId;
-                    if (sid >= 0 && sid < maxSources && _sourceActiveFlags.IsCreated && _sourceActiveFlags[sid] != 0)
-                    {
-                        groundY = sources[sid].groundY;
-                    }
-                    
-                    if (newPos.y < groundY)
-                    {
-                        newPos.y = groundY;
-                        var vel = velocities[i];
-                        if (vel.y < 0) vel.y = 0;  // 只清除向下速度
-                        velocities[i] = vel;
-                    }
 
-                    ticksCollGroundClamp += Stopwatch.GetTimestamp() - tGround0;
-                }
-                
                 long tWriteBack0 = Stopwatch.GetTimestamp();
                 p.Position = newPos;
                 particles[i] = p;
