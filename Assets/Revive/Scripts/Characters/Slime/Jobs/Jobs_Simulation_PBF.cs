@@ -190,6 +190,41 @@ namespace Revive.Slime
             }
             return 0;
         }
+
+        public static bool AllowGroundClamp(int useStaticSdf, int disableStaticColliderFallback)
+        {
+            return (useStaticSdf == 0) || (useStaticSdf != 0 && disableStaticColliderFallback != 0);
+        }
+
+        public static bool ClampToGroundPlane(ref float3 simPos, float groundY, float3 groundPoint, float3 groundNormal)
+        {
+            float nLen2 = math.lengthsq(groundNormal);
+            if (nLen2 < 1e-6f)
+            {
+                groundNormal = new float3(0, 1, 0);
+                groundPoint = new float3(simPos.x, groundY, simPos.z);
+            }
+            else
+            {
+                groundNormal *= math.rsqrt(nLen2);
+            }
+
+            const float minGroundNy = 0.55f;
+            if (groundNormal.y < minGroundNy)
+            {
+                groundNormal = new float3(0, 1, 0);
+                groundPoint = new float3(simPos.x, groundY, simPos.z);
+            }
+
+            float planeDist = math.dot(groundNormal, simPos - groundPoint);
+            if (planeDist < 0f)
+            {
+                simPos -= groundNormal * planeDist;
+                return true;
+            }
+
+            return false;
+        }
     }
 
     public static class Simulation_PBF
@@ -1114,7 +1149,7 @@ namespace Revive.Slime
                 
                 // 【改进】只对主体粒子（ControllerSlot == 0）应用 GroundY 钳制
                 // 分离团依靠碰撞体限制，避免因控制器中心射线护动导致粒子被错误抬高
-                bool allowGroundClamp = (UseStaticSdf == 0) || (UseStaticSdf != 0 && DisableStaticColliderFallback != 0);
+                bool allowGroundClamp = PBF_Utils.AllowGroundClamp(UseStaticSdf, DisableStaticColliderFallback);
 
                 if (allowGroundClamp && p.Type == ParticleType.MainBody)
                 {
@@ -1129,28 +1164,8 @@ namespace Revive.Slime
                         groundNormal = ctrl0.GroundNormal;
                     }
 
-                    float nLen2 = math.lengthsq(groundNormal);
-                    if (nLen2 < 1e-6f)
-                    {
-                        groundNormal = new float3(0, 1, 0);
-                        groundPoint = new float3(simPos.x, groundY, simPos.z);
-                    }
-                    else
-                        groundNormal *= math.rsqrt(nLen2);
-
-                    const float minGroundNy = 0.55f;
-                    if (groundNormal.y < minGroundNy)
-                    {
-                        groundNormal = new float3(0, 1, 0);
-                        groundPoint = new float3(simPos.x, groundY, simPos.z);
-                    }
-
-                    float planeDist = math.dot(groundNormal, simPos - groundPoint);
-                    if (planeDist < 0f)
-                    {
-                        simPos -= groundNormal * planeDist;
+                    if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, groundPoint, groundNormal))
                         collisionAxes.y = true;
-                    }
                 }
                 
                 // 更新位置（模拟坐标）
