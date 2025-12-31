@@ -58,19 +58,19 @@ MonoBehaviour:
     Mesh: {fileID: 0}
     Material: {fileID: 0}
     SpawnProbability: 0.458
-    ScaleRange: {x: 0, y: 0}
+    ScaleRange: {x: 0.1, y: 0.5}
   - Prefab: {fileID: 1147337840779634451, guid: 062f56c399a2cad4a9db21f4176c3a00,
       type: 3}
     Mesh: {fileID: 0}
     Material: {fileID: 0}
     SpawnProbability: 0.288
-    ScaleRange: {x: 0, y: 0}
+    ScaleRange: {x: 0.1, y: 0.5}
   - Prefab: {fileID: 7960240173507520027, guid: 467fdd7686b41d94481f2f712f9c13d0,
       type: 3}
     Mesh: {fileID: 0}
     Material: {fileID: 0}
     SpawnProbability: 0.346
-    ScaleRange: {x: 0, y: 0}
+    ScaleRange: {x: 0.1, y: 0.5}
   Density: 5
   SpreadRadius: 1.5
   GrowthDuration: 2

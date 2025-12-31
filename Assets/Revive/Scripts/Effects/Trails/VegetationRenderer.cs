@@ -9,28 +9,27 @@ namespace Revive.Effects
     /// </summary>
     public class VegetationRenderer
     {
-        private Mesh _mesh;
-        private Material _material;
+        private readonly Mesh _mesh;
+        private readonly Material _material;
         private List<VegetationInstance> _instances = new List<VegetationInstance>();
-        
+
         // 渲染数据
         private Matrix4x4[] _matrices;
-        private Vector4[] _customData;
         private MaterialPropertyBlock _propertyBlock;
-        
+
         // 渲染参数
         private int _maxInstancesPerBatch;
         private ShadowCastingMode _shadowCastingMode;
         private bool _receiveShadows;
-        
+
         // Shader属性ID（性能优化）
-        private static readonly int CustomDataID = Shader.PropertyToID("_CustomData");
-        private static readonly int GrowthPhaseID = Shader.PropertyToID("_GrowthPhase");
+        private static readonly int GrowthPhaseID = Shader.PropertyToID("_InstanceGrowthPhase");
+        private static readonly int WindOffsetID = Shader.PropertyToID("_InstanceWindOffset");
         private static readonly int WindStrengthID = Shader.PropertyToID("_WindStrength");
         private static readonly int WindSpeedID = Shader.PropertyToID("_WindSpeed");
-        
+
         public int InstanceCount => _instances.Count;
-        
+
         /// <summary>
         /// 构造函数
         /// </summary>
@@ -46,9 +45,9 @@ namespace Revive.Effects
             _maxInstancesPerBatch = Mathf.Min(maxInstancesPerBatch, 1023); // GPU硬限制
             _shadowCastingMode = castShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
             _receiveShadows = receiveShadows;
-            
+
             _propertyBlock = new MaterialPropertyBlock();
-            
+
             // 验证材质支持GPU Instancing
             if (!material.enableInstancing)
             {
@@ -56,23 +55,22 @@ namespace Revive.Effects
                 material.enableInstancing = true;
             }
         }
-        
+
         /// <summary>
         /// 添加实例
         /// </summary>
         public void AddInstance(VegetationInstance instance)
         {
             _instances.Add(instance);
-            
+
             // 动态扩展数组
             if (_matrices == null || _instances.Count > _matrices.Length)
             {
                 int newSize = Mathf.NextPowerOfTwo(_instances.Count);
                 _matrices = new Matrix4x4[newSize];
-                _customData = new Vector4[newSize];
             }
         }
-        
+
         /// <summary>
         /// 更新并渲染所有实例
         /// </summary>
@@ -86,28 +84,28 @@ namespace Revive.Effects
             {
                 return;
             }
-            
+
             // 更新风场参数
             UpdateWindParameters(windZone);
-            
+
             // 分批渲染
             int batchCount = Mathf.CeilToInt((float)_instances.Count / _maxInstancesPerBatch);
-            
+
             for (int batch = 0; batch < batchCount; batch++)
             {
                 int startIndex = batch * _maxInstancesPerBatch;
                 int count = Mathf.Min(_maxInstancesPerBatch, _instances.Count - startIndex);
-                
+
                 // 更新渲染数据
                 UpdateRenderData(startIndex, count, currentTime, growthDuration, growthCurve);
-                
+
                 // 渲染这一批
                 RenderBatch(count);
             }
         }
-        
+
         /// <summary>
-        /// 更新渲染数据（矩阵和自定义数据）
+        /// 更新渲染数据（矩阵和材质属性）
         /// </summary>
         private void UpdateRenderData(
             int startIndex,
@@ -116,30 +114,31 @@ namespace Revive.Effects
             float growthDuration,
             AnimationCurve growthCurve)
         {
+            // 预分配数组用于设置 per-instance 属性
+            float[] growthPhases = new float[count];
+            Vector4[] windOffsets = new Vector4[count];
+
             for (int i = 0; i < count; i++)
             {
                 VegetationInstance inst = _instances[startIndex + i];
-                
+
                 // 计算生长进度
                 float growthPhase = inst.GetGrowthPhase(currentTime, growthDuration);
                 float growthScale = growthCurve.Evaluate(growthPhase);
-                
+
                 // 构建变换矩阵
                 _matrices[i] = inst.GetMatrix(growthScale);
-                
-                // 自定义数据：用于Shader的额外参数
-                _customData[i] = new Vector4(
-                    growthPhase,           // x: 生长阶段 (0-1)
-                    inst.Position.x,       // y: 世界X坐标（用于风场噪声）
-                    inst.Position.z,       // z: 世界Z坐标（用于风场噪声）
-                    inst.SpawnTime         // w: 生成时间（用于动画偏移）
-                );
+
+                // 收集 per-instance 数据
+                growthPhases[i] = growthPhase;
+                windOffsets[i] = new Vector4(inst.Position.x, inst.Position.z, 0, 0);
             }
-            
-            // 设置MaterialPropertyBlock
-            _propertyBlock.SetVectorArray(CustomDataID, _customData);
+
+            // 设置 per-instance 属性到 MaterialPropertyBlock
+            _propertyBlock.SetFloatArray(GrowthPhaseID, growthPhases);
+            _propertyBlock.SetVectorArray(WindOffsetID, windOffsets);
         }
-        
+
         /// <summary>
         /// 更新风场参数
         /// </summary>
@@ -156,7 +155,7 @@ namespace Revive.Effects
                 _propertyBlock.SetFloat(WindSpeedID, 1f);
             }
         }
-        
+
         /// <summary>
         /// 渲染一批实例
         /// </summary>
@@ -170,7 +169,7 @@ namespace Revive.Effects
                 receiveShadows = _receiveShadows,
                 layer = 0 // 默认层
             };
-            
+
             Graphics.RenderMeshInstanced(
                 renderParams,
                 _mesh,
@@ -179,7 +178,7 @@ namespace Revive.Effects
                 count
             );
         }
-        
+
         /// <summary>
         /// 清除所有实例
         /// </summary>
@@ -187,7 +186,7 @@ namespace Revive.Effects
         {
             _instances.Clear();
         }
-        
+
         /// <summary>
         /// 移除指定索引的实例
         /// </summary>
@@ -198,7 +197,7 @@ namespace Revive.Effects
                 _instances.RemoveAt(index);
             }
         }
-        
+
         /// <summary>
         /// 获取实例
         /// </summary>
@@ -210,7 +209,7 @@ namespace Revive.Effects
             }
             return null;
         }
-        
+
         /// <summary>
         /// 获取所有实例的边界（用于视锥剔除优化）
         /// </summary>
@@ -220,16 +219,15 @@ namespace Revive.Effects
             {
                 return new Bounds(Vector3.zero, Vector3.zero);
             }
-            
+
             Bounds bounds = new Bounds(_instances[0].Position, Vector3.one);
-            
+
             for (int i = 1; i < _instances.Count; i++)
             {
                 bounds.Encapsulate(_instances[i].Position);
             }
-            
+
             return bounds;
         }
     }
 }
-
