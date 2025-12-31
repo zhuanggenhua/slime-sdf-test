@@ -15,14 +15,24 @@ namespace Revive.Environment
     [AddComponentMenu("Revive/Environment/Slime Pipe Path")]
     public class SlimePipePath : MonoBehaviour
     {
-        private SplineContainer _container;
+        public SplineContainer Container { get; private set; }
+
+        /// <summary>
+        /// 碰撞忽略根节点。按规范，应为 SlimePipePath 所在节点的父节点（整个管线 Prefab 的根）。
+        /// </summary>
+        public Transform CollisionIgnoreRoot => transform.parent != null ? transform.parent : transform;
 
         private void Awake()
         {
-            _container = GetComponent<SplineContainer>();
-            Debug.Assert(_container != null, $"[SlimePipePath] 未找到 SplineContainer（请将其挂在同一 GameObject 上）: {name}", this);
-            if (_container == null)
+            Container = GetComponent<SplineContainer>();
+            Debug.Assert(Container != null, $"[SlimePipePath] 未找到 SplineContainer（请将其挂在同一 GameObject 上）: {name}", this);
+            if (Container == null)
                 enabled = false;
+
+            if (transform.parent == null)
+            {
+                Debug.LogWarning($"[SlimePipePath] {name} 没有父节点，CollisionIgnoreRoot 将只忽略自身。请确保它在管线根节点下。", this);
+            }
         }
 
         [Header("Spline")]
@@ -51,12 +61,12 @@ namespace Revive.Environment
         public bool TryGetSpline(out Spline spline)
         {
             spline = null;
-            if (_container == null)
-                _container = GetComponent<SplineContainer>();
-            if (_container == null)
+            if (Container == null)
+                Container = GetComponent<SplineContainer>();
+            if (Container == null)
                 return false;
 
-            var splines = _container.Splines;
+            var splines = Container.Splines;
             if (splines == null || splines.Count == 0)
                 return false;
 
@@ -90,28 +100,28 @@ namespace Revive.Environment
         {
             if (!TryGetSpline(out _))
                 return 0f;
-            return _container.CalculateLength(Mathf.Clamp(_splineIndex, 0, _container.Splines.Count - 1));
+            return Container.CalculateLength(Mathf.Clamp(_splineIndex, 0, Container.Splines.Count - 1));
         }
 
         public Vector3 EvaluatePosition(float t)
         {
             if (!TryGetSpline(out _))
                 return transform.position;
-            return _container.EvaluatePosition(Mathf.Clamp(_splineIndex, 0, _container.Splines.Count - 1), t);
+            return Container.EvaluatePosition(Mathf.Clamp(_splineIndex, 0, Container.Splines.Count - 1), t);
         }
 
         public Vector3 EvaluateTangent(float t)
         {
             if (!TryGetSpline(out _))
                 return Vector3.forward;
-            return _container.EvaluateTangent(Mathf.Clamp(_splineIndex, 0, _container.Splines.Count - 1), t);
+            return Container.EvaluateTangent(Mathf.Clamp(_splineIndex, 0, Container.Splines.Count - 1), t);
         }
 
         public Vector3 EvaluateUp(float t)
         {
             if (!TryGetSpline(out _))
                 return Vector3.up;
-            return _container.EvaluateUpVector(Mathf.Clamp(_splineIndex, 0, _container.Splines.Count - 1), t);
+            return Container.EvaluateUpVector(Mathf.Clamp(_splineIndex, 0, Container.Splines.Count - 1), t);
         }
 
         /// <summary>

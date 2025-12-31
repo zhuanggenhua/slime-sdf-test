@@ -46,7 +46,7 @@ namespace Revive.Slime
         private bool _heldWasKinematic;
         private bool _heldUsedGravity;
         private Collider[] _heldColliders;
-        private bool[] _heldColliderEnabledStates;
+        private bool _heldIndexIgnored;
         private Renderer[] _heldRenderers;
         private bool[] _heldRendererReceiveShadows;
         private ShadowCastingMode[] _heldRendererShadowCastingModes;
@@ -95,7 +95,7 @@ namespace Revive.Slime
             }
             if (_heldRigidbody != null)
             {
-                _heldRigidbody.MovePosition(targetPos);
+                MoveHeldRigidbodySafely(targetPos);
             }
             else
             {
@@ -174,15 +174,13 @@ namespace Revive.Slime
             _heldRigidbody.useGravity = false;
 
             _heldColliders = carryable.Colliders;
-            _heldColliderEnabledStates = new bool[_heldColliders.Length];
-            for (int i = 0; i < _heldColliders.Length; i++)
-            {
-                var col = _heldColliders[i];
-                if (col == null)
-                    continue;
+            SetIgnorePlayerCollision(_heldColliders, true);
 
-                _heldColliderEnabledStates[i] = col.enabled;
-                col.enabled = false;
+            _heldIndexIgnored = false;
+            if (SlimeWorldColliderIndex.TryGetInstance(out var pickupIndex))
+            {
+                pickupIndex.UnregisterDynamicColliders(_heldColliders);
+                _heldIndexIgnored = true;
             }
 
             CacheAndDisableHeldShadowState();
@@ -192,7 +190,7 @@ namespace Revive.Slime
             if (trans <= 0f)
             {
                 _pickupInTransition = false;
-                _heldRigidbody.MovePosition(targetPos);
+                MoveHeldRigidbodySafely(targetPos);
             }
             else
             {
@@ -216,24 +214,24 @@ namespace Revive.Slime
                 if (_held != null)
                 {
                     RestoreHeldShadowState();
-                    if (_heldColliders != null && _heldColliderEnabledStates != null)
+
+                    if (_heldColliders != null)
                     {
-                        for (int i = 0; i < _heldColliders.Length; i++)
+                        SetIgnorePlayerCollision(_heldColliders, false);
+                        if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var failIndex))
                         {
-                            var col = _heldColliders[i];
-                            if (col == null)
-                                continue;
-                            col.enabled = _heldColliderEnabledStates[i];
+                            failIndex.RegisterDynamicColliders(_heldColliders);
                         }
                     }
 
+                    _heldIndexIgnored = false;
                     _held.IsHeld = false;
                 }
 
                 _held = null;
                 _heldRigidbody = null;
                 _heldColliders = null;
-                _heldColliderEnabledStates = null;
+                _heldIndexIgnored = false;
                 _heldRenderers = null;
                 _heldRendererReceiveShadows = null;
                 _heldRendererShadowCastingModes = null;
@@ -253,25 +251,22 @@ namespace Revive.Slime
 
             if (objectColliders != null)
             {
-                bool wantIgnoreSlime = PostThrowIgnoreSlimeSimulation;
                 _postThrowIndexIgnored = false;
-                if (wantIgnoreSlime && SlimeWorldColliderIndex.TryGetInstance(out var index))
+                if (SlimeWorldColliderIndex.TryGetInstance(out var index))
                 {
-                    index.UnregisterDynamicColliders(objectColliders);
-                    _postThrowIndexIgnored = true;
+                    if (PostThrowIgnoreSlimeSimulation)
+                    {
+                        index.UnregisterDynamicColliders(objectColliders);
+                        _postThrowIndexIgnored = true;
+                    }
+                    else
+                    {
+                        index.RegisterDynamicColliders(objectColliders);
+                        _postThrowIndexIgnored = false;
+                    }
                 }
             }
-
-            if (objectColliders != null && _heldColliderEnabledStates != null)
-            {
-                for (int i = 0; i < objectColliders.Length; i++)
-                {
-                    var col = objectColliders[i];
-                    if (col == null)
-                        continue;
-                    col.enabled = _heldColliderEnabledStates[i];
-                }
-            }
+            _heldIndexIgnored = false;
 
             rb.isKinematic = false;
             rb.useGravity = _heldUsedGravity;
@@ -309,7 +304,7 @@ namespace Revive.Slime
             _held = null;
             _heldRigidbody = null;
             _heldColliders = null;
-            _heldColliderEnabledStates = null;
+            _heldIndexIgnored = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
             _heldRendererShadowCastingModes = null;
@@ -366,6 +361,80 @@ namespace Revive.Slime
         private Vector3 GetHoldAnchorWorldPosition()
         {
             return GetBaseAnchorWorldPosition() + HeldAnchorOffset;
+        }
+
+        private void MoveHeldRigidbodySafely(Vector3 targetWorldPos)
+        {
+            if (_heldRigidbody == null)
+                return;
+
+            Vector3 start = _heldRigidbody.position;
+            Vector3 delta = targetWorldPos - start;
+            float dist = delta.magnitude;
+            if (dist <= 0.00001f)
+            {
+                _heldRigidbody.MovePosition(targetWorldPos);
+                return;
+            }
+
+            Vector3 dir = delta / dist;
+            var hits = _heldRigidbody.SweepTestAll(dir, dist, QueryTriggerInteraction.Ignore);
+            if (hits != null && hits.Length > 0)
+            {
+                float minDist = float.PositiveInfinity;
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var hit = hits[i];
+                    var col = hit.collider;
+                    if (col == null)
+                        continue;
+                    if (IsIgnoredHeldSweepCollider(col))
+                        continue;
+                    if (hit.distance < minDist)
+                        minDist = hit.distance;
+                }
+
+                if (!float.IsPositiveInfinity(minDist))
+                {
+                    float skin = 0.001f;
+                    float safeDist = Mathf.Max(0f, minDist - skin);
+                    targetWorldPos = start + dir * safeDist;
+                }
+            }
+
+            _heldRigidbody.MovePosition(targetWorldPos);
+        }
+
+        private bool IsIgnoredHeldSweepCollider(Collider col)
+        {
+            if (col == null)
+                return true;
+
+            if (_heldColliders != null)
+            {
+                for (int i = 0; i < _heldColliders.Length; i++)
+                {
+                    var held = _heldColliders[i];
+                    if (held == null)
+                        continue;
+                    if (held == col)
+                        return true;
+                }
+            }
+
+            if (_playerColliders != null)
+            {
+                for (int i = 0; i < _playerColliders.Length; i++)
+                {
+                    var player = _playerColliders[i];
+                    if (player == null)
+                        continue;
+                    if (player == col)
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private Vector3 ComputeThrowImpulse(SlimeCarryableObject carryable, Rigidbody rb)
@@ -606,15 +675,21 @@ namespace Revive.Slime
         {
             RestoreHeldShadowState();
 
-            if (_held != null && _heldColliders != null && _heldColliderEnabledStates != null)
+            if (_held != null)
             {
-                for (int i = 0; i < _heldColliders.Length; i++)
+                RestoreHeldShadowState();
+
+                if (_heldColliders != null)
                 {
-                    var col = _heldColliders[i];
-                    if (col == null)
-                        continue;
-                    col.enabled = _heldColliderEnabledStates[i];
+                    SetIgnorePlayerCollision(_heldColliders, false);
+                    if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var failIndex))
+                    {
+                        failIndex.RegisterDynamicColliders(_heldColliders);
+                    }
                 }
+
+                _heldIndexIgnored = false;
+                _held.IsHeld = false;
             }
 
             if (_heldRigidbody != null)
@@ -646,7 +721,7 @@ namespace Revive.Slime
             _held = null;
             _heldRigidbody = null;
             _heldColliders = null;
-            _heldColliderEnabledStates = null;
+            _heldIndexIgnored = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
             _heldRendererShadowCastingModes = null;

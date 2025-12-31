@@ -128,7 +128,7 @@ MonoBehaviour:
   VelocityTransferMethod: 2
   ObstaclesLayerMask:
     serializedVersion: 2
-    m_Bits: 1254144
+    m_Bits: 18031360
   GroundedRaycastLength: 3
   MinimumGroundedDistance: 0.2
   GroundedComputationMode: 1
@@ -339,8 +339,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 529b7b02b3e5cb14cad207748729173e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  initialMainVolume: 600
-  minVolume: 500
+  initialMainVolume: 1000
+  minVolume: 300
   maxVolume: 2600
   updateIntervalFrames: 10
   currentVolume: 0
@@ -373,7 +373,7 @@ MonoBehaviour:
   velocityDamping: 0.99
   maxVelocity: 30
   faceHeightFactor: 0.2
-  verticalOffset: 0.2
+  verticalOffset: 0.1
   emitSpeed: 1
   emitAngleThreshold: 0.7
   emitCooldown: 0.2
@@ -382,13 +382,20 @@ MonoBehaviour:
   maxParticles: 16384
   activeParticles: 2504
   recallStepMaxHeight: 2
-  recallStepTriggerAdvance: 0.1
+  recallStepTriggerAdvance: 0.25
   recallHeightCompPercent: 0.2
   recallStepJumpSpeedScale: 1
   recallStepMaxUpSpeed: 3
   recallSlideWeight: 0.8
   recallObstacleCheckDist: 0.3
   recallObstacleKeepDistanceMargin: 0.1
+  recallAvoidUseStaticSdf: 1
+  recallUseGlobalFlowField: 1
+  recallGlobalFlowRange: 10
+  recallGlobalFlowCellSize: 0.5
+  recallGlobalFlowUpdateIntervalFrames: 6
+  recallGlobalFlowBlockedDistance: 0.15
+  recallGlobalFlowSampleHalfHeight: 0.6
   mainRadiusScale: 1.1
   mainOverlapThreshold: 0.6
   mainRadiusShrinkRate: 0.99
@@ -439,9 +446,9 @@ MonoBehaviour:
   worldDynamicColliderLayers:
     serializedVersion: 2
     m_Bits: 16777216
-  useWorldStaticSdf: 0
+  useWorldStaticSdf: 1
   worldStaticSdfBytes: {fileID: 4900000, guid: dec04e336a0218b438b2816f0f5dbbc8, type: 3}
-  disableStaticColliderFallbackWhenUsingSdf: 0
+  disableStaticColliderFallbackWhenUsingSdf: 1
   worldStaticSdfFriction: 0.2
   particleRadiusWorld: 0.05
   dropletColliderIndexQueryCacheCapacity: 128
@@ -454,8 +461,9 @@ MonoBehaviour:
   gridDebug: 0
   colliderCollectDebug: 0
   ccaDebug: 0
-  recallAvoidanceGizmos: 0
-  recallAvoidanceLogs: 0
+  recallAvoidanceGizmos: 1
+  recallAvoidanceLogs: 1
+  recallAvoidanceLogControllerSlot: -1
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0

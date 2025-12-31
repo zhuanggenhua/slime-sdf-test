@@ -20,6 +20,19 @@ namespace Revive.Slime
         private Vector3 _lastForward = Vector3.forward;
         private Vector3 _lastTravelVelocity;
 
+        private bool _isExitPushing;
+        private bool _isExitEasingOut;
+        private Vector3 _exitPushDir;
+        private float _exitPushStepDistance;
+        private int _exitPushStepsRemaining;
+        private bool _pendingStopTravel;
+        private float _exitPreAdvanceDistance;
+
+        private float _exitPushSpeed;
+        private float _exitEaseTimeRemaining;
+
+        private CollisionFlags _lastMoveFlags;
+
         private float _travelElapsed;
 
         private const float SpeedRampSeconds = 1.0f;
@@ -28,8 +41,16 @@ namespace Revive.Slime
         private CharacterController _cachedCharacterController;
         private bool _prevDetectCollisions;
         private bool _prevEnableOverlapRecovery;
+        private bool _prevCharacterControllerEnabled;
 
         private const float TravelReentryCooldownSeconds = 0.25f;
+        private const float SamePathReentryCooldownSeconds = 0.25f;
+        private const float ExitPushDistance = 0.5f;
+        private const float ExitPushUp = 0.05f;
+        private const float ExitEaseOutSeconds = 0.25f;
+
+        private SlimePipePath _lastExitPath;
+        private float _lastExitTime;
 
         // 保存的状态
         private CharacterStates.CharacterConditions _prevCondition;
@@ -39,11 +60,30 @@ namespace Revive.Slime
 
         public bool IsTravelling => _isTravelling;
 
+        public Transform CurrentPathTransform => _path != null ? _path.CollisionIgnoreRoot : null;
+
         public bool CanStartTravel => !_isTravelling && Time.time >= _cooldownUntilTime;
+
+        public bool CanStartTravelFromPath(SlimePipePath path)
+        {
+            if (!CanStartTravel)
+                return false;
+
+            if (path != null && ReferenceEquals(path, _lastExitPath) && Time.time < (_lastExitTime + SamePathReentryCooldownSeconds))
+                return false;
+
+            return true;
+        }
 
         public override void ProcessAbility()
         {
             base.ProcessAbility();
+
+            if (_pendingStopTravel)
+            {
+                _pendingStopTravel = false;
+                StopTravel();
+            }
 
             if (_isTravelling)
             {
@@ -69,6 +109,75 @@ namespace Revive.Slime
             ramp01 = ramp01 * ramp01 * (3f - 2f * ramp01);
             float effectiveSpeed = _speed * ramp01;
 
+            if (_isExitPushing)
+            {
+                float pushSpeed = _exitPushSpeed;
+                float step = _exitPushStepsRemaining > 0 ? _exitPushStepDistance : 0f;
+                if (step > 0f && _exitPushStepsRemaining > 0)
+                {
+                    transform.position += _exitPushDir * step;
+                    _exitPushStepsRemaining -= 1;
+                }
+
+                float actualSpeed = dt > 0f ? step / dt : 0f;
+                _lastTravelVelocity = _exitPushDir * actualSpeed;
+                if (_controller3D != null)
+                {
+                    _controller3D.Velocity = _lastTravelVelocity;
+                }
+
+                if (_exitPushStepsRemaining <= 0)
+                {
+                    _isExitPushing = false;
+                    if (ExitEaseOutSeconds > 1e-4f)
+                    {
+                        _isExitEasingOut = true;
+                        _exitEaseTimeRemaining = ExitEaseOutSeconds;
+                    }
+                    else
+                    {
+                        _pendingStopTravel = true;
+                    }
+                }
+
+                return;
+            }
+
+            if (_isExitEasingOut)
+            {
+                float dtStep = Mathf.Min(dt, _exitEaseTimeRemaining);
+                float r0 = Mathf.Clamp01(_exitEaseTimeRemaining / ExitEaseOutSeconds);
+                float r1 = Mathf.Clamp01((_exitEaseTimeRemaining - dtStep) / ExitEaseOutSeconds);
+                float v0 = _exitPushSpeed * r0;
+                float v1 = _exitPushSpeed * r1;
+                float vAvg = 0.5f * (v0 + v1);
+
+                float step = vAvg * dtStep;
+                if (step > 0f)
+                {
+                    transform.position += _exitPushDir * step;
+                }
+
+                _lastTravelVelocity = _exitPushDir * v1;
+                if (_controller3D != null)
+                {
+                    _controller3D.Velocity = _lastTravelVelocity;
+                }
+
+                _exitEaseTimeRemaining -= dtStep;
+                if (_exitEaseTimeRemaining <= 0f)
+                {
+                    _isExitEasingOut = false;
+                    _lastTravelVelocity = Vector3.zero;
+                    if (_controller3D != null)
+                    {
+                        _controller3D.Velocity = Vector3.zero;
+                    }
+                    _pendingStopTravel = true;
+                }
+                return;
+            }
+
             if (!_isTravelling || _path == null)
             {
                 return;
@@ -84,7 +193,8 @@ namespace Revive.Slime
                 }
                 else
                 {
-                    if (UpdateMovement(dt, effectiveSpeed, out _))
+                    UpdateMovement(dt, effectiveSpeed, out var alignTargetPos);
+                    if ((alignTargetPos - transform.position).sqrMagnitude <= 0.0001f)
                         _alignedToPath = true;
                     return;
                 }
@@ -109,16 +219,58 @@ namespace Revive.Slime
                 if (_t >= 1f || _t <= 0f)
                 {
                     _t = Mathf.Clamp01(_t);
-                    bool reachedEnd = UpdateMovement(dt, effectiveSpeed, out _); // 最终位置/朝向
+
+                    Vector3 endTargetPos = _path.EvaluatePosition(_t);
+                    Vector3 deltaToEnd = endTargetPos - transform.position;
+                    float maxMove = Mathf.Max(0f, effectiveSpeed) * Mathf.Max(0f, dt);
+
+                    bool reachedEnd;
+                    if (deltaToEnd.magnitude <= maxMove && maxMove > 1e-6f)
+                    {
+                        Vector3 tangent = _path.EvaluateTangent(_t);
+                        if (tangent.sqrMagnitude < 1e-6f)
+                        {
+                            tangent = _lastForward;
+                        }
+
+                        Vector3 dir = tangent.normalized;
+                        if (_reverse)
+                        {
+                            dir = -dir;
+                        }
+
+                        float deltaMag = deltaToEnd.magnitude;
+                        _exitPreAdvanceDistance = Mathf.Max(0f, maxMove - deltaMag);
+
+                        Vector3 move = dir * maxMove;
+                        transform.position += move;
+                        _lastMoveFlags = CollisionFlags.None;
+
+                        Vector3 velocity = dt > 0f ? move / dt : Vector3.zero;
+                        _lastTravelVelocity = velocity;
+                        if (_controller3D != null)
+                        {
+                            _controller3D.Velocity = velocity;
+                        }
+
+                        ApplyRotation();
+                        reachedEnd = true;
+                    }
+                    else
+                    {
+                        _exitPreAdvanceDistance = 0f;
+                        reachedEnd = UpdateMovement(dt, effectiveSpeed, out endTargetPos); // 最终位置/朝向
+                    }
+
                     if (reachedEnd)
                     {
-                        StopTravel();
+                        StartExitPush();
                     }
                     return;
                 }
             }
 
-            UpdateMovement(dt, effectiveSpeed, out _);
+            UpdateMovement(dt, effectiveSpeed, out var travelTargetPos);
         }
 
         private bool UpdateMovement(float dt, float speed, out Vector3 targetPos)
@@ -129,13 +281,14 @@ namespace Revive.Slime
             float maxMove = Mathf.Max(0f, speed) * Mathf.Max(0f, dt);
             Vector3 move = maxMove > 0f ? Vector3.ClampMagnitude(deltaToTarget, maxMove) : Vector3.zero;
 
-            if (_cachedCharacterController != null)
+            if (_cachedCharacterController != null && _cachedCharacterController.enabled)
             {
-                _cachedCharacterController.Move(move);
+                _lastMoveFlags = _cachedCharacterController.Move(move);
             }
             else
             {
                 transform.position += move;
+                _lastMoveFlags = CollisionFlags.None;
             }
 
             Vector3 velocity = dt > 0f ? move / dt : Vector3.zero;
@@ -215,14 +368,26 @@ namespace Revive.Slime
             _rotationMode = rotationMode;
             _alignedToPath = false;
             _travelElapsed = 0f;
+            _isExitPushing = false;
+            _isExitEasingOut = false;
+            _pendingStopTravel = false;
+            _exitPushDir = Vector3.zero;
+            _exitPushStepDistance = 0f;
+            _exitPushStepsRemaining = 0;
+            _exitPreAdvanceDistance = 0f;
+            _exitPushSpeed = 0f;
+            _exitEaseTimeRemaining = 0f;
+            _lastMoveFlags = CollisionFlags.None;
 
             _cachedCharacterController = _controller3D != null ? _controller3D.GetComponent<CharacterController>() : null;
             if (_cachedCharacterController != null)
             {
+                _prevCharacterControllerEnabled = _cachedCharacterController.enabled;
                 _prevDetectCollisions = _cachedCharacterController.detectCollisions;
                 _prevEnableOverlapRecovery = _cachedCharacterController.enableOverlapRecovery;
                 _cachedCharacterController.detectCollisions = false;
                 _cachedCharacterController.enableOverlapRecovery = false;
+                _cachedCharacterController.enabled = false;
             }
 
             // 保存原状态
@@ -255,10 +420,22 @@ namespace Revive.Slime
             _travelElapsed = 0f;
             _cooldownUntilTime = Time.time + TravelReentryCooldownSeconds;
 
+            _isExitPushing = false;
+            _isExitEasingOut = false;
+            _pendingStopTravel = false;
+
             if (_cachedCharacterController != null)
             {
-                _cachedCharacterController.detectCollisions = _prevDetectCollisions;
-                _cachedCharacterController.enableOverlapRecovery = _prevEnableOverlapRecovery;
+                var cc = _cachedCharacterController;
+                cc.enabled = _prevCharacterControllerEnabled;
+                cc.detectCollisions = _prevDetectCollisions;
+                cc.enableOverlapRecovery = _prevEnableOverlapRecovery;
+
+                if (cc.enabled)
+                {
+                    cc.Move(Vector3.zero);
+                }
+
                 _cachedCharacterController = null;
             }
 
@@ -275,12 +452,76 @@ namespace Revive.Slime
             }
 
             _condition.ChangeState(_prevCondition);
+
+            _lastExitPath = _path;
+            _lastExitTime = Time.time;
+            _path = null;
         }
 
         protected override void OnDisable()
         {
             base.OnDisable();
             StopTravel();
+        }
+
+        private void StartExitPush()
+        {
+            if (_path == null)
+            {
+                StopTravel();
+                return;
+            }
+
+            Vector3 tangent = _path.EvaluateTangent(_t);
+            if (tangent.sqrMagnitude < 1e-6f)
+            {
+                tangent = _lastForward;
+            }
+
+            Vector3 dir = tangent.normalized;
+            if (_reverse)
+            {
+                dir = -dir;
+            }
+
+            Vector3 push = dir * ExitPushDistance + Vector3.up * ExitPushUp;
+            if (_exitPreAdvanceDistance > 0f)
+            {
+                float dirDist = Mathf.Max(0f, ExitPushDistance - _exitPreAdvanceDistance);
+                push = dir * dirDist + Vector3.up * ExitPushUp;
+                _exitPreAdvanceDistance = 0f;
+            }
+            float pushDist = push.magnitude;
+            if (pushDist <= 1e-4f)
+            {
+                StopTravel();
+                return;
+            }
+
+            float baseSpeed = Mathf.Max(_speed, 0.5f);
+            float easeOutDist = baseSpeed * ExitEaseOutSeconds * 0.5f;
+            float constDist = Mathf.Max(0f, pushDist - easeOutDist);
+
+            _isExitPushing = true;
+            _isExitEasingOut = false;
+            _pendingStopTravel = false;
+            _exitPushDir = push / pushDist;
+            _exitPushSpeed = baseSpeed;
+
+            if (constDist <= 1e-4f)
+            {
+                _isExitPushing = false;
+                _isExitEasingOut = true;
+                _exitEaseTimeRemaining = ExitEaseOutSeconds;
+                _exitPushStepDistance = 0f;
+                _exitPushStepsRemaining = 0;
+                return;
+            }
+
+            float stepDist = Mathf.Max(1e-4f, baseSpeed * Time.fixedDeltaTime);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(constDist / stepDist));
+            _exitPushStepDistance = constDist / steps;
+            _exitPushStepsRemaining = steps;
         }
     }
 }

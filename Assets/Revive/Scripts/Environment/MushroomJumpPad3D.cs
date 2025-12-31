@@ -1,3 +1,5 @@
+using System;
+using System.Collections;
 using UnityEngine;
 using MoreMountains.TopDownEngine;
 using MoreMountains.Feedbacks;
@@ -13,6 +15,10 @@ namespace Revive.Environment
     [AddComponentMenu("Revive/Environment/Mushroom Jump Pad 3D")]
     public class MushroomJumpPad3D : MonoBehaviour
     {
+        public event Action<MushroomJumpPad3D, TopDownController3D> Bounced;
+        public bool OneShot { get; set; }
+        public float OneShotDestroyDelay => _sustainDuration;
+
         [Header("弹跳参数")]
         [Tooltip("弹跳速度（和原版跳跃保持一致，默认4）")]
         [SerializeField] private float _jumpSpeed = 4f;
@@ -29,10 +35,28 @@ namespace Revive.Environment
         [Header("反馈")]
         [Tooltip("弹跳时播放的反馈")]
         [SerializeField] private MMFeedbacks _bounceFeedback;
+
+        [Tooltip("用于做平台缩放反馈的目标Transform（建议指向可视模型，不要指向碰撞体）")]
+        [SerializeField] private Transform _platformFeedbackTarget;
+
+        [Tooltip("下压时Y缩放倍率（1=不缩放）")]
+        [SerializeField] private float _platformPressYScale = 0.85f;
+
+        [Tooltip("下压时间（秒）")]
+        [SerializeField] private float _platformPressDuration = 0.06f;
+
+        [Tooltip("回弹时间（秒）")]
+        [SerializeField] private float _platformReleaseDuration = 0.10f;
+
+        [Tooltip("缩放插值曲线")]
+        [SerializeField] private AnimationCurve _platformScaleCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
         
         [Header("设置")]
         [Tooltip("冷却时间（防止连续触发）")]
         [SerializeField] private float _cooldown = 0.5f;
+
+        [Tooltip("实体平台使用的主Collider（建议指定为模型/碰撞体子物体上的非Trigger Collider）")]
+        [SerializeField] private Collider _platformCollider;
 
         [Tooltip("触发区向上覆盖高度（米）")]
         [SerializeField] private float _triggerHeightAbove = 0.6f;
@@ -55,11 +79,25 @@ namespace Revive.Environment
 
         private TopDownController3D _lastControllerInTrigger;
         private float _lastControllerInTriggerTime;
+
+        private Coroutine _platformScaleRoutine;
+        private Vector3 _platformBaseScale;
+
+        private Collider _resolvedPlatformCollider;
+        private Transform _triggerZoneTransform;
+        private bool _oneShotDestroyQueued;
+        private Rigidbody _createdRigidbody;
         
         private void Awake()
         {
             SetupColliders();
             _bounceFeedback?.Initialization(this.gameObject);
+            ResolvePlatformColliderIfNeeded();
+            ResolvePlatformFeedbackTargetIfNeeded();
+            if (_platformFeedbackTarget != null)
+            {
+                _platformBaseScale = _platformFeedbackTarget.localScale;
+            }
         }
         
         private void Update()
@@ -108,32 +146,36 @@ namespace Revive.Environment
         
         private void SetupColliders()
         {
-            // 主碰撞体作为实体平台
-            Collider mainCollider = GetComponent<Collider>();
-            if (mainCollider == null)
+            ResolvePlatformColliderIfNeeded();
+            if (_resolvedPlatformCollider == null)
             {
                 Debug.LogError($"[MushroomJumpPad3D] {gameObject.name} 需要一个 Collider！");
                 return;
             }
+
+            Collider mainCollider = _resolvedPlatformCollider;
             
             // 确保主碰撞体是实体
             mainCollider.isTrigger = false;
             
             // 创建顶部检测区域（子物体）
-            GameObject triggerZone = transform.Find("TriggerZone")?.gameObject;
+            Transform parent = mainCollider.transform != null ? mainCollider.transform : transform;
+            GameObject triggerZone = parent.Find("TriggerZone")?.gameObject;
             if (triggerZone == null)
             {
                 triggerZone = new GameObject("TriggerZone");
-                triggerZone.transform.SetParent(transform);
+                triggerZone.transform.SetParent(parent);
                 triggerZone.transform.localPosition = Vector3.zero;
                 triggerZone.transform.localRotation = Quaternion.identity;
                 triggerZone.transform.localScale = Vector3.one;
-                triggerZone.layer = gameObject.layer;
+                triggerZone.layer = parent.gameObject.layer;
             }
             else
             {
-                triggerZone.layer = gameObject.layer;
+                triggerZone.layer = parent.gameObject.layer;
             }
+
+            _triggerZoneTransform = triggerZone.transform;
             
             Collider[] existing = triggerZone.GetComponents<Collider>();
             for (int i = 0; i < existing.Length; i++)
@@ -154,14 +196,14 @@ namespace Revive.Environment
             float totalHeight = heightAbove + overlapDown;
             
             Bounds b = mainCollider.bounds;
-            Vector3 lossy = transform.lossyScale;
+            Vector3 lossy = parent.lossyScale;
             float sx = Mathf.Max(0.0001f, Mathf.Abs(lossy.x));
             float sy = Mathf.Max(0.0001f, Mathf.Abs(lossy.y));
             float sz = Mathf.Max(0.0001f, Mathf.Abs(lossy.z));
             
             float centerY = b.max.y + (heightAbove - overlapDown) * 0.5f;
             Vector3 worldCenter = new Vector3(b.center.x, centerY, b.center.z);
-            Vector3 localCenter = transform.InverseTransformPoint(worldCenter);
+            Vector3 localCenter = parent.InverseTransformPoint(worldCenter);
             Vector3 localSize = new Vector3(b.size.x / sx, totalHeight / sy, b.size.z / sz);
             
             BoxCollider trigger = triggerZone.AddComponent<BoxCollider>();
@@ -187,6 +229,36 @@ namespace Revive.Environment
                 rb = gameObject.AddComponent<Rigidbody>();
                 rb.isKinematic = true;
                 rb.useGravity = false;
+                _createdRigidbody = rb;
+            }
+        }
+        
+        private void OnDestroy()
+        {
+            if (_triggerZoneTransform != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(_triggerZoneTransform.gameObject);
+                }
+                else
+                {
+                    DestroyImmediate(_triggerZoneTransform.gameObject);
+                }
+                _triggerZoneTransform = null;
+            }
+
+            if (_createdRigidbody != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Destroy(_createdRigidbody);
+                }
+                else
+                {
+                    DestroyImmediate(_createdRigidbody);
+                }
+                _createdRigidbody = null;
             }
         }
         
@@ -293,30 +365,230 @@ namespace Revive.Environment
             controller.AddedForce = new Vector3(0f, startSpeed, 0f);
             
             _bounceFeedback?.PlayFeedbacks(transform.position, _jumpSpeed);
+            PlayPlatformScaleFeedback();
+
+            Bounced?.Invoke(this, controller);
+            if (OneShot && !_oneShotDestroyQueued)
+            {
+                _oneShotDestroyQueued = true;
+                StartCoroutine(OneShotDestroyRoutine());
+            }
+        }
+
+        private IEnumerator OneShotDestroyRoutine()
+        {
+            float delay = Mathf.Max(0f, OneShotDestroyDelay);
+            if (delay > 0f)
+            {
+                yield return new WaitForSeconds(delay);
+            }
+
+            if (_triggerZoneTransform != null)
+            {
+                Collider c = _triggerZoneTransform.GetComponent<Collider>();
+                if (c != null)
+                    c.enabled = false;
+
+                JumpPadTrigger t = _triggerZoneTransform.GetComponent<JumpPadTrigger>();
+                if (t != null)
+                    t.enabled = false;
+
+                if (Application.isPlaying)
+                {
+                    Destroy(_triggerZoneTransform.gameObject);
+                }
+                else
+                {
+                    DestroyImmediate(_triggerZoneTransform.gameObject);
+                }
+                _triggerZoneTransform = null;
+            }
+
+            Destroy(this);
+        }
+
+        private void ResolvePlatformFeedbackTargetIfNeeded()
+        {
+            if (_platformFeedbackTarget != null)
+            {
+                return;
+            }
+
+            ResolvePlatformColliderIfNeeded();
+            if (_resolvedPlatformCollider != null && _resolvedPlatformCollider.transform != null)
+            {
+                _platformFeedbackTarget = _resolvedPlatformCollider.transform;
+                return;
+            }
+
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(includeInactive: true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                Transform t = renderers[i].transform;
+                if (t == transform)
+                {
+                    continue;
+                }
+
+                if (t.name == "TriggerZone")
+                {
+                    continue;
+                }
+
+                _platformFeedbackTarget = t;
+                return;
+            }
+        }
+
+        private void ResolvePlatformColliderIfNeeded()
+        {
+            if (_resolvedPlatformCollider != null)
+            {
+                return;
+            }
+
+            if (_platformCollider != null)
+            {
+                _resolvedPlatformCollider = _platformCollider;
+                return;
+            }
+
+            Collider[] cols = GetComponentsInChildren<Collider>(includeInactive: true);
+            for (int i = 0; i < cols.Length; i++)
+            {
+                Collider c = cols[i];
+                if (c == null)
+                {
+                    continue;
+                }
+
+                if (c.isTrigger)
+                {
+                    continue;
+                }
+
+                if (c.transform != null && c.transform.name == "TriggerZone")
+                {
+                    continue;
+                }
+
+                _resolvedPlatformCollider = c;
+                return;
+            }
+        }
+
+        private void PlayPlatformScaleFeedback()
+        {
+            ResolvePlatformFeedbackTargetIfNeeded();
+            if (_platformFeedbackTarget == null)
+            {
+                return;
+            }
+
+            if (_platformScaleRoutine != null)
+            {
+                StopCoroutine(_platformScaleRoutine);
+                _platformScaleRoutine = null;
+                if (_platformBaseScale == Vector3.zero)
+                {
+                    _platformBaseScale = _platformFeedbackTarget.localScale;
+                }
+                _platformFeedbackTarget.localScale = _platformBaseScale;
+            }
+
+            _platformScaleRoutine = StartCoroutine(PlatformScaleRoutine());
+        }
+
+        public void RefreshPlatformFeedbackBaseScale()
+        {
+            ResolvePlatformFeedbackTargetIfNeeded();
+            if (_platformFeedbackTarget == null)
+                return;
+
+            _platformBaseScale = _platformFeedbackTarget.localScale;
+        }
+
+        private IEnumerator PlatformScaleRoutine()
+        {
+            if (_platformFeedbackTarget == null)
+            {
+                yield break;
+            }
+
+            if (_platformBaseScale == Vector3.zero)
+            {
+                _platformBaseScale = _platformFeedbackTarget.localScale;
+            }
+
+            float pressY = Mathf.Max(0.01f, _platformPressYScale);
+            float pressDur = Mathf.Max(0.001f, _platformPressDuration);
+            float releaseDur = Mathf.Max(0.001f, _platformReleaseDuration);
+
+            Vector3 from = _platformBaseScale;
+            Vector3 to = new Vector3(_platformBaseScale.x, _platformBaseScale.y * pressY, _platformBaseScale.z);
+
+            yield return LerpLocalScale(from, to, pressDur);
+            yield return LerpLocalScale(to, from, releaseDur);
+
+            if (_platformFeedbackTarget != null)
+            {
+                _platformFeedbackTarget.localScale = _platformBaseScale;
+            }
+
+            _platformScaleRoutine = null;
+        }
+
+        private IEnumerator LerpLocalScale(Vector3 from, Vector3 to, float duration)
+        {
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float u = duration <= 0f ? 1f : Mathf.Clamp01(t / duration);
+                float cu = _platformScaleCurve != null ? _platformScaleCurve.Evaluate(u) : u;
+                if (_platformFeedbackTarget != null)
+                {
+                    _platformFeedbackTarget.localScale = Vector3.LerpUnclamped(from, to, cu);
+                }
+                yield return null;
+            }
+
+            if (_platformFeedbackTarget != null)
+            {
+                _platformFeedbackTarget.localScale = to;
+            }
         }
         
         
         private void OnDrawGizmosSelected()
         {
             // 可视化触发区域
-            Collider col = GetComponent<Collider>();
+            Collider col = _resolvedPlatformCollider != null ? _resolvedPlatformCollider : GetComponent<Collider>();
+            if (col == null)
+            {
+                col = GetComponentInChildren<Collider>();
+            }
+
             if (col != null)
             {
                 Gizmos.color = new Color(0f, 1f, 0f, 0.3f);
                 if (col is BoxCollider box)
                 {
                     Matrix4x4 oldMatrix = Gizmos.matrix;
-                    Gizmos.matrix = Matrix4x4.TRS(transform.position + box.center, transform.rotation, transform.lossyScale);
-                    Gizmos.DrawCube(Vector3.zero, box.size);
+                    Gizmos.matrix = box.transform.localToWorldMatrix;
+                    Gizmos.DrawCube(box.center, box.size);
                     Gizmos.color = Color.green;
-                    Gizmos.DrawWireCube(Vector3.zero, box.size);
+                    Gizmos.DrawWireCube(box.center, box.size);
                     Gizmos.matrix = oldMatrix;
                 }
                 else if (col is SphereCollider sphere)
                 {
-                    Gizmos.DrawSphere(transform.position + sphere.center, sphere.radius * transform.lossyScale.x);
+                    Vector3 s = sphere.transform.lossyScale;
+                    float maxScale = Mathf.Max(Mathf.Abs(s.x), Mathf.Max(Mathf.Abs(s.y), Mathf.Abs(s.z)));
+                    Vector3 centerW = sphere.transform.TransformPoint(sphere.center);
+                    Gizmos.DrawSphere(centerW, sphere.radius * maxScale);
                     Gizmos.color = Color.green;
-                    Gizmos.DrawWireSphere(transform.position + sphere.center, sphere.radius * transform.lossyScale.x);
+                    Gizmos.DrawWireSphere(centerW, sphere.radius * maxScale);
                 }
                 
             }

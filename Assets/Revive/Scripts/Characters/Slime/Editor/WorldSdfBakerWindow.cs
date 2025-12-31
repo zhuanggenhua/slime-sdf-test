@@ -18,6 +18,9 @@ namespace Revive.Slime.Editor
         [SerializeField] private LayerMask staticLayers = 0;
         [SerializeField] private bool includeTriggers;
         [SerializeField] private MeshSeedMode meshSeedMode = MeshSeedMode.Triangles;
+        [SerializeField] private bool onlyBakeSelection;
+        [SerializeField] private bool autoEnableUnreadableMeshReadWrite;
+        [SerializeField] private string outputDirectoryAssetPath = "Assets/MMData/SDFData";
 
         private enum MeshSeedMode
         {
@@ -25,9 +28,20 @@ namespace Revive.Slime.Editor
             Bounds = 1,
         }
 
+        private struct BvhNode
+        {
+            public Vector3 BMin;
+            public Vector3 BMax;
+            public int Left;
+            public int Right;
+            public int Escape;
+            public int TriStart;
+            public int TriCount;
+        }
+
         private struct BakeDistanceJob : IJobParallelFor
         {
-            [ReadOnly] public NativeArray<int> Keys;
+            [ReadOnly] public NativeSlice<int> Keys;
             [ReadOnly] public NativeArray<byte> CandidateKinds;
             [ReadOnly] public NativeArray<Vector3> CandidateBoundsMin;
             [ReadOnly] public NativeArray<Vector3> CandidateBoundsMax;
@@ -48,17 +62,20 @@ namespace Revive.Slime.Editor
             [ReadOnly] public NativeArray<int> MeshTris;
             [ReadOnly] public NativeArray<Vector3> MeshTriNormalsW;
 
+            [ReadOnly] public NativeArray<int> MeshBvhRoot;
+            [ReadOnly] public NativeArray<BvhNode> MeshBvhNodes;
+            [ReadOnly] public NativeArray<int> MeshBvhTriIndices;
+
             public int yzStride;
             public int dimZ;
             public float voxel;
             public Vector3 originWorld;
             public float storeBandWorld;
             public float storeBandSqr;
-            public int startIndex;
 
-            [WriteOnly] public NativeArray<float> OutBestAbs;
-            [WriteOnly] public NativeArray<float> OutBestDWorld;
-            [WriteOnly] public NativeArray<byte> OutFlags;
+            [WriteOnly] public NativeSlice<float> OutBestAbs;
+            [WriteOnly] public NativeSlice<float> OutBestDWorld;
+            [WriteOnly] public NativeSlice<byte> OutFlags;
 
             private static float Abs(float x) => x < 0f ? -x : x;
             private static float Max(float a, float b) => a > b ? a : b;
@@ -144,8 +161,7 @@ namespace Revive.Slime.Editor
 
             public void Execute(int index)
             {
-                int gi = startIndex + index;
-                int key = Keys[gi];
+                int key = Keys[index];
 
                 int x = key / yzStride;
                 int rem = key - x * yzStride;
@@ -174,8 +190,8 @@ namespace Revive.Slime.Editor
                     float uniformScale = CandidateUniformScale[ci];
                     if (kind == 1)
                     {
-                        Vector3 p = MultiplyPoint3x4(CandidateWorldToLocal[ci], pWorld) - CandidateLocalCenter[ci];
-                        float d = SdBox(p, CandidateBoxHalfSize[ci]) * uniformScale;
+                        Vector3 p = MultiplyPoint3x4(CandidateWorldToLocal[ci], pWorld - CandidateLocalCenter[ci]);
+                        float d = SdBox(p, CandidateBoxHalfSize[ci]);
                         float abs = Abs(d);
                         if (abs < bestAbs)
                         {
@@ -230,39 +246,93 @@ namespace Revive.Slime.Editor
                         int triOffset = MeshTriOffset[mi];
                         int triCount = MeshTriCount[mi];
                         int nOffset = MeshTriNormalOffset[mi];
-                        for (int t = 0; t < triCount; t++)
+                        int root = (MeshBvhRoot.IsCreated && mi < MeshBvhRoot.Length) ? MeshBvhRoot[mi] : -1;
+                        if (root >= 0 && MeshBvhNodes.IsCreated && MeshBvhTriIndices.IsCreated)
                         {
-                            int ti = triOffset + t * 3;
-                            int i0 = MeshTris[ti];
-                            int i1 = MeshTris[ti + 1];
-                            int i2 = MeshTris[ti + 2];
-
-                            Vector3 a = MeshVertsW[i0];
-                            Vector3 b = MeshVertsW[i1];
-                            Vector3 c = MeshVertsW[i2];
-                            Vector3 triCp = ClosestPointOnTriangle(pWorld, a, b, c);
-                            Vector3 triDelta = pWorld - triCp;
-                            float triDistSqr = triDelta.x * triDelta.x + triDelta.y * triDelta.y + triDelta.z * triDelta.z;
-                            if (triDistSqr < bestSqr)
+                            int nodeIdx = root;
+                            while (nodeIdx >= 0)
                             {
-                                bestSqr = triDistSqr;
-                                float dist = Sqrt(triDistSqr);
-                                Vector3 n = MeshTriNormalsW[nOffset + t];
-                                float s = triDelta.x * n.x + triDelta.y * n.y + triDelta.z * n.z;
-                                float signed = s < 0f ? -dist : dist;
-                                bestAbs = dist;
-                                bestDWorld = signed;
-                                bestSignedKnown = true;
-                                if (triDistSqr < 1e-12f)
-                                    break;
+                                BvhNode node = MeshBvhNodes[nodeIdx];
+                                float aabbSqr = SqrDistancePointAabb(pWorld, node.BMin, node.BMax);
+                                if (aabbSqr > bestSqr)
+                                {
+                                    nodeIdx = node.Escape;
+                                    continue;
+                                }
+
+                                if (node.TriCount > 0)
+                                {
+                                    int start = node.TriStart;
+                                    int end = start + node.TriCount;
+                                    for (int it = start; it < end; it++)
+                                    {
+                                        int t = MeshBvhTriIndices[it];
+                                        if ((uint)t >= (uint)triCount)
+                                            continue;
+
+                                        int ti = triOffset + t * 3;
+                                        int i0 = MeshTris[ti];
+                                        int i1 = MeshTris[ti + 1];
+                                        int i2 = MeshTris[ti + 2];
+
+                                        Vector3 a = MeshVertsW[i0];
+                                        Vector3 b = MeshVertsW[i1];
+                                        Vector3 c = MeshVertsW[i2];
+                                        Vector3 triCp = ClosestPointOnTriangle(pWorld, a, b, c);
+                                        Vector3 triDelta = pWorld - triCp;
+                                        float triDistSqr = triDelta.x * triDelta.x + triDelta.y * triDelta.y + triDelta.z * triDelta.z;
+                                        if (triDistSqr < bestSqr)
+                                        {
+                                            bestSqr = triDistSqr;
+                                            float dist = Sqrt(triDistSqr);
+                                            bestAbs = dist;
+                                            bestDWorld = dist;
+                                            bestSignedKnown = false;
+                                            if (triDistSqr < 1e-12f)
+                                                break;
+                                        }
+                                    }
+                                    nodeIdx = node.Escape;
+                                }
+                                else
+                                {
+                                    nodeIdx = node.Left >= 0 ? node.Left : node.Escape;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            for (int t = 0; t < triCount; t++)
+                            {
+                                int ti = triOffset + t * 3;
+                                int i0 = MeshTris[ti];
+                                int i1 = MeshTris[ti + 1];
+                                int i2 = MeshTris[ti + 2];
+
+                                Vector3 a = MeshVertsW[i0];
+                                Vector3 b = MeshVertsW[i1];
+                                Vector3 c = MeshVertsW[i2];
+                                Vector3 triCp = ClosestPointOnTriangle(pWorld, a, b, c);
+                                Vector3 triDelta = pWorld - triCp;
+                                float triDistSqr = triDelta.x * triDelta.x + triDelta.y * triDelta.y + triDelta.z * triDelta.z;
+                                if (triDistSqr < bestSqr)
+                                {
+                                    bestSqr = triDistSqr;
+                                    float dist = Sqrt(triDistSqr);
+                                    bestAbs = dist;
+                                    bestDWorld = dist;
+                                    bestSignedKnown = false;
+                                    if (triDistSqr < 1e-12f)
+                                        break;
+                                }
                             }
                         }
                     }
                 }
 
-                OutBestAbs[gi] = bestAbs;
-                OutBestDWorld[gi] = bestDWorld;
-                OutFlags[gi] = (byte)((bestSignedKnown ? 1 : 0) | (anyBoundsPass ? 2 : 0));
+                OutBestAbs[index] = bestAbs;
+                OutBestDWorld[index] = bestDWorld;
+                OutFlags[index] = (byte)((bestSignedKnown ? 1 : 0) | (anyBoundsPass ? 2 : 0));
             }
         }
 
@@ -302,6 +372,53 @@ namespace Revive.Slime.Editor
 
             includeTriggers = EditorGUILayout.Toggle("包含 Trigger", includeTriggers);
             meshSeedMode = (MeshSeedMode)EditorGUILayout.EnumPopup("Mesh Seed 模式", meshSeedMode);
+            onlyBakeSelection = EditorGUILayout.Toggle("仅烘焙选中对象", onlyBakeSelection);
+            autoEnableUnreadableMeshReadWrite = EditorGUILayout.Toggle("烘焙时临时开启Mesh可读写(仅不可读)", autoEnableUnreadableMeshReadWrite);
+
+            if (onlyBakeSelection)
+            {
+                EditorGUILayout.HelpBox("Tip：在 Hierarchy 选中关卡根对象（或关卡父物体）再烘焙，会显著减少候选 Collider 数量，从而提高烘焙速度。", MessageType.Info);
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                outputDirectoryAssetPath = EditorGUILayout.TextField("输出目录(Assets下)", outputDirectoryAssetPath);
+                if (GUILayout.Button("选择", GUILayout.Width(48f)))
+                {
+                    string projectRoot = Directory.GetCurrentDirectory().Replace('\\', '/');
+                    string assetsRoot = (projectRoot + "/Assets").Replace('\\', '/');
+                    string currentAbs = string.IsNullOrEmpty(outputDirectoryAssetPath)
+                        ? assetsRoot
+                        : Path.Combine(projectRoot, outputDirectoryAssetPath).Replace('\\', '/');
+
+                    string picked = EditorUtility.OpenFolderPanel("选择输出目录（必须在 Assets 下）", currentAbs, "");
+                    if (!string.IsNullOrEmpty(picked))
+                    {
+                        picked = picked.Replace('\\', '/');
+                        if (!picked.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Debug.LogError($"[WorldSdfBaker] 输出目录必须在 Assets 下：picked={picked} assetsRoot={assetsRoot}");
+                        }
+                        else
+                        {
+                            outputDirectoryAssetPath = "Assets" + picked.Substring(assetsRoot.Length);
+                            outputDirectoryAssetPath = outputDirectoryAssetPath.Replace('\\', '/');
+                        }
+                    }
+                }
+                if (GUILayout.Button("定位", GUILayout.Width(48f)))
+                {
+                    if (!string.IsNullOrEmpty(outputDirectoryAssetPath))
+                    {
+                        var folder = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(outputDirectoryAssetPath);
+                        if (folder != null)
+                        {
+                            EditorGUIUtility.PingObject(folder);
+                            Selection.activeObject = folder;
+                        }
+                    }
+                }
+            }
 
             if (staticLayers.value == 0)
             {
@@ -361,6 +478,9 @@ namespace Revive.Slime.Editor
         private const string PrefKey_StaticLayers = "WorldSdfBaker_StaticLayers";
         private const string PrefKey_IncludeTriggers = "WorldSdfBaker_IncludeTriggers";
         private const string PrefKey_MeshSeedMode = "WorldSdfBaker_MeshSeedMode";
+        private const string PrefKey_OnlyBakeSelection = "WorldSdfBaker_OnlyBakeSelection";
+        private const string PrefKey_AutoEnableUnreadableMeshReadWrite = "WorldSdfBaker_AutoEnableUnreadableMeshReadWrite";
+        private const string PrefKey_OutputDirectoryAssetPath = "WorldSdfBaker_OutputDirectoryAssetPath";
 
         private void LoadSettingsFromEditorPrefs()
         {
@@ -379,6 +499,9 @@ namespace Revive.Slime.Editor
             staticLayers.value = EditorPrefs.GetInt(PrefKey_StaticLayers, staticLayers.value);
             includeTriggers = EditorPrefs.GetBool(PrefKey_IncludeTriggers, includeTriggers);
             meshSeedMode = (MeshSeedMode)EditorPrefs.GetInt(PrefKey_MeshSeedMode, (int)meshSeedMode);
+            onlyBakeSelection = EditorPrefs.GetBool(PrefKey_OnlyBakeSelection, onlyBakeSelection);
+            autoEnableUnreadableMeshReadWrite = EditorPrefs.GetBool(PrefKey_AutoEnableUnreadableMeshReadWrite, autoEnableUnreadableMeshReadWrite);
+            outputDirectoryAssetPath = EditorPrefs.GetString(PrefKey_OutputDirectoryAssetPath, outputDirectoryAssetPath);
         }
 
         private void SaveSettingsToEditorPrefs()
@@ -394,6 +517,9 @@ namespace Revive.Slime.Editor
             EditorPrefs.SetInt(PrefKey_StaticLayers, staticLayers.value);
             EditorPrefs.SetBool(PrefKey_IncludeTriggers, includeTriggers);
             EditorPrefs.SetInt(PrefKey_MeshSeedMode, (int)meshSeedMode);
+            EditorPrefs.SetBool(PrefKey_OnlyBakeSelection, onlyBakeSelection);
+            EditorPrefs.SetBool(PrefKey_AutoEnableUnreadableMeshReadWrite, autoEnableUnreadableMeshReadWrite);
+            EditorPrefs.SetString(PrefKey_OutputDirectoryAssetPath, outputDirectoryAssetPath ?? string.Empty);
         }
 
         private void OnDestroy()
@@ -573,8 +699,31 @@ namespace Revive.Slime.Editor
             Repaint();
         }
 
+        private static bool HasShear(Matrix4x4 l2w)
+        {
+            Vector3 x = new Vector3(l2w.m00, l2w.m10, l2w.m20);
+            Vector3 y = new Vector3(l2w.m01, l2w.m11, l2w.m21);
+            Vector3 z = new Vector3(l2w.m02, l2w.m12, l2w.m22);
+
+            float lx = x.magnitude;
+            float ly = y.magnitude;
+            float lz = z.magnitude;
+            if (lx < 1e-6f || ly < 1e-6f || lz < 1e-6f)
+                return true;
+
+            x /= lx;
+            y /= ly;
+            z /= lz;
+
+            float dxy = Mathf.Abs(Vector3.Dot(x, y));
+            float dxz = Mathf.Abs(Vector3.Dot(x, z));
+            float dyz = Mathf.Abs(Vector3.Dot(y, z));
+            return dxy > 1e-3f || dxz > 1e-3f || dyz > 1e-3f;
+        }
+
         private void Bake()
         {
+            Dictionary<string, bool> restoreReadableByAssetPath = null;
             var bounds = new Bounds(boundsCenterWorld, boundsSizeWorld);
             float voxel = Mathf.Max(0.0001f, voxelSizeWorld);
 
@@ -591,21 +740,76 @@ namespace Revive.Slime.Editor
 
             long estimatedBytes = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + totalLong * sizeof(float);
             double estimatedMb = estimatedBytes / (1024.0 * 1024.0);
-            if (estimatedMb > 128.0)
+
+            string path = null;
+            if (!string.IsNullOrEmpty(outputDirectoryAssetPath) && outputDirectoryAssetPath.StartsWith("Assets", StringComparison.OrdinalIgnoreCase))
             {
-                if (!EditorUtility.DisplayDialog("World SDF 烘焙", $"预计生成 {estimatedMb:F1} MB 的 SDF 资源（dims=({dimX},{dimY},{dimZ}) voxel={voxel}）。\n\n这可能会很慢并占用大量内存/磁盘。是否继续？", "继续", "取消"))
-                {
+                string projectRoot = Directory.GetCurrentDirectory();
+                string absDir = Path.Combine(projectRoot, outputDirectoryAssetPath);
+                if (!Directory.Exists(absDir))
+                    Directory.CreateDirectory(absDir);
+
+                string autoPath = Path.Combine(outputDirectoryAssetPath, "WorldSdf.bytes").Replace('\\', '/');
+                path = autoPath;
+            }
+            else
+            {
+                path = EditorUtility.SaveFilePanelInProject("Save World SDF", "WorldSdf", "bytes", "");
+                if (string.IsNullOrEmpty(path))
                     return;
-                }
+
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir))
+                    outputDirectoryAssetPath = dir.Replace('\\', '/');
             }
 
-            string path = EditorUtility.SaveFilePanelInProject("Save World SDF", "WorldSdf", "bytes", "");
-            if (string.IsNullOrEmpty(path))
+            bool cancelled = false;
+
+            try
             {
-                return;
+
+            Collider[] colliders;
+            if (onlyBakeSelection)
+            {
+                var roots = Selection.transforms;
+                if (roots == null || roots.Length == 0)
+                {
+                    Debug.LogWarning("[WorldSdfBaker] 已启用‘仅烘焙选中对象’，但当前 Selection 为空：已自动回退到全场景烘焙。Tip：选中关卡根对象会显著提高烘焙速度。 ");
+                    colliders = FindObjectsByType<Collider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    goto FILTER_COLLIDERS;
+                }
+
+                var set = new HashSet<Collider>(256);
+                for (int r = 0; r < roots.Length; r++)
+                {
+                    var t = roots[r];
+                    if (t == null) continue;
+                    var cols = t.GetComponentsInChildren<Collider>(false);
+                    for (int i = 0; i < cols.Length; i++)
+                    {
+                        var c = cols[i];
+                        if (c != null)
+                            set.Add(c);
+                    }
+                }
+
+                if (set.Count == 0)
+                {
+                    Debug.LogWarning("[WorldSdfBaker] 已启用‘仅烘焙选中对象’，但选中对象及其子层级下未找到任何 Collider：已自动回退到全场景烘焙。Tip：选中关卡根对象会显著提高烘焙速度。 ");
+                    colliders = FindObjectsByType<Collider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    goto FILTER_COLLIDERS;
+                }
+
+                colliders = new Collider[set.Count];
+                set.CopyTo(colliders);
+            }
+            else
+            {
+                colliders = FindObjectsByType<Collider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             }
 
-            var colliders = FindObjectsByType<Collider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            FILTER_COLLIDERS:
+
             var candidates = new List<Collider>(colliders.Length);
             var candidateBounds = new List<Bounds>(colliders.Length);
             var candidateKinds = new List<byte>(colliders.Length);
@@ -640,13 +844,18 @@ namespace Revive.Slime.Editor
 
                 byte kind = 0;
                 float uniformScale = 1f;
-                Vector3 ls = c.transform.lossyScale;
+                Transform tr = c.transform;
+                Vector3 ls = tr.lossyScale;
                 bool uniform = Mathf.Abs(ls.x - ls.y) < 1e-4f && Mathf.Abs(ls.x - ls.z) < 1e-4f;
-                if (uniform)
+                if (c is BoxCollider)
                 {
-                    uniformScale = ls.x;
-                    if (c is BoxCollider) kind = 1;
-                    else if (c is SphereCollider) kind = 2;
+                    if (!HasShear(tr.localToWorldMatrix))
+                        kind = 1;
+                }
+                else if (uniform)
+                {
+                    uniformScale = Mathf.Abs(ls.x);
+                    if (c is SphereCollider) kind = 2;
                     else if (c is CapsuleCollider) kind = 3;
                 }
                 candidateKinds.Add(kind);
@@ -659,6 +868,70 @@ namespace Revive.Slime.Editor
                 return;
             }
 
+            if (autoEnableUnreadableMeshReadWrite)
+            {
+                var assetPaths = new List<string>(8);
+                var set = new HashSet<string>();
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (candidates[i] is not MeshCollider mc || mc.sharedMesh == null)
+                        continue;
+
+                    var m = mc.sharedMesh;
+                    if (m.isReadable)
+                        continue;
+
+                    string assetPath = AssetDatabase.GetAssetPath(m);
+                    if (string.IsNullOrEmpty(assetPath))
+                        continue;
+
+                    if (set.Add(assetPath))
+                        assetPaths.Add(assetPath);
+                }
+
+                if (assetPaths.Count > 0)
+                {
+                    int changedCount = 0;
+                    int skippedNonModelImporter = 0;
+                    restoreReadableByAssetPath = new Dictionary<string, bool>(assetPaths.Count);
+
+                    for (int ai = 0; ai < assetPaths.Count; ai++)
+                    {
+                        float progress = assetPaths.Count <= 1 ? 0f : (float)ai / (assetPaths.Count - 1);
+                        if (EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"临时开启 Mesh 可读写 {ai + 1}/{assetPaths.Count}", progress))
+                        {
+                            cancelled = true;
+                            break;
+                        }
+
+                        string assetPath = assetPaths[ai];
+                        var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                        if (importer == null)
+                        {
+                            skippedNonModelImporter++;
+                            continue;
+                        }
+
+                        bool wasReadable = importer.isReadable;
+                        if (wasReadable)
+                            continue;
+
+                        restoreReadableByAssetPath[assetPath] = wasReadable;
+                        importer.isReadable = true;
+                        importer.SaveAndReimport();
+                        changedCount++;
+                    }
+
+                    if (!cancelled)
+                    {
+                        Debug.Log($"[WorldSdfBaker] 临时开启 Mesh 可读写：targets={assetPaths.Count} changed={changedCount} skippedNonModelImporter={skippedNonModelImporter}");
+                    }
+                }
+            }
+
+            if (cancelled)
+                return;
+
             var candidateMeshDataIndex = new int[candidates.Count];
             var meshVertsW = new List<Vector3[]>(16);
             var meshTris = new List<int[]>(16);
@@ -666,8 +939,28 @@ namespace Revive.Slime.Editor
             int AddMeshData(MeshCollider mc)
             {
                 Mesh m = mc.sharedMesh;
-                var verts = m.vertices;
-                var tris = m.triangles;
+                if (m == null)
+                    return -1;
+
+                Vector3[] verts;
+                int[] tris;
+                try
+                {
+                    verts = m.vertices;
+                    tris = m.triangles;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"[WorldSdfBaker] Mesh 数据不可读，已回退到 patch：{mc.name} mesh={m.name} err={e.Message}");
+                    return -1;
+                }
+
+                if (verts == null || verts.Length == 0 || tris == null || tris.Length < 3)
+                {
+                    Debug.LogWarning($"[WorldSdfBaker] Mesh 三角形为空，已回退到 patch：{mc.name} mesh={m.name} verts={(verts != null ? verts.Length : 0)} tris={(tris != null ? tris.Length : 0)} isReadable={m.isReadable}");
+                    return -1;
+                }
+
                 var l2w = mc.transform.localToWorldMatrix;
 
                 var vertsW = new Vector3[verts.Length];
@@ -700,6 +993,55 @@ namespace Revive.Slime.Editor
                 candidateMeshDataIndex[i] = mdi;
             }
 
+            {
+                int analyticCount = 0;
+                int meshColliderCount = 0;
+                int meshDataOkCount = 0;
+                int patchCandidateCountPreview = 0;
+
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    byte kind = candidateKinds[i];
+                    if (kind == 1 || kind == 2 || kind == 3)
+                    {
+                        analyticCount++;
+                        continue;
+                    }
+
+                    if (candidates[i] is MeshCollider)
+                        meshColliderCount++;
+
+                    int mdi = candidateMeshDataIndex[i];
+                    if (mdi >= 0)
+                    {
+                        meshDataOkCount++;
+                        continue;
+                    }
+
+                    patchCandidateCountPreview++;
+                }
+
+                Debug.Log($"[WorldSdfBaker] CandidatesSummary total={candidates.Count} analytic(kind123)={analyticCount} meshColliders={meshColliderCount} meshDataOk(mdi>=0)={meshDataOkCount} patchCandidates(kind0 && mdi<0)={patchCandidateCountPreview}");
+
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (candidates[i] is not MeshCollider mc || mc.sharedMesh == null)
+                        continue;
+
+                    int mdi = candidateMeshDataIndex[i];
+                    if (mdi < 0)
+                    {
+                        Debug.Log($"[WorldSdfBaker] MeshColliderInfo name={mc.name} mesh={(mc.sharedMesh != null ? mc.sharedMesh.name : "null")} mdi={mdi} (will use patch path)");
+                    }
+                    else
+                    {
+                        int vertCount = meshVertsW[mdi] != null ? meshVertsW[mdi].Length : 0;
+                        int triCount = meshTris[mdi] != null ? (meshTris[mdi].Length / 3) : 0;
+                        Debug.Log($"[WorldSdfBaker] MeshColliderInfo name={mc.name} mesh={mc.sharedMesh.name} mdi={mdi} verts={vertCount} tris={triCount}");
+                    }
+                }
+            }
+
             Vector3 min = bounds.min;
             Vector3 originWorld = min + Vector3.one * (voxel * 0.5f);
 
@@ -708,13 +1050,12 @@ namespace Revive.Slime.Editor
             float maxDistanceSim = Mathf.Max(0.0001f, maxDistanceWorld) * invScale;
             Vector3 originSim = originWorld * invScale;
             var queryTriggers = includeTriggers ? QueryTriggerInteraction.Collide : QueryTriggerInteraction.Ignore;
-            float insideProbeRadius = voxel * 0.45f;
+            float insideProbeRadius = voxel * 1.0f;
             float insideTestRadius = Mathf.Max(1e-4f, voxel * 0.05f);
 
             uint magic = Revive.Slime.WorldSdfRuntime.Magic;
             int version = Revive.Slime.WorldSdfRuntime.Version;
             string absoluteBytesPath = Path.Combine(Directory.GetCurrentDirectory(), path);
-            bool cancelled = false;
             try
             {
                 EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", "准备中...", 0f);
@@ -820,39 +1161,49 @@ namespace Revive.Slime.Editor
                             else
                             {
                                 int mdi = candidateMeshDataIndex[ci];
-                                var tris = meshTris[mdi];
-                                var vertsW = meshVertsW[mdi];
-                                float expand = storeBandWorld;
-
-                                for (int ti = 0; ti + 2 < tris.Length; ti += 3)
+                                if (mdi < 0)
                                 {
-                                    int i0 = tris[ti];
-                                    int i1 = tris[ti + 1];
-                                    int i2 = tris[ti + 2];
+                                    Bounds b = mc.bounds;
+                                    Vector3 minW = b.min - Vector3.one * storeBandWorld;
+                                    Vector3 maxW = b.max + Vector3.one * storeBandWorld;
+                                    AddSeedAabb(minW, maxW);
+                                }
+                                else
+                                {
+                                    var tris = meshTris[mdi];
+                                    var vertsW = meshVertsW[mdi];
+                                    float expand = storeBandWorld;
 
-                                    Vector3 v0 = vertsW[i0];
-                                    Vector3 v1 = vertsW[i1];
-                                    Vector3 v2 = vertsW[i2];
-
-                                    Vector3 triMin = Vector3.Min(v0, Vector3.Min(v1, v2));
-                                    Vector3 triMax = Vector3.Max(v0, Vector3.Max(v1, v2));
-                                    triMin -= Vector3.one * expand;
-                                    triMax += Vector3.one * expand;
-
-                                    AddSeedAabb(triMin, triMax);
-                                    seedTriCount++;
-
-                                    if ((seedTriCount & 1023) == 0)
+                                    for (int ti = 0; ti + 2 < tris.Length; ti += 3)
                                     {
-                                        if (EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"生成Mesh seed tri={seedTriCount:N0}（当前Collider {ci + 1}/{candidates.Count}）", progress))
+                                        int i0 = tris[ti];
+                                        int i1 = tris[ti + 1];
+                                        int i2 = tris[ti + 2];
+
+                                        Vector3 v0 = vertsW[i0];
+                                        Vector3 v1 = vertsW[i1];
+                                        Vector3 v2 = vertsW[i2];
+
+                                        Vector3 triMin = Vector3.Min(v0, Vector3.Min(v1, v2));
+                                        Vector3 triMax = Vector3.Max(v0, Vector3.Max(v1, v2));
+                                        triMin -= Vector3.one * expand;
+                                        triMax += Vector3.one * expand;
+
+                                        AddSeedAabb(triMin, triMax);
+                                        seedTriCount++;
+
+                                        if ((seedTriCount & 1023) == 0)
                                         {
-                                            cancelled = true;
-                                            break;
+                                            if (EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"生成Mesh seed tri={seedTriCount:N0}（当前Collider {ci + 1}/{candidates.Count}）", progress))
+                                            {
+                                                cancelled = true;
+                                                break;
+                                            }
                                         }
                                     }
-                                }
 
-                                if (cancelled) break;
+                                    if (cancelled) break;
+                                }
                             }
                         }
                         else
@@ -916,9 +1267,12 @@ namespace Revive.Slime.Editor
                             if (kind == 1)
                             {
                                 var box = (BoxCollider)candidates[ci];
-                                candidateWorldToLocalNA[ci] = box.transform.worldToLocalMatrix;
-                                candidateLocalCenterNA[ci] = box.center;
-                                candidateBoxHalfSizeNA[ci] = box.size * 0.5f;
+                                var t = box.transform;
+                                Vector3 ls = t.lossyScale;
+                                Vector3 absScale = new Vector3(Mathf.Abs(ls.x), Mathf.Abs(ls.y), Mathf.Abs(ls.z));
+                                candidateWorldToLocalNA[ci] = Matrix4x4.Rotate(Quaternion.Inverse(t.rotation));
+                                candidateLocalCenterNA[ci] = t.TransformPoint(box.center);
+                                candidateBoxHalfSizeNA[ci] = Vector3.Scale(box.size * 0.5f, absScale);
                             }
                             else if (kind == 2)
                             {
@@ -972,6 +1326,10 @@ namespace Revive.Slime.Editor
                         var meshTrisAllNA = new NativeArray<int>(Mathf.Max(1, totalMeshTriIndices), Allocator.TempJob);
                         var meshTriNormalsAllNA = new NativeArray<Vector3>(Mathf.Max(1, totalMeshTriCount), Allocator.TempJob);
 
+                        var meshBvhRootNA = new NativeArray<int>(meshCount, Allocator.TempJob);
+                        NativeArray<BvhNode> meshBvhNodesAllNA = default;
+                        NativeArray<int> meshBvhTriIndicesAllNA = default;
+
                         try
                         {
                             int vBase = 0;
@@ -1002,6 +1360,201 @@ namespace Revive.Slime.Editor
                                 nBase += nArr.Length;
                             }
 
+                            {
+                                const int leafTriCount = 8;
+                                var allNodes = new List<BvhNode>(Mathf.Max(1, totalMeshTriCount * 2));
+                                var allTriIndices = new List<int>(Mathf.Max(1, totalMeshTriCount));
+
+                                for (int mi = 0; mi < meshCount; mi++)
+                                {
+                                    int triCount = meshTris[mi].Length / 3;
+                                    if (triCount <= 0)
+                                    {
+                                        meshBvhRootNA[mi] = -1;
+                                        continue;
+                                    }
+
+                                    var vertsW = meshVertsW[mi];
+                                    var tris = meshTris[mi];
+
+                                    var triMins = new Vector3[triCount];
+                                    var triMaxs = new Vector3[triCount];
+                                    var triCenters = new Vector3[triCount];
+                                    for (int t = 0; t < triCount; t++)
+                                    {
+                                        int ti = t * 3;
+                                        Vector3 a = vertsW[tris[ti]];
+                                        Vector3 b = vertsW[tris[ti + 1]];
+                                        Vector3 c = vertsW[tris[ti + 2]];
+                                        triMins[t] = Vector3.Min(a, Vector3.Min(b, c));
+                                        triMaxs[t] = Vector3.Max(a, Vector3.Max(b, c));
+                                        triCenters[t] = (a + b + c) * (1f / 3f);
+                                    }
+
+                                    var triIndices = new int[triCount];
+                                    for (int t = 0; t < triCount; t++)
+                                        triIndices[t] = t;
+
+                                    var localNodes = new List<BvhNode>(triCount * 2);
+
+                                    float GetAxis(in Vector3 v, int axis)
+                                    {
+                                        return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+                                    }
+
+                                    void Swap(int a, int b)
+                                    {
+                                        int tmp = triIndices[a];
+                                        triIndices[a] = triIndices[b];
+                                        triIndices[b] = tmp;
+                                    }
+
+                                    int Partition(int start, int count, int axis, float split)
+                                    {
+                                        int i = start;
+                                        int j = start + count - 1;
+                                        while (i <= j)
+                                        {
+                                            while (i <= j && GetAxis(triCenters[triIndices[i]], axis) < split) i++;
+                                            while (i <= j && GetAxis(triCenters[triIndices[j]], axis) >= split) j--;
+                                            if (i < j)
+                                            {
+                                                Swap(i, j);
+                                                i++;
+                                                j--;
+                                            }
+                                        }
+                                        return i;
+                                    }
+
+                                    int Build(int start, int count)
+                                    {
+                                        Vector3 bmin = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                                        Vector3 bmax = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+                                        Vector3 cmin = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+                                        Vector3 cmax = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+
+                                        for (int i = 0; i < count; i++)
+                                        {
+                                            int t = triIndices[start + i];
+                                            bmin = Vector3.Min(bmin, triMins[t]);
+                                            bmax = Vector3.Max(bmax, triMaxs[t]);
+                                            Vector3 cc = triCenters[t];
+                                            cmin = Vector3.Min(cmin, cc);
+                                            cmax = Vector3.Max(cmax, cc);
+                                        }
+
+                                        int nodeIdx = localNodes.Count;
+                                        localNodes.Add(new BvhNode
+                                        {
+                                            BMin = bmin,
+                                            BMax = bmax,
+                                            Left = -1,
+                                            Right = -1,
+                                            Escape = -1,
+                                            TriStart = 0,
+                                            TriCount = 0,
+                                        });
+
+                                        if (count <= leafTriCount)
+                                        {
+                                            localNodes[nodeIdx] = new BvhNode
+                                            {
+                                                BMin = bmin,
+                                                BMax = bmax,
+                                                Left = -1,
+                                                Right = -1,
+                                                Escape = -1,
+                                                TriStart = start,
+                                                TriCount = count,
+                                            };
+                                            return nodeIdx;
+                                        }
+
+                                        Vector3 extent = cmax - cmin;
+                                        int axis = extent.x >= extent.y
+                                            ? (extent.x >= extent.z ? 0 : 2)
+                                            : (extent.y >= extent.z ? 1 : 2);
+
+                                        float split = (GetAxis(cmin, axis) + GetAxis(cmax, axis)) * 0.5f;
+                                        int mid = Partition(start, count, axis, split);
+                                        if (mid <= start || mid >= start + count)
+                                        {
+                                            int end = start + count;
+                                            System.Array.Sort(triIndices, start, count, Comparer<int>.Create((a, b) =>
+                                                GetAxis(triCenters[a], axis).CompareTo(GetAxis(triCenters[b], axis))));
+                                            mid = start + (count / 2);
+                                            if (mid <= start) mid = start + 1;
+                                            if (mid >= end) mid = end - 1;
+                                        }
+
+                                        int left = Build(start, mid - start);
+                                        int right = Build(mid, start + count - mid);
+
+                                        localNodes[nodeIdx] = new BvhNode
+                                        {
+                                            BMin = bmin,
+                                            BMax = bmax,
+                                            Left = left,
+                                            Right = right,
+                                            Escape = -1,
+                                            TriStart = 0,
+                                            TriCount = 0,
+                                        };
+                                        return nodeIdx;
+                                    }
+
+                                    int localRoot = Build(0, triCount);
+
+                                    void AssignEscape(int node, int escape)
+                                    {
+                                        var n = localNodes[node];
+                                        n.Escape = escape;
+                                        localNodes[node] = n;
+                                        if (n.TriCount > 0)
+                                            return;
+
+                                        int left = n.Left;
+                                        int right = n.Right;
+                                        if (left >= 0)
+                                            AssignEscape(left, right >= 0 ? right : escape);
+                                        if (right >= 0)
+                                            AssignEscape(right, escape);
+                                    }
+
+                                    AssignEscape(localRoot, -1);
+
+                                    int nodeOffset = allNodes.Count;
+                                    int triOffset = allTriIndices.Count;
+                                    for (int t = 0; t < triCount; t++)
+                                        allTriIndices.Add(triIndices[t]);
+
+                                    for (int ni = 0; ni < localNodes.Count; ni++)
+                                    {
+                                        var n = localNodes[ni];
+                                        if (n.Left >= 0) n.Left += nodeOffset;
+                                        if (n.Right >= 0) n.Right += nodeOffset;
+                                        if (n.Escape >= 0) n.Escape += nodeOffset;
+                                        if (n.TriCount > 0) n.TriStart += triOffset;
+                                        allNodes.Add(n);
+                                    }
+
+                                    meshBvhRootNA[mi] = nodeOffset + localRoot;
+                                }
+
+                                if (allNodes.Count <= 0)
+                                    allNodes.Add(default);
+                                if (allTriIndices.Count <= 0)
+                                    allTriIndices.Add(0);
+
+                                meshBvhNodesAllNA = new NativeArray<BvhNode>(allNodes.Count, Allocator.TempJob);
+                                for (int i = 0; i < allNodes.Count; i++)
+                                    meshBvhNodesAllNA[i] = allNodes[i];
+                                meshBvhTriIndicesAllNA = new NativeArray<int>(allTriIndices.Count, Allocator.TempJob);
+                                for (int i = 0; i < allTriIndices.Count; i++)
+                                    meshBvhTriIndicesAllNA[i] = allTriIndices[i];
+                            }
+
                             long tJob0 = System.Diagnostics.Stopwatch.GetTimestamp();
                             int chunkSize = 200_000;
                             for (int start = 0; start < keyCount; start += chunkSize)
@@ -1016,7 +1569,7 @@ namespace Revive.Slime.Editor
 
                                 var job = new BakeDistanceJob
                                 {
-                                    Keys = keysNA,
+                                    Keys = new NativeSlice<int>(keysNA, start, count),
                                     CandidateKinds = candidateKindsNA,
                                     CandidateBoundsMin = candidateBoundsMinNA,
                                     CandidateBoundsMax = candidateBoundsMaxNA,
@@ -1037,17 +1590,20 @@ namespace Revive.Slime.Editor
                                     MeshTris = meshTrisAllNA,
                                     MeshTriNormalsW = meshTriNormalsAllNA,
 
+                                    MeshBvhRoot = meshBvhRootNA,
+                                    MeshBvhNodes = meshBvhNodesAllNA,
+                                    MeshBvhTriIndices = meshBvhTriIndicesAllNA,
+
                                     yzStride = yzStride,
                                     dimZ = dimZ,
                                     voxel = voxel,
                                     originWorld = originWorld,
                                     storeBandWorld = storeBandWorld,
                                     storeBandSqr = storeBandSqr,
-                                    startIndex = start,
 
-                                    OutBestAbs = outBestAbsNA,
-                                    OutBestDWorld = outBestDWorldNA,
-                                    OutFlags = outFlagsNA,
+                                    OutBestAbs = new NativeSlice<float>(outBestAbsNA, start, count),
+                                    OutBestDWorld = new NativeSlice<float>(outBestDWorldNA, start, count),
+                                    OutFlags = new NativeSlice<byte>(outFlagsNA, start, count),
                                 };
 
                                 job.Schedule(count, 64).Complete();
@@ -1058,15 +1614,36 @@ namespace Revive.Slime.Editor
                             if (!cancelled)
                             {
                                 long tPatch0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                                int boundsPassCount = 0;
                                 for (int ki = 0; ki < keyCount; ki++)
                                 {
-                                    float progress = keyCount <= 1 ? 0f : (float)ki / (keyCount - 1);
-                                    if (EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"补洞/写入 {ki + 1}/{keyCount}（updated={entryCount:N0}）", progress))
+                                    if ((outFlagsNA[ki] & 2) != 0)
+                                        boundsPassCount++;
+                                }
+
+                                var boundsPassIndices = new int[boundsPassCount];
+                                int boundsWrite = 0;
+                                for (int ki = 0; ki < keyCount; ki++)
+                                {
+                                    if ((outFlagsNA[ki] & 2) != 0)
+                                        boundsPassIndices[boundsWrite++] = ki;
+                                }
+
+                                voxelsBoundsPass = boundsPassCount;
+                                int progressInterval = 2048;
+                                for (int bi = 0; bi < boundsPassCount; bi++)
+                                {
+                                    if ((bi % progressInterval) == 0 || bi == boundsPassCount - 1)
                                     {
-                                        cancelled = true;
-                                        break;
+                                        float progress = boundsPassCount <= 1 ? 0f : (float)bi / (boundsPassCount - 1);
+                                        if (EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"补洞/写入 {bi + 1}/{boundsPassCount}（updated={entryCount:N0}）", progress))
+                                        {
+                                            cancelled = true;
+                                            break;
+                                        }
                                     }
 
+                                    int ki = boundsPassIndices[bi];
                                     int key = keysArray[ki];
                                     int x = key / yzStride;
                                     int rem = key - x * yzStride;
@@ -1127,7 +1704,6 @@ namespace Revive.Slime.Editor
                                         }
                                     }
 
-                                    voxelsBoundsPass++;
                                     if (bestAbs > storeBandWorld)
                                         continue;
 
@@ -1138,9 +1714,16 @@ namespace Revive.Slime.Editor
                                     }
                                     else
                                     {
-                                        checkSphereCalls++;
-                                        bool inside = Physics.CheckSphere(pWorld, insideTestRadius, staticLayers.value, queryTriggers);
-                                        dWorld = inside ? -bestAbs : bestAbs;
+                                        if (bestAbs <= insideProbeRadius)
+                                        {
+                                            checkSphereCalls++;
+                                            bool inside = Physics.CheckSphere(pWorld, insideTestRadius, staticLayers.value, queryTriggers);
+                                            dWorld = inside ? -bestAbs : bestAbs;
+                                        }
+                                        else
+                                        {
+                                            dWorld = bestAbs;
+                                        }
                                     }
 
                                     if (Mathf.Abs(dWorld) <= storeBandWorld)
@@ -1183,6 +1766,10 @@ namespace Revive.Slime.Editor
                             meshVertsAllNA.Dispose();
                             meshTrisAllNA.Dispose();
                             meshTriNormalsAllNA.Dispose();
+
+                            meshBvhRootNA.Dispose();
+                            if (meshBvhNodesAllNA.IsCreated) meshBvhNodesAllNA.Dispose();
+                            if (meshBvhTriIndicesAllNA.IsCreated) meshBvhTriIndicesAllNA.Dispose();
                         }
                     }
 
@@ -1207,7 +1794,7 @@ namespace Revive.Slime.Editor
                         if (v > allMax) allMax = v;
                     }
                     double invFreq = 1.0 / System.Diagnostics.Stopwatch.Frequency;
-                    Debug.Log($"[WorldSdfBaker] BakeProfile time={sw.Elapsed.TotalSeconds:F2}s voxels={voxelsTotal:N0} seedKeys={seedKeys.Count:N0} seedAddAttempts={seedAddAttempts:N0} seedAdded={seedAdded:N0} seedMeshColliders={seedMeshColliderCount:N0} seedMeshTris={seedTriCount:N0} jobDist={(ticksJobDistance * invFreq):F2}s patchDist={(ticksPatchDistance * invFreq):F2}s boundsPass={voxelsBoundsPass:N0} closestPointCalls={closestPointCalls:N0} closestPointErrors={closestPointErrors:N0} checkSphereCalls={checkSphereCalls:N0} updated={entryCount:N0} updatedNeg={insideNegCount:N0} updatedMin={updatedMin:F4} updatedMax={updatedMax:F4} allNeg={totalNeg:N0} allMin={allMin:F4} allMax={allMax:F4} candidates={candidates.Count}");
+                    Debug.Log($"[WorldSdfBaker] BakeProfile time={sw.Elapsed.TotalSeconds:F2}s voxels={voxelsTotal:N0} seedMode={meshSeedMode} seedKeys={seedKeys.Count:N0} seedAddAttempts={seedAddAttempts:N0} seedAdded={seedAdded:N0} seedMeshColliders={seedMeshColliderCount:N0} seedMeshTris={seedTriCount:N0} jobDist={(ticksJobDistance * invFreq):F2}s patchDist={(ticksPatchDistance * invFreq):F2}s boundsPass={voxelsBoundsPass:N0} closestPointCalls={closestPointCalls:N0} closestPointErrors={closestPointErrors:N0} checkSphereCalls={checkSphereCalls:N0} updated={entryCount:N0} updatedNeg={insideNegCount:N0} updatedMin={updatedMin:F4} updatedMax={updatedMax:F4} allNeg={totalNeg:N0} allMin={allMin:F4} allMax={allMax:F4} candidates={candidates.Count}");
                 }
             }
             finally
@@ -1229,6 +1816,29 @@ namespace Revive.Slime.Editor
             AssetDatabase.Refresh();
 
             Debug.Log($"[WorldSdfBaker] SDF 烘焙完成：{path} dims=({dimX},{dimY},{dimZ}) voxelWorld={voxel}");
+            }
+            finally
+            {
+                if (restoreReadableByAssetPath != null && restoreReadableByAssetPath.Count > 0)
+                {
+                    int i = 0;
+                    int n = restoreReadableByAssetPath.Count;
+                    foreach (var kv in restoreReadableByAssetPath)
+                    {
+                        float progress = n <= 1 ? 0f : (float)i / (n - 1);
+                        EditorUtility.DisplayCancelableProgressBar("World SDF 烘焙", $"还原 Mesh 可读写 {i + 1}/{n}", progress);
+                        var importer = AssetImporter.GetAtPath(kv.Key) as ModelImporter;
+                        if (importer != null)
+                        {
+                            importer.isReadable = kv.Value;
+                            importer.SaveAndReimport();
+                        }
+                        i++;
+                    }
+                }
+
+                EditorUtility.ClearProgressBar();
+            }
         }
     }
 }

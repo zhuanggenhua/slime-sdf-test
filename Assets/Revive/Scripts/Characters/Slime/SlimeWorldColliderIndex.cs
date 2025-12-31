@@ -501,7 +501,8 @@ namespace Revive.Slime
         public void AppendMyBoxColliders(
             Vector3 centerWorld,
             float radiusWorld,
-            Transform ignoreRoot,
+            Transform ignoreRootA,
+            Transform ignoreRootB,
             NativeArray<MyBoxCollider> outBuffer,
             ref int outCount,
             int maxCount,
@@ -512,6 +513,56 @@ namespace Revive.Slime
 
             float r = math.max(0.001f, radiusWorld);
             float r2 = r * r;
+
+            if (_oversizedStaticIds.Count > 0 && outCount < maxCount)
+            {
+                for (int i = 0; i < _oversizedStaticIds.Count && outCount < maxCount; i++)
+                {
+                    int id = _oversizedStaticIds[i];
+                    if (visited != null && !visited.Add(id))
+                        continue;
+
+                    if (!_entries.TryGetValue(id, out var entry))
+                        continue;
+
+                    var col = entry.Collider;
+                    if (col == null)
+                        continue;
+
+                    if (!includeTriggers && col.isTrigger)
+                        continue;
+
+                    if (!col.enabled || !col.gameObject.activeInHierarchy)
+                        continue;
+
+                    if (col.transform != null)
+                    {
+                        if (ignoreRootA != null && col.transform.IsChildOf(ignoreRootA))
+                        {
+                            continue;
+                        }
+                        if (ignoreRootB != null && col.transform.IsChildOf(ignoreRootB))
+                        {
+                            continue;
+                        }
+                    }
+
+                    Bounds b = entry.Bounds;
+                    Vector3 cp = b.ClosestPoint(centerWorld);
+                    float dx = centerWorld.x - cp.x;
+                    float dy = centerWorld.y - cp.y;
+                    float dz = centerWorld.z - cp.z;
+                    float dist2 = dx * dx + dy * dy + dz * dz;
+                    if (dist2 > r2)
+                        continue;
+
+                    outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b);
+                    outCount++;
+                }
+            }
+
+            if (outCount >= maxCount)
+                return;
 
             int minX = WorldToBucket(centerWorld.x - r);
             int maxX = WorldToBucket(centerWorld.x + r);
@@ -545,8 +596,17 @@ namespace Revive.Slime
                         if (!col.enabled || !col.gameObject.activeInHierarchy)
                             continue;
 
-                        if (ignoreRoot != null && col.transform != null && col.transform.root == ignoreRoot)
-                            continue;
+                        if (col.transform != null)
+                        {
+                            if (ignoreRootA != null && col.transform.IsChildOf(ignoreRootA))
+                            {
+                                continue;
+                            }
+                            if (ignoreRootB != null && col.transform.IsChildOf(ignoreRootB))
+                            {
+                                continue;
+                            }
+                        }
 
                         Bounds b = entry.Bounds;
                         Vector3 cp = b.ClosestPoint(centerWorld);
@@ -563,44 +623,6 @@ namespace Revive.Slime
                         if (outCount >= maxCount)
                             return;
                     }
-                }
-            }
-
-            if (_oversizedStaticIds.Count > 0 && outCount < maxCount)
-            {
-                for (int i = 0; i < _oversizedStaticIds.Count && outCount < maxCount; i++)
-                {
-                    int id = _oversizedStaticIds[i];
-                    if (visited != null && !visited.Add(id))
-                        continue;
-
-                    if (!_entries.TryGetValue(id, out var entry))
-                        continue;
-
-                    var col = entry.Collider;
-                    if (col == null)
-                        continue;
-
-                    if (!includeTriggers && col.isTrigger)
-                        continue;
-
-                    if (!col.enabled || !col.gameObject.activeInHierarchy)
-                        continue;
-
-                    if (ignoreRoot != null && col.transform != null && col.transform.root == ignoreRoot)
-                        continue;
-
-                    Bounds b = entry.Bounds;
-                    Vector3 cp = b.ClosestPoint(centerWorld);
-                    float dx = centerWorld.x - cp.x;
-                    float dy = centerWorld.y - cp.y;
-                    float dz = centerWorld.z - cp.z;
-                    float dist2 = dx * dx + dy * dy + dz * dz;
-                    if (dist2 > r2)
-                        continue;
-
-                    outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b);
-                    outCount++;
                 }
             }
         }

@@ -32,6 +32,17 @@ namespace Revive.Environment.Watering
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
 
+        public override bool WantsWater => !(maxStage > 0 && stage >= maxStage);
+
+        protected override void Awake()
+        {
+            base.Awake();
+            if (maxStage > 0 && stage >= maxStage)
+            {
+                ApplyStageScale();
+            }
+        }
+
         public void ReceiveWater(WaterInput input)
         {
             if (targetTransform == null)

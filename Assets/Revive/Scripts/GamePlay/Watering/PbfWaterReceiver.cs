@@ -77,6 +77,8 @@ namespace Revive.Environment.Watering
         public bool ConsumeSeparated => consumeSeparated;
         public bool ConsumeDroplets => consumeDroplets;
 
+        public virtual bool WantsWater => true;
+
         public bool ContainsPointWorld(Vector3 pointWorld)
         {
             if (triggerCollider == null || !triggerCollider.enabled)

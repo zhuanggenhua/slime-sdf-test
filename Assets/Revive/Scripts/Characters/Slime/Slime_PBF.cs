@@ -192,6 +192,35 @@ namespace Revive.Slime
         [SerializeField, Range(0f, 1f), DefaultValue(0.1f)]
         private float recallObstacleKeepDistanceMargin = 0.1f;
 
+        [ChineseLabel("召回避障使用静态SDF"), Tooltip("仅影响召回避障的静态SDF采样；关闭可快速判断是否为SDF烘焙/加载问题。")]
+        [SerializeField, DefaultValue(true)]
+        private bool recallAvoidUseStaticSdf = true;
+
+        [ChineseHeader("召回全局流场")]
+        [ChineseLabel("启用全局流场"), Tooltip("以玩家为中心构建2D距离场，为召回提供可绕墙的方向引导（仅静态SDF）。")]
+        [SerializeField, DefaultValue(false)]
+        private bool recallUseGlobalFlowField = false;
+
+        [ChineseLabel("流场范围"), Tooltip("流场覆盖玩家周围的半径（米，世界坐标）。")]
+        [SerializeField, Range(2f, 30f), DefaultValue(10f)]
+        private float recallGlobalFlowRange = 10f;
+
+        [ChineseLabel("流场格子尺寸"), Tooltip("2D网格的格子尺寸（米，世界坐标）。")]
+        [SerializeField, Range(0.25f, 1.0f), DefaultValue(0.5f)]
+        private float recallGlobalFlowCellSize = 0.5f;
+
+        [ChineseLabel("流场更新间隔帧"), Tooltip("每隔N帧更新一次距离场，降低CPU开销。")]
+        [SerializeField, Range(1, 30), DefaultValue(6)]
+        private int recallGlobalFlowUpdateIntervalFrames = 6;
+
+        [ChineseLabel("流场障碍距离"), Tooltip("SDF距离小于该值视为障碍（米，世界坐标）。")]
+        [SerializeField, Range(0.02f, 1.0f), DefaultValue(0.15f)]
+        private float recallGlobalFlowBlockedDistance = 0.15f;
+
+        [ChineseLabel("流场采样半高"), Tooltip("SDF采样的上下偏移半高（米，世界坐标），用于更稳定地检测墙体。")]
+        [SerializeField, Range(0.05f, 2.0f), DefaultValue(0.6f)]
+        private float recallGlobalFlowSampleHalfHeight = 0.6f;
+
         #endregion
 
         #region 【CCA控制器参数】
@@ -286,6 +315,8 @@ namespace Revive.Slime
         [ChineseHeader("渲染设置")]
         [Tooltip("控制目标 - 史莱姆跟随的Transform")]
         public Transform trans;
+
+        private SlimePipeTravelAbility _pipeTravelAbility;
         
         
         [Tooltip("体积组件 - 管理史莱姆资源状态")]
@@ -463,6 +494,9 @@ namespace Revive.Slime
                 if (receiver == null)
                     continue;
 
+                if (!receiver.WantsWater)
+                    continue;
+
                 bool hasBounds = receiver.TryGetVolumeBoundsWorld(out Bounds boundsWorld);
                 if (!hasBounds)
                 {
@@ -583,27 +617,39 @@ namespace Revive.Slime
                 {
                     int originalIndex = hashes[i].y;
                     if (originalIndex < 0 || originalIndex >= mainCount)
+                    {
                         continue;
+                    }
 
                     if (_wateringReservedMain.Contains(originalIndex))
+                    {
                         continue;
+                    }
 
                     Particle p = particles[originalIndex];
                     if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut || p.Type == ParticleType.MainBody)
+                    {
                         continue;
+                    }
 
                     if (p.SourceId >= 0)
+                    {
                         continue;
+                    }
 
                     if (p.Type == ParticleType.Emitted)
                     {
                         if (!wantEmitted)
+                        {
                             continue;
+                        }
                     }
                     else if (p.Type == ParticleType.Separated)
                     {
                         if (!wantSeparated)
+                        {
                             continue;
+                        }
                     }
                     else
                     {
@@ -620,7 +666,9 @@ namespace Revive.Slime
 
                     Vector3 posWorld = (Vector3)(pos * PBF_Utils.Scale);
                     if (!receiver.ContainsPointWorld(posWorld))
+                    {
                         continue;
+                    }
 
                     _wateringReservedMain.Add(originalIndex);
                     _wateringConsumeMain.Add(originalIndex);
@@ -772,6 +820,9 @@ namespace Revive.Slime
 
         [Tooltip("输出召回避障命中来源日志（每帧节流）")]
         public bool recallAvoidanceLogs;
+
+        [Tooltip("召回调试：指定要输出日志的 controllerSlot；-1 表示维持每帧只输出一条的节流")]
+        public int recallAvoidanceLogControllerSlot = -1;
         
         #endregion
         
@@ -824,6 +875,8 @@ namespace Revive.Slime
         private float _dbgRecallSdfMinD;
 
         private float _dbgRecallStateLogTime;
+        private float _dbgRecallGlobalFlowLogTime;
+        private float _dbgRecallGlobalFlowDirLogTime;
 
         private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
 
@@ -869,8 +922,6 @@ namespace Revive.Slime
 
         private int _lastParticleRenderUploadFrame = -999999;
 
-        private int _lastFixedExpensiveWorkFrame = -999999;
-
         private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
         private NativeParallelMultiHashMap<int, int> _mergeAbsorbLut;
         private NativeArray<int> _autoSeparateClusterCounts;
@@ -884,6 +935,10 @@ namespace Revive.Slime
         private Bounds _bounds;
         private Vector3 _velocity = Vector3.zero;
         private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
+
+        private Vector3 _renderVelocity = Vector3.zero;
+        private Vector3 _prevRenderTransPosition;
+        private bool _renderVelocityInitialized;
         private bool _runtimeInitialized;
         private float _lastMainRadius; // 用于 mainRadius 防抖
         private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
@@ -903,6 +958,8 @@ namespace Revive.Slime
         private int _lastDropletMarchingCubesFrame = -999999;
 
         private int _lastSurfaceSpikeLogFrame = -999999;
+
+        private int _lastSdfCollisionDbgLogFrame = -999999;
 
         private int _lastMergeScanMainRangeLogFrame = -999999;
 
@@ -936,6 +993,7 @@ namespace Revive.Slime
         private int[] _controllerFadeBudget;
 
         private float[] _controllerStepJumpTargetCenterY;
+        private int[] _controllerStepJumpTargetExpireFrame;
 
         // Job System 批处理大小
         private const int batchCount = 64;
@@ -993,6 +1051,8 @@ namespace Revive.Slime
             {
                 trans = transform;
             }
+
+            _pipeTravelAbility = GetComponentInParent<SlimePipeTravelAbility>();
 
             
             // 初始化碰撞体缓冲区（必须在Awake中，避免FixedUpdate先于Start执行）
@@ -1087,8 +1147,6 @@ namespace Revive.Slime
                 if (p.SourceId >= 0)
                     continue;
                 if (p.Type != ParticleType.Separated && p.Type != ParticleType.Emitted)
-                    continue;
-                if (p.FreeFrames > 0)
                     continue;
                 int blobId = p.BlobId;
                 if (blobId <= 0)
@@ -1770,6 +1828,21 @@ namespace Revive.Slime
         {
             if (!_runtimeInitialized)
                 return;
+
+            if (trans != null)
+            {
+                if (!_renderVelocityInitialized)
+                {
+                    _renderVelocityInitialized = true;
+                    _prevRenderTransPosition = trans.position;
+                    _renderVelocity = Vector3.zero;
+                }
+                else if (Time.deltaTime > 0f)
+                {
+                    _renderVelocity = (trans.position - _prevRenderTransPosition) / Time.deltaTime;
+                    _prevRenderTransPosition = trans.position;
+                }
+            }
             // 更新场景水珠源的激活状态
             using (PerformanceProfiler.Scope("UpdateSceneDropletSources"))
             {
@@ -1900,23 +1973,16 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
             PerformanceProfiler.BeginFrame();
-
-            bool doExpensiveWorkThisFrame = _lastFixedExpensiveWorkFrame != Time.frameCount;
-            if (doExpensiveWorkThisFrame)
-                _lastFixedExpensiveWorkFrame = Time.frameCount;
             
             // 不再移除场景水珠，让它们留在主粒子系统中以便渲染和交互
             
-            if (doExpensiveWorkThisFrame)
-            {
-                PerformanceProfiler.Begin("RefreshMainColliders");
-                RefreshMainNearbyColliders();
-                PerformanceProfiler.End("RefreshMainColliders");
-                
-                PerformanceProfiler.Begin("RefreshDropletColliders");
-                RefreshDropletNearbyColliders();
-                PerformanceProfiler.End("RefreshDropletColliders");
-            }
+            PerformanceProfiler.Begin("RefreshMainColliders");
+            RefreshMainNearbyColliders();
+            PerformanceProfiler.End("RefreshMainColliders");
+            
+            PerformanceProfiler.Begin("RefreshDropletColliders");
+            RefreshDropletNearbyColliders();
+            PerformanceProfiler.End("RefreshDropletColliders");
 
             // 使用 trans.position 变化量计算速度，保证位置和速度同步
             // 这样高速位置补偿的方向和控制器中心的移动方向一致，不会导致粒子飞散
@@ -1989,12 +2055,9 @@ namespace Revive.Slime
             PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
 
-            if (doExpensiveWorkThisFrame)
-            {
-                PerformanceProfiler.Begin("Surface");
-                Surface();
-                PerformanceProfiler.End("Surface");
-            }
+            PerformanceProfiler.Begin("Surface");
+            Surface();
+            PerformanceProfiler.End("Surface");
             
             // Unshuffle 必须在 Surface() 之后执行，因为 Surface() 使用 Lut（基于排序后索引）
             // 关键修复：只处理 activeParticles 范围，避免越界读取垃圾数据覆盖有效粒子
@@ -2634,9 +2697,11 @@ namespace Revive.Slime
             PerformanceProfiler.End("Update_Prepare");
 
             PerformanceProfiler.Begin("Update_GroundHeights");
-            if (!(useWorldStaticSdf && _worldStaticSdf.IsCreated))
+            bool travelling = _pipeTravelAbility != null && _pipeTravelAbility.IsTravelling;
+            bool useStaticSdfThisFrame = useWorldStaticSdf && _worldStaticSdf.IsCreated && !travelling;
+            if (!useStaticSdfThisFrame || disableStaticColliderFallbackWhenUsingSdf)
             {
-                UpdateControllerGroundHeights();
+                RefreshGroundY();
             }
             PerformanceProfiler.End("Update_GroundHeights");
 
@@ -2644,7 +2709,7 @@ namespace Revive.Slime
             float fallbackGroundY = -10f;
 
             PerformanceProfiler.Begin("Update_Job");
-            int useSdf = useWorldStaticSdf && _worldStaticSdf.IsCreated ? 1 : 0;
+            int useSdf = useStaticSdfThisFrame ? 1 : 0;
             new Simulation_PBF.UpdateJob
             {
                 Ps = _particles,
@@ -2670,6 +2735,130 @@ namespace Revive.Slime
                 EnableP4VelocityConsistency = enableVelocityConsistency, // 【P4开关】
             }.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("Update_Job");
+
+            if (useSdf != 0 && _worldStaticSdf.IsCreated)
+            {
+                const int logIntervalFrames = 30;
+                if (Time.frameCount - _lastSdfCollisionDbgLogFrame >= logIntervalFrames)
+                {
+                    _lastSdfCollisionDbgLogFrame = Time.frameCount;
+
+                    var v = _worldStaticSdf.Data;
+                    float radiusSim = particleRadiusWorld * PBF_Utils.InvScale;
+                    float voxel = math.max(v.VoxelSizeSim, 1e-3f);
+                    float contactSkin = math.min(voxel * 0.25f, radiusSim * 0.25f);
+                    float contactRadius = radiusSim + contactSkin;
+                    int step = math.max(1, activeParticles / 256);
+
+                    int sample = 0;
+                    int hit = 0;
+                    float penSum = 0f;
+                    float penMax = 0f;
+                    float dMin = float.MaxValue;
+                    float dMax = float.MinValue;
+                    float dotMin = 2f;
+                    float dotSum = 0f;
+                    int dotBad = 0;
+                    int worstIdx = -1;
+                    float worstD = 0f;
+                    float worstPen = 0f;
+                    float worstDot = 0f;
+                    float3 worstPosSim = float3.zero;
+                    float3 worstNCell = float3.zero;
+                    float3 worstNFwd = float3.zero;
+
+                    for (int pi = 0; pi < activeParticles; pi += step)
+                    {
+                        Particle p = _particles[pi];
+                        if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
+                            continue;
+
+                        float3 simPos = p.Position;
+                        float d = v.SampleDistanceDenseWithLocalAndIndices(simPos, out float3 local0, out int3 i0, out int3 i1, out float3 f);
+                        dMin = math.min(dMin, d);
+                        dMax = math.max(dMax, d);
+
+                        float3 nCell = v.SampleNormalForwardDenseLocalFromIndices(local0, i0, i1, f, d);
+                        float3 nFwd = v.SampleNormalForward(simPos, d);
+                        float dot = math.dot(nCell, nFwd);
+                        dotMin = math.min(dotMin, dot);
+                        dotSum += dot;
+                        if (dot < 0.5f) dotBad++;
+
+                        if (d < contactRadius)
+                        {
+                            hit++;
+                            float pen = contactRadius - d;
+                            penSum += pen;
+                            if (pen > penMax)
+                                penMax = pen;
+
+                            if (pen > worstPen)
+                            {
+                                worstPen = pen;
+                                worstIdx = pi;
+                                worstD = d;
+                                worstDot = dot;
+                                worstPosSim = simPos;
+                                worstNCell = nCell;
+                                worstNFwd = nFwd;
+                            }
+                        }
+
+                        sample++;
+                    }
+
+                    float hitPct = sample > 0 ? (float)hit / sample : 0f;
+                    float penAvg = hit > 0 ? penSum / hit : 0f;
+                    float dotAvg = sample > 0 ? dotSum / sample : 0f;
+
+                    float3 worstPosWorld = worstPosSim * PBF_Utils.Scale;
+                    int disableFallback = disableStaticColliderFallbackWhenUsingSdf ? 1 : 0;
+
+                    int colCount = _currentColliderCount;
+                    int staticCount = 0;
+                    float nearStaticDistSim = float.PositiveInfinity;
+
+                    for (int ci = 0; ci < _currentColliderCount; ci++)
+                    {
+                        var c = _colliderBuffer[ci];
+                        if (c.IsDynamic != 0)
+                            continue;
+                        staticCount++;
+                    }
+
+                    if (worstIdx >= 0)
+                    {
+                        for (int ci = 0; ci < _currentColliderCount; ci++)
+                        {
+                            var c = _colliderBuffer[ci];
+                            if (c.IsDynamic != 0)
+                                continue;
+
+                            quaternion invRot = math.conjugate(c.Rotation);
+                            float3 local = math.mul(invRot, (worstPosSim - c.Center));
+                            float3 q = math.abs(local) - c.Extent;
+                            float3 outside = math.max(q, 0f);
+                            float dist = math.length(outside);
+                            if (dist < nearStaticDistSim)
+                                nearStaticDistSim = dist;
+                        }
+                    }
+                    float nearStaticDistW = float.IsFinite(nearStaticDistSim) ? (nearStaticDistSim * PBF_Utils.Scale) : -1f;
+
+                    Debug.Log(
+                        $"[SdfCollDbg] frame={Time.frameCount} active={activeParticles} sample={sample} " +
+                        $"voxelSim={v.VoxelSizeSim:F3} radiusSim={radiusSim:F3} contactRadiusSim={contactRadius:F3} " +
+                        $"hit={hit} hitPct={hitPct:P1} penAvg={penAvg:F4} penMax={penMax:F4} " +
+                        $"dMin={dMin:F4} dMax={dMax:F4} " +
+                        $"nDotMin={dotMin:F3} nDotAvg={dotAvg:F3} nDotBad(lt0.5)={dotBad} " +
+                        $"disableFallback={disableFallback} " +
+                        $"colliders={colCount} static={staticCount} nearStaticDistW={nearStaticDistW:F3} " +
+                        $"worstIdx={worstIdx} worstD={worstD:F4} worstPen={worstPen:F4} worstDot={worstDot:F3} " +
+                        $"worstPosW=({worstPosWorld.x:F2},{worstPosWorld.y:F2},{worstPosWorld.z:F2}) " +
+                        $"worstNCell=({worstNCell.x:F2},{worstNCell.y:F2},{worstNCell.z:F2}) worstNFwd=({worstNFwd.x:F2},{worstNFwd.y:F2},{worstNFwd.z:F2})");
+                }
+            }
             
             PerformanceProfiler.Begin("ApplyViscosity");
             // 使用PBFSystem的缓冲区
@@ -2869,6 +3058,22 @@ namespace Revive.Slime
             float3 mainCenter = trans != null ? 
                 (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
             
+            bool travelling = _pipeTravelAbility != null && _pipeTravelAbility.IsTravelling;
+            float tNowGFlowCtrl = Time.time;
+            if (tNowGFlowCtrl - _dbgRecallGlobalFlowCtrlLogTime > 0.5f)
+            {
+                _dbgRecallGlobalFlowCtrlLogTime = tNowGFlowCtrl;
+                Debug.Log(
+                    $"[RecallGFlow][Ctrl] frame={Time.frameCount} name={name} id={GetInstanceID()} connect={_connect} useGFlow={recallUseGlobalFlowField} travelling={travelling} " +
+                    $"useWorldStaticSdf={useWorldStaticSdf} sdfIsCreated={_worldStaticSdf.IsCreated} sdfDataIsCreated={(_worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated)} " +
+                    $"lastUpdateFrame={_recallGlobalFlowLastUpdateFrame} interval={recallGlobalFlowUpdateIntervalFrames}",
+                    this);
+            }
+            if (_connect && recallUseGlobalFlowField && !travelling)
+            {
+                UpdateRecallGlobalFlowField(mainCenter);
+            }
+            
             // 计算主体半径 - 基于主连通组件的最大距离
             float mainMaxDist = 0;
             int mainBodyCount = 0;
@@ -3026,6 +3231,20 @@ namespace Revive.Slime
                     for (int i = oldLen; i < newLen; i++)
                         _controllerStepJumpTargetCenterY[i] = float.NaN;
                 }
+
+                if (_controllerStepJumpTargetCenterY != null && _controllerStepJumpTargetExpireFrame == null)
+                {
+                    _controllerStepJumpTargetExpireFrame = new int[_controllerStepJumpTargetCenterY.Length];
+                }
+
+                if (_controllerStepJumpTargetExpireFrame != null && _controllerStepJumpTargetExpireFrame.Length < expectedControllerCount)
+                {
+                    int oldLen = _controllerStepJumpTargetExpireFrame.Length;
+                    int newLen = math.max(expectedControllerCount, oldLen * 2 + 1);
+                    System.Array.Resize(ref _controllerStepJumpTargetExpireFrame, newLen);
+                    for (int i = oldLen; i < newLen; i++)
+                        _controllerStepJumpTargetExpireFrame[i] = 0;
+                }
             }
 
             long ticksAssignGetSlot = 0;
@@ -3088,23 +3307,34 @@ namespace Revive.Slime
                                                _recallEligibleBlobIds[blobId] != 0 &&
                                                !suppressRecallByRecentProtection;
 
+                bool dbgCtrl = recallAvoidanceLogControllerSlot >= 0 && controllerSlot == recallAvoidanceLogControllerSlot;
+                float distToMainW_dbg = math.length((center - mainCenter) * PBF_Utils.Scale);
+                int eligibleValDbg = (_recallEligibleBlobIds.IsCreated && blobId > 0 && blobId < _recallEligibleBlobIds.Length)
+                    ? _recallEligibleBlobIds[blobId]
+                    : -1;
+                int recentCountDbg = recentFromEmitCountPerComp.IsCreated ? recentFromEmitCountPerComp[ci] : 0;
+
                 if (_connect && !allowRecallForController && particleCount > 0)
                 {
                     float tNow = Time.time;
                     if (tNow - _dbgRecallStateLogTime > 0.5f)
                     {
                         _dbgRecallStateLogTime = tNow;
-                        int recentCountDbg = recentFromEmitCountPerComp.IsCreated ? recentFromEmitCountPerComp[ci] : 0;
+                        int recentCountDbgInner = recentFromEmitCountPerComp.IsCreated ? recentFromEmitCountPerComp[ci] : 0;
                         int eligibleLenDbg = _recallEligibleBlobIds.IsCreated ? _recallEligibleBlobIds.Length : -1;
                         bool inRangeDbg = eligibleLenDbg > 0 && blobId >= 0 && blobId < eligibleLenDbg;
-                        int eligibleValDbg = (inRangeDbg && blobId >= 0) ? _recallEligibleBlobIds[blobId] : -1;
-                        Debug.Log($"[Recall] ctrlNotEligible: comp={ci} blobId={blobId} ctrlSlot={controllerSlot} particleCount={particleCount} recentProtect={recentCountDbg} eligibleLen={eligibleLenDbg} inRange={inRangeDbg} eligibleVal={eligibleValDbg} suppressedByRecentProtect={suppressRecallByRecentProtection}");
+                        int eligibleValDbgInner = (inRangeDbg && blobId >= 0) ? _recallEligibleBlobIds[blobId] : -1;
+                        Debug.Log($"[Recall] ctrlNotEligible: comp={ci} blobId={blobId} ctrlSlot={controllerSlot} particleCount={particleCount} recentProtect={recentCountDbgInner} eligibleLen={eligibleLenDbg} inRange={inRangeDbg} eligibleVal={eligibleValDbgInner} suppressedByRecentProtect={suppressRecallByRecentProtection}");
                     }
                 }
 
                 if (allowRecallForController)
                 {
-                    float distToMain = math.length(center - mainCenter);
+                    float3 recallCenter = center;
+                    if (_connect && recallUseGlobalFlowField && controllerSlot > 0 && controllerSlot < _controllerBuffer.Length && _controllerBuffer[controllerSlot].IsValid)
+                        recallCenter = math.lerp(_controllerBuffer[controllerSlot].Center, center, 0.5f);
+
+                    float distToMain = math.length(recallCenter - mainCenter);
 
                     const float minRecallSpeedSim = 2f;
                     const float maxRecallSpeedSim = 12f;
@@ -3112,15 +3342,37 @@ namespace Revive.Slime
                     float speedFactor = math.saturate(distToMain / math.max(0.001f, fadeDistanceSim));
                     float recallSpeedSim = math.lerp(minRecallSpeedSim, maxRecallSpeedSim, speedFactor);
 
-                    float3 toMainXZ = mainCenter - center;
+                    float3 toMainXZ = mainCenter - recallCenter;
                     toMainXZ.y = 0;
                     float3 rawDir = math.normalizesafe(toMainXZ);
-                    bool useAvoid = (useWorldStaticSdf && _worldStaticSdf.IsCreated) || _currentColliderCount > 0;
+                    if (_connect && recallUseGlobalFlowField)
+                    {
+                        float3 flowDir = GetRecallGlobalFlowDirection(recallCenter, rawDir);
+                        if (math.lengthsq(flowDir) > 1e-6f)
+                            rawDir = flowDir;
+                    }
+
+                    if (_connect && recallUseGlobalFlowField && controllerSlot > 0 && controllerSlot < _controllerBuffer.Length && _controllerBuffer[controllerSlot].IsValid)
+                    {
+                        float3 prevVel = _controllerBuffer[controllerSlot].Velocity;
+                        float3 prevDir = prevVel;
+                        prevDir.y = 0f;
+                        prevDir = math.normalizesafe(prevDir);
+                        if (math.lengthsq(prevDir) > 1e-6f)
+                        {
+                            float3 blended = math.lerp(prevDir, rawDir, 0.35f);
+                            blended.y = 0f;
+                            blended = math.normalizesafe(blended);
+                            if (math.lengthsq(blended) > 1e-6f)
+                                rawDir = blended;
+                        }
+                    }
+                    bool useAvoid = (useWorldStaticSdf && recallAvoidUseStaticSdf && _worldStaticSdf.IsCreated) || _currentColliderCount > 0;
                     if (useAvoid)
                     {
                         long tAvoid0 = System.Diagnostics.Stopwatch.GetTimestamp();
                         var perf = default(RecallAvoidPerf);
-                        toMain = ComputeAvoidedRecallVelocity(controllerSlot, center, radiusXZ, halfHeight, mainCenter, rawDir, recallSpeedSim, ref perf);
+                        toMain = ComputeAvoidedRecallVelocity(controllerSlot, recallCenter, radiusXZ, halfHeight, mainCenter, rawDir, recallSpeedSim, ref perf);
                         ticksAssignAvoid += System.Diagnostics.Stopwatch.GetTimestamp() - tAvoid0;
 
                         ticksAvoidQuery += perf.TicksQuery;
@@ -3143,12 +3395,25 @@ namespace Revive.Slime
                     }
                 }
 
+                if (dbgCtrl)
+                {
+                    float toMainLenW = math.length(toMain * PBF_Utils.Scale);
+                    Debug.Log($"[RecallCtrlDbg] frame={Time.frameCount} comp={ci} blobId={blobId} ctrlSlot={controllerSlot} particleCount={particleCount} minSeparateClusterSize={minSeparateClusterSize} allowRecall={allowRecallForController} eligibleVal={eligibleValDbg} recentProtect={recentCountDbg} suppressedByRecentProtect={suppressRecallByRecentProtection} distToMainW={distToMainW_dbg:F2} toMainLenW={toMainLenW:F2}");
+                }
+
                 float3 currentCenter = center;
                 float prevGroundY = 0f;
                 if (controllerSlot > 0 && controllerSlot < _controllerBuffer.Length && _controllerBuffer[controllerSlot].IsValid)
                 {
                     currentCenter = math.lerp(_controllerBuffer[controllerSlot].Center, center, 0.5f);
                     prevGroundY = _controllerBuffer[controllerSlot].GroundY;
+
+                    float3 prevVel = _controllerBuffer[controllerSlot].Velocity;
+                    float2 prevXZ = new float2(prevVel.x, prevVel.z);
+                    float2 newXZ = new float2(toMain.x, toMain.z);
+                    float2 smoothedXZ = math.lerp(prevXZ, newXZ, 0.35f);
+                    toMain.x = smoothedXZ.x;
+                    toMain.z = smoothedXZ.y;
                 }
                 long tWrite0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 _controllerBuffer[controllerSlot] = new ParticleController()
@@ -3447,8 +3712,7 @@ namespace Revive.Slime
             freeParticleCount.Dispose();
 
             PerformanceProfiler.End("Control_ControllerCounts");
-            
-            
+
             // 召回停止条件：只在5秒超时时自动停止（可以随时重新按按钮启动）
             PerformanceProfiler.Begin("Control_RecallTimeout");
             if (_connect && Time.time - _connectStartTime > 5f)
@@ -3973,12 +4237,16 @@ namespace Revive.Slime
                     else
                     {
                         ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
+                        p.ClusterId = 0;
+                        p.FramesOutsideMain = 0;
                     }
                 }
                 else
                 {
                     // 使用ParticleStateManager合并粒子
                     ParticleStateManager.ConvertToMainBody(ref p, mainCenter);
+                    p.ClusterId = 0;
+                    p.FramesOutsideMain = 0;
                 }
                 _particles[i] = p;
                 
@@ -5114,7 +5382,8 @@ namespace Revive.Slime
             if (predictDt < 0f) predictDt = 0f;
             float fixedDt = Time.fixedDeltaTime;
             if (predictDt > fixedDt) predictDt = fixedDt;
-            float3 predictOffset = (float3)(_velocity * PBF_Utils.InvScale) * predictDt;
+
+            float3 predictOffset = (float3)(_renderVelocity * PBF_Utils.InvScale) * predictDt;
 
             // 1. 主体粒子 [0, activeParticles)
             for (int i = 0; i < activeParticles; i++)
@@ -5335,9 +5604,12 @@ namespace Revive.Slime
                 return;
 
             Transform ignoreRoot = trans != null ? trans.root : null;
+            Transform ignoreRootB = (_pipeTravelAbility != null && _pipeTravelAbility.IsTravelling)
+                ? _pipeTravelAbility.CurrentPathTransform
+                : null;
             Vector3 slimeCenter = trans != null ? trans.position : Vector3.zero;
 
-            index.AppendMyBoxColliders(slimeCenter, mainColliderIndexQueryRadiusWorld, ignoreRoot, _colliderBuffer, ref _currentColliderCount, mainColliderIndexQueryCacheCapacity, _colliderInstanceIds);
+            index.AppendMyBoxColliders(slimeCenter, mainColliderIndexQueryRadiusWorld, ignoreRoot, ignoreRootB, _colliderBuffer, ref _currentColliderCount, mainColliderIndexQueryCacheCapacity, _colliderInstanceIds);
 
             if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 1)
             {
@@ -5349,7 +5621,7 @@ namespace Revive.Slime
 
                     Vector3 cW = (Vector3)(ctrl.Center * PBF_Utils.Scale);
                     float rW = math.max(mainColliderIndexQueryRadiusWorld, (ctrl.Radius * PBF_Utils.Scale) + 2f);
-                    index.AppendMyBoxColliders(cW, rW, ignoreRoot, _colliderBuffer, ref _currentColliderCount, mainColliderIndexQueryCacheCapacity, _colliderInstanceIds);
+                    index.AppendMyBoxColliders(cW, rW, ignoreRoot, ignoreRootB, _colliderBuffer, ref _currentColliderCount, mainColliderIndexQueryCacheCapacity, _colliderInstanceIds);
                 }
             }
         }
@@ -5366,6 +5638,9 @@ namespace Revive.Slime
                 return;
 
             Transform ignoreRoot = trans != null ? trans.root : null;
+            Transform ignoreRootB = (_pipeTravelAbility != null && _pipeTravelAbility.IsTravelling)
+                ? _pipeTravelAbility.CurrentPathTransform
+                : null;
             if (_dropletSubsystem.TryGetActiveBounds(out float3 min, out float3 max))
             {
                 float3 center = (min + max) * 0.5f;
@@ -5375,7 +5650,7 @@ namespace Revive.Slime
                 Vector3 extentWorld = (Vector3)(extent * PBF_Utils.Scale);
                 float radiusWorld = math.max(dropletColliderIndexQueryRadiusWorld, extentWorld.magnitude + 2f);
 
-                index.AppendMyBoxColliders(centerWorld, radiusWorld, ignoreRoot,
+                index.AppendMyBoxColliders(centerWorld, radiusWorld, ignoreRoot, ignoreRootB,
                     _dropletColliderBuffer, ref _currentDropletColliderCount, dropletColliderIndexQueryCacheCapacity, _dropletColliderInstanceIds);
                 return;
             }
@@ -5390,16 +5665,16 @@ namespace Revive.Slime
                     continue;
 
                 Vector3 sourceCenter = source.transform.position;
-                index.AppendMyBoxColliders(sourceCenter, dropletColliderIndexQueryRadiusWorld, ignoreRoot,
+                index.AppendMyBoxColliders(sourceCenter, dropletColliderIndexQueryRadiusWorld, ignoreRoot, ignoreRootB,
                     _dropletColliderBuffer, ref _currentDropletColliderCount, dropletColliderIndexQueryCacheCapacity, _dropletColliderInstanceIds);
             }
         }
-
-        private void UpdateControllerGroundHeights()
+        
+        /// <summary>
+        /// 为每个有效控制器独立射线检测地面高度，存入 ctrl.GroundY
+        /// </summary>
+        private void RefreshGroundY()
         {
-            if (!_controllerBuffer.IsCreated || _controllerBuffer.Length == 0)
-                return;
-
             float fallbackGroundY = -10f; // 后备地面高度（模拟坐标）
             
             for (int c = 0; c < _controllerBuffer.Length; c++)
@@ -5489,8 +5764,18 @@ namespace Revive.Slime
                 var col = h.collider;
                 if (col == null)
                     continue;
-                if (trans != null && col.transform != null && col.transform.root == trans.root)
-                    continue;
+                if (col.transform != null)
+                {
+                    if (trans != null && trans.root != null && col.transform.IsChildOf(trans.root))
+                        continue;
+
+                    if (_pipeTravelAbility != null && _pipeTravelAbility.IsTravelling)
+                    {
+                        var ignoreRootB = _pipeTravelAbility.CurrentPathTransform;
+                        if (ignoreRootB != null && col.transform.IsChildOf(ignoreRootB))
+                            continue;
+                    }
+                }
                 if (h.distance < bestDist)
                 {
                     bestDist = h.distance;
@@ -5518,7 +5803,7 @@ namespace Revive.Slime
             if (math.lengthsq(rayDir) < 1e-6f)
                 return false;
 
-            bool useSdf = useWorldStaticSdf && _worldStaticSdf.IsCreated;
+            bool useSdf = _currentColliderCount <= 0 && recallAvoidUseStaticSdf && useWorldStaticSdf && _worldStaticSdf.IsCreated;
             if (useSdf)
             {
                 long tSdf0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -5526,6 +5811,8 @@ namespace Revive.Slime
                 if (v.IsCreated)
                 {
                     float minStep = math.max(v.VoxelSizeSim, 1e-3f);
+
+                    float hitThreshold = radiusXZ + recallObstacleKeepDistanceMarginSim;
 
                     float3 p0 = center;
                     float3 p1 = center + new float3(0f, halfHeight * 0.35f, 0f);
@@ -5539,27 +5826,81 @@ namespace Revive.Slime
                         float3 pp1 = p1 + rayDir * t;
                         float3 pp2 = p2 + rayDir * t;
 
-                        float d0 = float.MaxValue;
-                        float d1 = float.MaxValue;
-                        float d2 = float.MaxValue;
-                        bool ok0 = false;
-                        bool ok1 = false;
-                        bool ok2 = false;
+                        float d0 = v.SampleDistance(pp0);
+                        float d1 = v.SampleDistance(pp1);
+                        float d2 = v.SampleDistance(pp2);
+                        bool ok0 = d0 < (v.MaxDistanceSim - 1e-5f);
+                        bool ok1 = d1 < (v.MaxDistanceSim - 1e-5f);
+                        bool ok2 = d2 < (v.MaxDistanceSim - 1e-5f);
 
-                        d0 = v.SampleDistance(pp0);
-                        d1 = v.SampleDistance(pp1);
-                        d2 = v.SampleDistance(pp2);
-                        ok0 = d0 < (v.MaxDistanceSim - 1e-5f);
-                        ok1 = d1 < (v.MaxDistanceSim - 1e-5f);
-                        ok2 = d2 < (v.MaxDistanceSim - 1e-5f);
+                        float dMin = float.MaxValue;
+                        bool anyValid = false;
 
-                        float d = float.MaxValue;
-                        float3 pBest = pp0;
-                        if (ok0 && d0 < d) { d = d0; pBest = pp0; }
-                        if (ok1 && d1 < d) { d = d1; pBest = pp1; }
-                        if (ok2 && d2 < d) { d = d2; pBest = pp2; }
+                        float bestWallD = float.MaxValue;
+                        float3 bestWallN = float3.zero;
+                        bool hasWallHit = false;
 
-                        if (d == float.MaxValue)
+                        if (ok0)
+                        {
+                            anyValid = true;
+                            if (d0 < dMin) dMin = d0;
+                            if (d0 <= hitThreshold)
+                            {
+                                float3 n0 = v.SampleNormalForward(pp0, d0);
+                                if (math.abs(n0.y) > RecallWallNormalYThreshold)
+                                {
+                                    filteredByNormal = true;
+                                }
+                                else if (d0 < bestWallD)
+                                {
+                                    bestWallD = d0;
+                                    bestWallN = n0;
+                                    hasWallHit = true;
+                                }
+                            }
+                        }
+
+                        if (ok1)
+                        {
+                            anyValid = true;
+                            if (d1 < dMin) dMin = d1;
+                            if (d1 <= hitThreshold)
+                            {
+                                float3 n1 = v.SampleNormalForward(pp1, d1);
+                                if (math.abs(n1.y) > RecallWallNormalYThreshold)
+                                {
+                                    filteredByNormal = true;
+                                }
+                                else if (d1 < bestWallD)
+                                {
+                                    bestWallD = d1;
+                                    bestWallN = n1;
+                                    hasWallHit = true;
+                                }
+                            }
+                        }
+
+                        if (ok2)
+                        {
+                            anyValid = true;
+                            if (d2 < dMin) dMin = d2;
+                            if (d2 <= hitThreshold)
+                            {
+                                float3 n2 = v.SampleNormalForward(pp2, d2);
+                                if (math.abs(n2.y) > RecallWallNormalYThreshold)
+                                {
+                                    filteredByNormal = true;
+                                }
+                                else if (d2 < bestWallD)
+                                {
+                                    bestWallD = d2;
+                                    bestWallN = n2;
+                                    hasWallHit = true;
+                                }
+                            }
+                        }
+
+                        if (!anyValid)
                         {
                             _dbgRecallSdfInvalidSamples++;
                             perf.SdfInvalid++;
@@ -5567,28 +5908,20 @@ namespace Revive.Slime
                             continue;
                         }
 
-                        if (d < _dbgRecallSdfMinD)
-                            _dbgRecallSdfMinD = d;
+                        if (dMin < _dbgRecallSdfMinD)
+                            _dbgRecallSdfMinD = dMin;
 
-                        float hitThreshold = radiusXZ + recallObstacleKeepDistanceMarginSim;
-                        if (d <= hitThreshold)
+                        if (hasWallHit)
                         {
-                            float3 n = v.SampleNormalForward(pBest, d);
-                            if (math.abs(n.y) > 0.65f)
-                            {
-                                filteredByNormal = true;
-                                t += minStep;
-                                continue;
-                            }
                             hitDistSim = t;
-                            hitNormalSim = n;
+                            hitNormalSim = bestWallN;
                             hitTopYSim = center.y - halfHeight;
                             hitFromSdf = true;
                             perf.TicksSdf += System.Diagnostics.Stopwatch.GetTimestamp() - tSdf0;
                             return true;
                         }
 
-                        float adv = d - hitThreshold;
+                        float adv = dMin - hitThreshold;
                         if (adv < minStep) adv = minStep;
                         t += adv;
                     }
@@ -5608,8 +5941,6 @@ namespace Revive.Slime
             for (int c = 0; c < _currentColliderCount; c++)
             {
                 MyBoxCollider box = _colliderBuffer[c];
-                if (useSdf && disableStaticColliderFallbackWhenUsingSdf && box.IsDynamic == 0)
-                    continue;
 
                 perf.ObbChecked++;
 
@@ -5640,14 +5971,23 @@ namespace Revive.Slime
                         if (inside)
                         {
                             float considerPen = hitThresholdCollider * 1.25f;
-                            bool moveAxisX = math.abs(localDir.x) > math.abs(localDir.z);
-                            int axis = moveAxisX ? 0 : 2;
+                            float distToFaceX = expandedExtentLocal.x - absLocal.x;
+                            float distToFaceZ = expandedExtentLocal.z - absLocal.z;
+                            int axis = distToFaceX < distToFaceZ ? 0 : 2;
 
                             float distToFace = expandedExtentLocal[axis] - absLocal[axis];
                             if (distToFace > considerPen)
                                 break;
 
-                            bool movingTowardBox = (localDir[axis] * localOrigin[axis]) < 0f;
+                            float originAxis = localOrigin[axis];
+                            float dirAxis = localDir[axis];
+                            bool movingTowardBox = (dirAxis * originAxis) < 0f;
+                            if (!movingTowardBox)
+                            {
+                                float originEps = math.max(1e-4f, hitThresholdCollider * 0.05f);
+                                if (math.abs(originAxis) <= originEps && math.abs(dirAxis) > 1e-5f)
+                                    movingTowardBox = true;
+                            }
                             if (!movingTowardBox)
                                 break;
 
@@ -5660,9 +6000,8 @@ namespace Revive.Slime
                             nLocal[axis] = nSign;
 
                             float3 nWorld = math.mul(box.Rotation, nLocal);
-                            if (math.abs(nWorld.y) > 0.65f)
+                            if (math.abs(nWorld.y) > RecallWallNormalYThreshold)
                             {
-                                filteredByNormal = true;
                                 break;
                             }
 
@@ -5694,9 +6033,8 @@ namespace Revive.Slime
                             float3 nLocal = float3.zero;
                             nLocal[axis] = -math.sign(localDir[axis]);
                             float3 nWorld = math.mul(box.Rotation, nLocal);
-                            if (math.abs(nWorld.y) > 0.65f)
+                            if (math.abs(nWorld.y) > RecallWallNormalYThreshold)
                             {
-                                filteredByNormal = true;
                                 break;
                             }
 
@@ -5735,9 +6073,8 @@ namespace Revive.Slime
                             float3 n = float3.zero;
                             n[axis] = -math.sign(rayDir[axis]);
 
-                            if (math.abs(n.y) > 0.65f)
+                            if (math.abs(n.y) > RecallWallNormalYThreshold)
                             {
-                                filteredByNormal = true;
                                 break;
                             }
 
@@ -5769,6 +6106,24 @@ namespace Revive.Slime
             return false;
         }
 
+        private static void ProjectVelocityNotAwayFromDir(ref float3 vel, float3 dir)
+        {
+            float3 dir3 = new float3(dir.x, 0f, dir.z);
+            float dirLen2 = math.lengthsq(dir3);
+            if (dirLen2 > 1e-6f)
+            {
+                dir3 *= math.rsqrt(dirLen2);
+                float3 velXZ = new float3(vel.x, 0f, vel.z);
+                float dotToward = math.dot(velXZ, dir3);
+                if (dotToward < 0f)
+                {
+                    velXZ -= dir3 * dotToward;
+                    vel.x = velXZ.x;
+                    vel.z = velXZ.z;
+                }
+            }
+        }
+
         /// <summary>
         /// 计算带避障的召回速度
         /// 新逻辑：基础速度 = 指向主体的速度，叠加避障 steering 力
@@ -5793,6 +6148,21 @@ namespace Revive.Slime
                                     _controllerStepJumpTargetCenterY != null &&
                                     controllerId < _controllerStepJumpTargetCenterY.Length &&
                                     !float.IsNaN(_controllerStepJumpTargetCenterY[controllerId]);
+
+            bool hasExpireFrame = controllerId > 0 &&
+                                  _controllerStepJumpTargetExpireFrame != null &&
+                                  controllerId < _controllerStepJumpTargetExpireFrame.Length;
+            int expireFrame = hasExpireFrame ? _controllerStepJumpTargetExpireFrame[controllerId] : 0;
+            if (hasStepJumpTarget)
+            {
+                if (!hasExpireFrame || expireFrame <= 0 || Time.frameCount > expireFrame)
+                {
+                    _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
+                    if (hasExpireFrame)
+                        _controllerStepJumpTargetExpireFrame[controllerId] = 0;
+                    hasStepJumpTarget = false;
+                }
+            }
 
             float recallObstacleCheckDistSim = recallObstacleCheckDist * PBF_Utils.InvScale;
             float recallObstacleKeepDistanceMarginSim = recallObstacleKeepDistanceMargin * PBF_Utils.InvScale;
@@ -5828,16 +6198,62 @@ namespace Revive.Slime
             perf.HitFromSdf = (byte)(obstacleHitFromSdf ? 1 : 0);
             perf.HitFromObb = (byte)((obstacleHit && !obstacleHitFromSdf) ? 1 : 0);
 
-            if (recallAvoidanceLogs && _dbgRecallLogFrame != Time.frameCount)
+            bool dbgLogThisController = recallAvoidanceLogs &&
+                                        (recallAvoidanceLogControllerSlot < 0
+                                            ? (_dbgRecallLogFrame != Time.frameCount)
+                                            : (controllerId == recallAvoidanceLogControllerSlot));
+            if (dbgLogThisController)
             {
-                _dbgRecallLogFrame = Time.frameCount;
+                int logFrame = Time.frameCount;
+                if (recallAvoidanceLogControllerSlot < 0)
+                    _dbgRecallLogFrame = logFrame;
                 string src = obstacleHit ? (obstacleHitFromSdf ? "SDF" : "OBB") : "None";
                 float distW = obstacleHit ? (obstacleDistSim * PBF_Utils.Scale) : -1f;
-                bool useSdfDbg = useWorldStaticSdf && _worldStaticSdf.IsCreated;
+                bool useSdfDbg = _currentColliderCount <= 0 && recallAvoidUseStaticSdf && useWorldStaticSdf && _worldStaticSdf.IsCreated;
+
+                float nXZLen = math.length(new float2(obstacleNormalSim.x, obstacleNormalSim.z));
+                float stepHeightSim = obstacleTopY - (center.y - halfHeight);
+                float stepHeightW_dbg = stepHeightSim * PBF_Utils.Scale;
+                float triggerAdvanceSim = recallStepTriggerAdvance * PBF_Utils.InvScale;
+                float radiusW_dbg = radiusXZ * PBF_Utils.Scale;
+                float keepMarginW_dbg = recallObstacleKeepDistanceMarginSim * PBF_Utils.Scale;
+                float triggerDistW_dbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSim) * PBF_Utils.Scale;
+                bool withinTriggerDbg = obstacleHit && (obstacleDistSim * PBF_Utils.Scale) <= triggerDistW_dbg;
+
+                float baseVelYW_dbg = baseVel.y * PBF_Utils.Scale;
+                float stepTargetYW_dbg = float.NaN;
+                float stepTargetDyW_dbg = float.NaN;
+                if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
+                {
+                    float targetY = _controllerStepJumpTargetCenterY[controllerId];
+                    stepTargetYW_dbg = targetY * PBF_Utils.Scale;
+                    stepTargetDyW_dbg = (targetY - center.y) * PBF_Utils.Scale;
+                }
+
+                float distToMainW_dbg = math.length((mainCenter - center) * PBF_Utils.Scale);
+
+                float sdfDAtHit = float.NaN;
+                float sdfNYAtHit = float.NaN;
+                if (useSdfDbg && obstacleHit && !obstacleHitFromSdf)
+                {
+                    var v = _worldStaticSdf.Data;
+                    float3 sp = center + new float3(dirXZ.x, 0f, dirXZ.y) * obstacleDistSim;
+                    float d = v.SampleDistance(sp);
+                    if (d < (v.MaxDistanceSim - 1e-5f))
+                    {
+                        float3 n = v.SampleNormalForward(sp, d);
+                        sdfDAtHit = d;
+                        sdfNYAtHit = n.y;
+                    }
+                }
                 Debug.Log(
-                    $"[RecallAvoid] frame={_dbgRecallLogFrame} ctrl={controllerId} src={src} hit={obstacleHit} distW={distW:F3} filteredByNormal={obstacleFilteredByNormal} " +
+                    $"[RecallAvoid] frame={logFrame} ctrl={controllerId} src={src} hit={obstacleHit} distW={distW:F3} filteredByNormal={obstacleFilteredByNormal} " +
                     $"useSdf={useSdfDbg} colliderCount={_currentColliderCount} disableStaticFallback={disableStaticColliderFallbackWhenUsingSdf} " +
-                    $"sdfSamples={_dbgRecallSdfSamples} sdfInvalid={_dbgRecallSdfInvalidSamples} sdfMinD={_dbgRecallSdfMinD:F4}");
+                    $"sdfSamples={_dbgRecallSdfSamples} sdfInvalid={_dbgRecallSdfInvalidSamples} sdfMinD={_dbgRecallSdfMinD:F4} " +
+                    $"rawDir=({rawDir.x:F2},{rawDir.z:F2}) distToMainW={distToMainW_dbg:F2} baseVelY_W={baseVelYW_dbg:F3} stepTargetY_W={stepTargetYW_dbg:F3} stepTargetDy_W={stepTargetDyW_dbg:F3} " +
+                    $"nY={obstacleNormalSim.y:F3} nXZLen={nXZLen:F3} topY_W={(obstacleTopY * PBF_Utils.Scale):F3} stepH_W={stepHeightW_dbg:F3} stepMaxH_W={(recallStepMaxHeightSim * PBF_Utils.Scale):F3} adv_W={(triggerAdvanceSim * PBF_Utils.Scale):F3} " +
+                    $"radiusW={radiusW_dbg:F3} keepW={keepMarginW_dbg:F3} triggerDistW={triggerDistW_dbg:F3} withinTrigger={withinTriggerDbg} " +
+                    $"sdfAtHit_dSim={sdfDAtHit:F3} sdfAtHit_nY={sdfNYAtHit:F3}");
             }
 
             if (recallAvoidanceGizmos)
@@ -5984,9 +6400,14 @@ namespace Revive.Slime
                     float triggerDistWDbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSimDbg) * PBF_Utils.Scale;
                     if (dbgIsDropByGround && closestBlockDistWDbg <= triggerDistWDbg)
                     {
-                        baseVel = new float3(rawDir.x, 0f, rawDir.z) * speed;
-                        steering = float3.zero;
-                        closestBlockIdx = -1;
+                        float blockTopYW = closestBlockTopY * PBF_Utils.Scale;
+                        bool blockTopNotHigherThanGround = blockTopYW <= (dbgCurGroundYW + 0.02f);
+                        if (blockTopNotHigherThanGround)
+                        {
+                            baseVel = new float3(rawDir.x, 0f, rawDir.z) * speed;
+                            steering = float3.zero;
+                            closestBlockIdx = -1;
+                        }
                     }
                 }
             }
@@ -5995,22 +6416,24 @@ namespace Revive.Slime
             if (closestBlockIdx < 0)
             {
                 if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
-                    _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
-
-                float3 dir3 = new float3(rawDir.x, 0f, rawDir.z);
-                float dirLen2 = math.lengthsq(dir3);
-                if (dirLen2 > 1e-6f)
                 {
-                    dir3 /= math.sqrt(dirLen2);
-                    float3 velXZ = new float3(baseVel.x, 0f, baseVel.z);
-                    float dotToward = math.dot(velXZ, dir3);
-                    if (dotToward < 0f)
+                    float targetY = _controllerStepJumpTargetCenterY[controllerId];
+                    float dy = targetY - center.y;
+                    if (dy <= 0.01f * PBF_Utils.InvScale)
                     {
-                        velXZ -= dir3 * dotToward;
-                        baseVel.x = velXZ.x;
-                        baseVel.z = velXZ.z;
+                        _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
+                        if (hasExpireFrame)
+                            _controllerStepJumpTargetExpireFrame[controllerId] = 0;
+                        hasStepJumpTarget = false;
+                    }
+                    else
+                    {
+                        float upV = math.min(maxUpSim, dy / dt);
+                        baseVel.y = math.max(baseVel.y, upV);
                     }
                 }
+
+                ProjectVelocityNotAwayFromDir(ref baseVel, rawDir);
 
                 perf.TicksTotal += System.Diagnostics.Stopwatch.GetTimestamp() - tTotal0;
                 return baseVel;
@@ -6026,8 +6449,11 @@ namespace Revive.Slime
             bool canStepUp = stepHeight > 0 && stepHeight <= recallStepMaxHeightSim && stepHeightW > 0.03f;
             if (dbgHasCurGround && dbgHasAheadGround)
             {
-                stepHeightW = dbgHasStepTop ? dbgStepTopDeltaW : dbgGroundDeltaW;
-                canStepUp = dbgCanStepUpByGround;
+                if (dbgCanStepUpByGround)
+                {
+                    stepHeightW = dbgHasStepTop ? dbgStepTopDeltaW : dbgGroundDeltaW;
+                    canStepUp = true;
+                }
             }
 
             if (canStepUp)
@@ -6039,6 +6465,8 @@ namespace Revive.Slime
                     if (dy <= 0.01f * PBF_Utils.InvScale)
                     {
                         _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
+                        if (hasExpireFrame)
+                            _controllerStepJumpTargetExpireFrame[controllerId] = 0;
                         hasStepJumpTarget = false;
                     }
                     else
@@ -6071,6 +6499,25 @@ namespace Revive.Slime
                             float curTarget = _controllerStepJumpTargetCenterY[controllerId];
                             float nextTarget = float.IsNaN(curTarget) ? targetCenterYSim : math.max(curTarget, targetCenterYSim);
                             _controllerStepJumpTargetCenterY[controllerId] = nextTarget;
+
+                            if (_controllerStepJumpTargetExpireFrame == null || _controllerStepJumpTargetExpireFrame.Length <= controllerId)
+                            {
+                                int oldLen = _controllerStepJumpTargetExpireFrame?.Length ?? 0;
+                                int newLen = math.max(controllerId + 1, oldLen * 2 + 1);
+                                System.Array.Resize(ref _controllerStepJumpTargetExpireFrame, newLen);
+                                for (int i = oldLen; i < newLen; i++)
+                                    _controllerStepJumpTargetExpireFrame[i] = 0;
+                            }
+                            if (_controllerStepJumpTargetExpireFrame != null && controllerId < _controllerStepJumpTargetExpireFrame.Length)
+                            {
+                                float dySim = nextTarget - center.y;
+                                float upPerFrame = math.max(1e-5f, maxUpSim * dt);
+                                int framesNeed = (int)math.ceil(math.max(0f, dySim) / upPerFrame);
+                                framesNeed = math.clamp(framesNeed + 2, 2, 60);
+                                int nextExpire = Time.frameCount + framesNeed;
+                                int curExpire = _controllerStepJumpTargetExpireFrame[controllerId];
+                                _controllerStepJumpTargetExpireFrame[controllerId] = math.max(curExpire, nextExpire);
+                            }
                         }
                     }
 
@@ -6092,9 +6539,6 @@ namespace Revive.Slime
                 return baseVel;
             }
 
-            if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
-                _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
-            
             // 2. 水平方向：叠加沿墙滑动的 steering
             float3 slideVec = rawDir - math.dot(rawDir, closestBlockNormal) * closestBlockNormal;
             slideVec.y = 0;
@@ -6134,22 +6578,7 @@ namespace Revive.Slime
             // 最终速度 = 基础速度 + steering
             float3 resultVel = baseVel + steering;
 
-            {
-                float3 dir3 = new float3(rawDir.x, 0f, rawDir.z);
-                float dirLen2 = math.lengthsq(dir3);
-                if (dirLen2 > 1e-6f)
-                {
-                    dir3 /= math.sqrt(dirLen2);
-                    float3 velXZ = new float3(resultVel.x, 0f, resultVel.z);
-                    float dotToward = math.dot(velXZ, dir3);
-                    if (dotToward < 0f)
-                    {
-                        velXZ -= dir3 * dotToward;
-                        resultVel.x = velXZ.x;
-                        resultVel.z = velXZ.z;
-                    }
-                }
-            }
+            ProjectVelocityNotAwayFromDir(ref resultVel, rawDir);
 
             perf.TicksTotal += System.Diagnostics.Stopwatch.GetTimestamp() - tTotal0;
             if (recallAvoidanceLogs)
@@ -6166,8 +6595,392 @@ namespace Revive.Slime
                     Debug.Log($"[RecallAvoidSlow] frame={Time.frameCount} ctrl={controllerId} totalMs={totalMs:F2} queryMs={qMs:F2} sdfMs={sdfMs:F2} obbMs={obbMs:F2} groundMs={gMs:F2} sdfSamples={perf.SdfSamples} sdfInvalid={perf.SdfInvalid} obbChecked={perf.ObbChecked} raycasts={perf.RaycastCount} hitSdf={perf.HitFromSdf} hitObb={perf.HitFromObb}");
                 }
             }
-
             return resultVel;
+        }
+
+        private const float RecallWallNormalYThreshold = 0.65f;
+        private const int RecallGlobalFlowCostUnreachable = 0x3fffffff;
+        private int _recallGlobalFlowGridSize;
+        private float _recallGlobalFlowCellSizeSim;
+        private float _recallGlobalFlowHalfExtentSim;
+        private float3 _recallGlobalFlowCenterSim;
+        private int[] _recallGlobalFlowCost;
+        private byte[] _recallGlobalFlowBlocked;
+        private int[] _recallGlobalFlowQueue;
+        private int _recallGlobalFlowLastUpdateFrame = int.MinValue;
+        private float _dbgRecallGlobalFlowSkipLogTime;
+        private float _dbgRecallGlobalFlowCtrlLogTime;
+        private float _dbgRecallGlobalFlowIntervalSkipLogTime;
+        private float _dbgRecallGlobalFlowDirOkLogTime;
+
+        private void EnsureRecallGlobalFlowBuffers(int gridSize)
+        {
+            if (gridSize <= 0)
+                return;
+
+            int n = gridSize * gridSize;
+            if (_recallGlobalFlowCost == null || _recallGlobalFlowCost.Length != n)
+            {
+                _recallGlobalFlowCost = new int[n];
+                _recallGlobalFlowBlocked = new byte[n];
+                _recallGlobalFlowQueue = new int[n];
+            }
+            _recallGlobalFlowGridSize = gridSize;
+        }
+
+        private void UpdateRecallGlobalFlowField(float3 mainCenterSim)
+        {
+            if (!(useWorldStaticSdf && _worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated))
+            {
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowSkipLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowSkipLogTime = tNow;
+                    Debug.Log(
+                        $"[RecallGFlow][Skip] frame={Time.frameCount} reason=noSdf useWorldStaticSdf={useWorldStaticSdf} sdfIsCreated={_worldStaticSdf.IsCreated} sdfDataIsCreated={(_worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated)}",
+                        this);
+                }
+                return;
+            }
+
+            int interval = math.max(1, recallGlobalFlowUpdateIntervalFrames);
+            long dtFrame = (long)Time.frameCount - (long)_recallGlobalFlowLastUpdateFrame;
+            if (dtFrame < interval)
+            {
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowIntervalSkipLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowIntervalSkipLogTime = tNow;
+                    Debug.Log(
+                        $"[RecallGFlow][Skip] frame={Time.frameCount} reason=interval dtFrame={dtFrame} interval={interval}",
+                        this);
+                }
+                return;
+            }
+
+            float rangeW = math.max(0.5f, recallGlobalFlowRange);
+            float cellW = math.max(0.1f, recallGlobalFlowCellSize);
+            int gridSize = (int)math.ceil((rangeW * 2f) / cellW) + 1;
+            if ((gridSize & 1) == 0)
+                gridSize += 1;
+            gridSize = math.clamp(gridSize, 9, 201);
+
+            EnsureRecallGlobalFlowBuffers(gridSize);
+
+            _recallGlobalFlowCenterSim = mainCenterSim;
+            _recallGlobalFlowCellSizeSim = cellW * PBF_Utils.InvScale;
+            _recallGlobalFlowHalfExtentSim = rangeW * PBF_Utils.InvScale;
+
+            var v = _worldStaticSdf.Data;
+            float blockedDistSim = recallGlobalFlowBlockedDistance * PBF_Utils.InvScale;
+            float yOffSim = recallGlobalFlowSampleHalfHeight * PBF_Utils.InvScale;
+            int half = gridSize >> 1;
+
+            bool IsBlockedAt(float3 sp)
+            {
+                float d = v.SampleDistance(sp);
+                if (d >= (v.MaxDistanceSim - 1e-5f))
+                    return false;
+                if (d > blockedDistSim)
+                    return false;
+                float3 n = v.SampleNormalForward(sp, d);
+                return math.abs(n.y) < RecallWallNormalYThreshold;
+            }
+
+            for (int z = 0; z < gridSize; z++)
+            {
+                float oz = (z - half) * _recallGlobalFlowCellSizeSim;
+                for (int x = 0; x < gridSize; x++)
+                {
+                    float ox = (x - half) * _recallGlobalFlowCellSizeSim;
+                    float3 p = new float3(mainCenterSim.x + ox, mainCenterSim.y, mainCenterSim.z + oz);
+                    float3 p1 = p + new float3(0f, yOffSim, 0f);
+                    float3 p2 = p - new float3(0f, yOffSim, 0f);
+                    int idx = z * gridSize + x;
+                    bool blocked = IsBlockedAt(p) || IsBlockedAt(p1) || IsBlockedAt(p2);
+                    _recallGlobalFlowBlocked[idx] = (byte)(blocked ? 1 : 0);
+                }
+            }
+
+            int goalIdx = half * gridSize + half;
+            _recallGlobalFlowBlocked[goalIdx] = 0;
+
+            int nAll = gridSize * gridSize;
+            for (int i = 0; i < nAll; i++)
+                _recallGlobalFlowCost[i] = RecallGlobalFlowCostUnreachable;
+
+            int qh = 0;
+            int qt = 0;
+            _recallGlobalFlowCost[goalIdx] = 0;
+            _recallGlobalFlowQueue[qt++] = goalIdx;
+
+            while (qh < qt)
+            {
+                int cur = _recallGlobalFlowQueue[qh++];
+                int curCost = _recallGlobalFlowCost[cur];
+                int cx = cur % gridSize;
+                int cz = cur / gridSize;
+
+                if (cx > 0)
+                {
+                    int nidx = cz * gridSize + (cx - 1);
+                    if (_recallGlobalFlowBlocked[nidx] == 0)
+                    {
+                        int nextCost = curCost + 1;
+                        if (_recallGlobalFlowCost[nidx] > nextCost)
+                        {
+                            _recallGlobalFlowCost[nidx] = nextCost;
+                            _recallGlobalFlowQueue[qt++] = nidx;
+                        }
+                    }
+                }
+                if (cx + 1 < gridSize)
+                {
+                    int nidx = cz * gridSize + (cx + 1);
+                    if (_recallGlobalFlowBlocked[nidx] == 0)
+                    {
+                        int nextCost = curCost + 1;
+                        if (_recallGlobalFlowCost[nidx] > nextCost)
+                        {
+                            _recallGlobalFlowCost[nidx] = nextCost;
+                            _recallGlobalFlowQueue[qt++] = nidx;
+                        }
+                    }
+                }
+                if (cz > 0)
+                {
+                    int nidx = (cz - 1) * gridSize + cx;
+                    if (_recallGlobalFlowBlocked[nidx] == 0)
+                    {
+                        int nextCost = curCost + 1;
+                        if (_recallGlobalFlowCost[nidx] > nextCost)
+                        {
+                            _recallGlobalFlowCost[nidx] = nextCost;
+                            _recallGlobalFlowQueue[qt++] = nidx;
+                        }
+                    }
+                }
+                if (cz + 1 < gridSize)
+                {
+                    int nidx = (cz + 1) * gridSize + cx;
+                    if (_recallGlobalFlowBlocked[nidx] == 0)
+                    {
+                        int nextCost = curCost + 1;
+                        if (_recallGlobalFlowCost[nidx] > nextCost)
+                        {
+                            _recallGlobalFlowCost[nidx] = nextCost;
+                            _recallGlobalFlowQueue[qt++] = nidx;
+                        }
+                    }
+                }
+            }
+
+            {
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowLogTime = tNow;
+                    int blockedCount = 0;
+                    int reachableCount = 0;
+                    for (int i = 0; i < nAll; i++)
+                    {
+                        if (_recallGlobalFlowBlocked[i] != 0)
+                            blockedCount++;
+                        if (_recallGlobalFlowCost[i] < RecallGlobalFlowCostUnreachable)
+                            reachableCount++;
+                    }
+                    Debug.Log(
+                        $"[RecallGFlow][Build] frame={Time.frameCount} grid={gridSize} rangeW={rangeW:F2} cellW={cellW:F2} " +
+                        $"blockedDistW={recallGlobalFlowBlockedDistance:F3} yOffW={recallGlobalFlowSampleHalfHeight:F2} " +
+                        $"blocked={blockedCount}/{nAll} reachable={reachableCount}/{nAll}",
+                        this);
+                }
+            }
+
+            _recallGlobalFlowLastUpdateFrame = Time.frameCount;
+        }
+
+        private float3 GetRecallGlobalFlowDirection(float3 centerSim, float3 fallbackDirSim)
+        {
+            if (!recallUseGlobalFlowField)
+                return fallbackDirSim;
+            if (_recallGlobalFlowCost == null || _recallGlobalFlowBlocked == null || _recallGlobalFlowGridSize <= 0)
+                return fallbackDirSim;
+
+            float3 rel = centerSim - _recallGlobalFlowCenterSim;
+            if (math.abs(rel.x) > _recallGlobalFlowHalfExtentSim || math.abs(rel.z) > _recallGlobalFlowHalfExtentSim)
+            {
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowDirLogTime = tNow;
+                    Debug.Log(
+                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=outOfRange rel=({rel.x:F2},{rel.y:F2},{rel.z:F2}) halfExtentSim={_recallGlobalFlowHalfExtentSim:F2}",
+                        this);
+                }
+                return fallbackDirSim;
+            }
+
+            int size = _recallGlobalFlowGridSize;
+            int half = size >> 1;
+            float fx = rel.x / math.max(1e-5f, _recallGlobalFlowCellSizeSim) + half;
+            float fz = rel.z / math.max(1e-5f, _recallGlobalFlowCellSizeSim) + half;
+
+            int ix = (int)math.floor(fx);
+            int iz = (int)math.floor(fz);
+            ix = math.clamp(ix, 1, size - 2);
+            iz = math.clamp(iz, 1, size - 2);
+
+            int idxC = iz * size + ix;
+            int cC = _recallGlobalFlowCost[idxC];
+            if (cC >= RecallGlobalFlowCostUnreachable)
+            {
+                int bestCost = RecallGlobalFlowCostUnreachable;
+                float bestDot = -2f;
+                int bestDx = 0;
+                int bestDz = 0;
+                float2 fb2 = math.normalizesafe(new float2(fallbackDirSim.x, fallbackDirSim.z));
+                const int searchRadius = 6;
+                for (int r = 1; r <= searchRadius; r++)
+                {
+                    for (int dz = -r; dz <= r; dz++)
+                    for (int dx = -r; dx <= r; dx++)
+                    {
+                        if (dx == 0 && dz == 0)
+                            continue;
+                        int nx = ix + dx;
+                        int nz = iz + dz;
+                        if (nx < 1 || nx > size - 2 || nz < 1 || nz > size - 2)
+                            continue;
+                        int cN = _recallGlobalFlowCost[nz * size + nx];
+                        if (cN >= RecallGlobalFlowCostUnreachable)
+                            continue;
+
+                        float2 d2 = math.normalizesafe(new float2(dx, dz));
+                        float dot = d2.x * fb2.x + d2.y * fb2.y;
+                        if (cN < bestCost || (cN == bestCost && dot > bestDot))
+                        {
+                            bestCost = cN;
+                            bestDot = dot;
+                            bestDx = dx;
+                            bestDz = dz;
+                        }
+                    }
+
+                    if (bestCost < RecallGlobalFlowCostUnreachable)
+                        break;
+                }
+
+                if (bestCost < RecallGlobalFlowCostUnreachable)
+                {
+                    float2 dir2Unr = math.normalizesafe(new float2(bestDx, bestDz));
+                    float3 dir3Unr = new float3(dir2Unr.x, 0f, dir2Unr.y);
+                    if (math.lengthsq(dir3Unr) > 1e-6f)
+                        return dir3Unr;
+                }
+
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowDirLogTime = tNow;
+                    Debug.Log(
+                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=unreachable ix={ix} iz={iz} cost={cC}",
+                        this);
+                }
+                return fallbackDirSim;
+            }
+
+            int cXp = _recallGlobalFlowCost[iz * size + (ix + 1)];
+            int cXm = _recallGlobalFlowCost[iz * size + (ix - 1)];
+            int cZp = _recallGlobalFlowCost[(iz + 1) * size + ix];
+            int cZm = _recallGlobalFlowCost[(iz - 1) * size + ix];
+
+            if (cXp >= RecallGlobalFlowCostUnreachable) cXp = cC;
+            if (cXm >= RecallGlobalFlowCostUnreachable) cXm = cC;
+            if (cZp >= RecallGlobalFlowCostUnreachable) cZp = cC;
+            if (cZm >= RecallGlobalFlowCostUnreachable) cZm = cC;
+
+            float gx = (float)(cXp - cXm);
+            float gz = (float)(cZp - cZm);
+            float2 g = new float2(-gx, -gz);
+            if (math.lengthsq(g) < 1e-6f)
+            {
+                int bestCost = cC;
+                float bestDot = -2f;
+                int bestDx = 0;
+                int bestDz = 0;
+
+                float2 fb2 = math.normalizesafe(new float2(fallbackDirSim.x, fallbackDirSim.z));
+
+                float dotXp = fb2.x;
+                float dotXm = -fb2.x;
+                float dotZp = fb2.y;
+                float dotZm = -fb2.y;
+
+                if (cXp < bestCost || (cXp == bestCost && cXp < cC && dotXp > bestDot))
+                {
+                    bestCost = cXp;
+                    bestDot = dotXp;
+                    bestDx = 1;
+                    bestDz = 0;
+                }
+                if (cXm < bestCost || (cXm == bestCost && cXm < cC && dotXm > bestDot))
+                {
+                    bestCost = cXm;
+                    bestDot = dotXm;
+                    bestDx = -1;
+                    bestDz = 0;
+                }
+                if (cZp < bestCost || (cZp == bestCost && cZp < cC && dotZp > bestDot))
+                {
+                    bestCost = cZp;
+                    bestDot = dotZp;
+                    bestDx = 0;
+                    bestDz = 1;
+                }
+                if (cZm < bestCost || (cZm == bestCost && cZm < cC && dotZm > bestDot))
+                {
+                    bestCost = cZm;
+                    bestDot = dotZm;
+                    bestDx = 0;
+                    bestDz = -1;
+                }
+
+                if (bestCost < cC)
+                {
+                    float2 dir2Zg = math.normalizesafe(new float2(bestDx, bestDz));
+                    float3 dir3Zg = new float3(dir2Zg.x, 0f, dir2Zg.y);
+                    if (math.lengthsq(dir3Zg) > 1e-6f)
+                        return dir3Zg;
+                }
+
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowDirLogTime = tNow;
+                    Debug.Log(
+                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=zeroGradient ix={ix} iz={iz} cC={cC} cXp={cXp} cXm={cXm} cZp={cZp} cZm={cZm} g=({g.x:F2},{g.y:F2})",
+                        this);
+                }
+                return fallbackDirSim;
+            }
+
+            float2 dir2 = math.normalizesafe(g);
+            float3 dir3 = new float3(dir2.x, 0f, dir2.y);
+            if (math.lengthsq(dir3) < 1e-6f)
+                return fallbackDirSim;
+            {
+                float tNow = Time.time;
+                if (tNow - _dbgRecallGlobalFlowDirOkLogTime > 0.5f)
+                {
+                    _dbgRecallGlobalFlowDirOkLogTime = tNow;
+                    float dot = math.dot(math.normalizesafe(fallbackDirSim), math.normalizesafe(dir3));
+                    Debug.Log(
+                        $"[RecallGFlow][DirOk] frame={Time.frameCount} ix={ix} iz={iz} cC={cC} dir=({dir3.x:F2},{dir3.z:F2}) fallback=({fallbackDirSim.x:F2},{fallbackDirSim.z:F2}) dot={dot:F3}",
+                        this);
+                }
+            }
+            return dir3;
         }
         
         #endregion
@@ -6252,6 +7065,17 @@ namespace Revive.Slime
             }
             if (newId > 0 && newId < _controllerStepJumpTargetCenterY.Length)
                 _controllerStepJumpTargetCenterY[newId] = float.NaN;
+
+            if (_controllerStepJumpTargetExpireFrame == null || _controllerStepJumpTargetExpireFrame.Length <= newId)
+            {
+                int oldLen = _controllerStepJumpTargetExpireFrame?.Length ?? 0;
+                int newLen = math.max(newId + 1, oldLen * 2 + 1);
+                System.Array.Resize(ref _controllerStepJumpTargetExpireFrame, newLen);
+                for (int i = oldLen; i < newLen; i++)
+                    _controllerStepJumpTargetExpireFrame[i] = 0;
+            }
+            if (newId > 0 && newId < _controllerStepJumpTargetExpireFrame.Length)
+                _controllerStepJumpTargetExpireFrame[newId] = 0;
 
             _blobIdToControllerSlotMap[blobId] = newId;
             return newId;

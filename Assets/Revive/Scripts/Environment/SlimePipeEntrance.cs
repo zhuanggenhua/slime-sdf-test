@@ -17,6 +17,7 @@ namespace Revive.Environment
             Auto
         }
 
+        [SerializeField]
         private SlimePipePath _path;
 
         [Tooltip("移动方向选择。")]
@@ -33,12 +34,10 @@ namespace Revive.Environment
 
         private void Awake()
         {
-            _path = GetComponentInParent<SlimePipePath>();
-            Debug.Assert(_path != null, $"[SlimePipeEntrance] 未找到 SlimePipePath（请将 SlimePipeEntrance 挂在 SlimePipePath 的子层级下）: {name}", this);
+            Debug.Assert(_path != null, $"[SlimePipeEntrance] SlimePipePath 引用（_path）未在 Inspector 中设置: {name}", this);
             if (_path == null)
             {
                 enabled = false;
-                return;
             }
         }
 
@@ -53,19 +52,17 @@ namespace Revive.Environment
 
         private void OnTriggerEnter(Collider other)
         {
-            TryStartTravel(other);
+            var character = other.GetComponentInParent<Character>();
+            if (character == null)
+                return;
+
+            TryStartTravel(other, character);
         }
 
-        private void TryStartTravel(Collider other)
+        private void TryStartTravel(Collider other, Character character)
         {
             if (_path == null)
                 return;
-
-            var character = other.GetComponentInParent<Character>();
-            if (character == null)
-            {
-                return;
-            }
 
             var ability = character.FindAbility<Revive.Slime.SlimePipeTravelAbility>();
             if (ability == null)
@@ -74,6 +71,11 @@ namespace Revive.Environment
             }
 
             if (ability.IsTravelling)
+            {
+                return;
+            }
+
+            if (!ability.CanStartTravelFromPath(_path))
             {
                 return;
             }
