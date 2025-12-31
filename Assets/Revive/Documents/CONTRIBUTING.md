@@ -12,18 +12,38 @@
 
 ```
 Assets/Revive/Arts/
-├── Font/              # 字体文件
+├── Model/             # 3D模型源文件（FBX）
+│   ├── tree/          # 树木模型
+│   ├── stone/         # 石头模型
+│   ├── bush/          # 灌木模型
+│   ├── flower/        # 花朵模型
+│   ├── mushroom/      # 蘑菇模型
+│   ├── stump/         # 树桩模型
+│   └── bridge/        # 桥梁模型
 ├── Materials/         # 材质球
 ├── Textures/          # 贴图纹理
+├── Shaders/           # 自定义Shader
+├── Font/              # 字体文件
 ├── Skybox/            # 天空盒
 └── UI/                # UI相关美术资源
 ```
 
-**使用说明**:
-- 将 DCC 软件（Blender/Maya/3ds Max）导出的资产放在此处
-- 模型文件推荐使用 `.fbx` 格式
-- 贴图使用 `.png` 或 `.tga` 格式
-- 材质球命名规范: `Mat[资产名称]`，如 `MatSlime`, `MatTree`
+**📘 详细导入指南**：
+> **[美术资产导入完整指南](ArtAssetImportGuide.md)** ⭐ 必读！
+
+本文档包含：
+- ✅ FBX导入设置详解（Scale Factor、Bake Axis Conversion）
+- ✅ Prefab创建规范（Prefab Variant vs 自定义Prefab）
+- ✅ 碰撞体添加指南
+- ✅ 外部资产包处理流程
+- ✅ 常见问题排查
+
+**快速使用说明**:
+- 将 DCC 软件（Blender/Maya/3ds Max）导出的 **FBX模型** 放在 `Model/[类型]/` 对应文件夹
+- 配置Import Settings（参见详细指南）
+- 为模型创建Prefab并放入 `Prefabs/Models/[类型]/` 文件夹（**必须！**）
+- 贴图使用 `.png` 或 `.tga` 格式，放入 `Textures/` 文件夹
+- 材质球命名规范: `Mat_[资产名称]`，如 `Mat_Slime`, `Mat_Tree`
 
 ---
 
@@ -31,8 +51,16 @@ Assets/Revive/Arts/
 
 ```
 Assets/Revive/Prefabs/
+├── Models/            # 3D模型Prefab（对应Arts/Model结构）⭐
+│   ├── tree/          # 树木Prefab
+│   ├── stone/         # 石头Prefab
+│   ├── bush/          # 灌木Prefab
+│   ├── flower/        # 花朵Prefab
+│   ├── mushroom/      # 蘑菇Prefab
+│   ├── stump/         # 树桩Prefab
+│   └── bridge/        # 桥梁Prefab
 ├── Characters/        # 角色预制件（史莱姆、NPC等）
-├── Nature/            # 自然物件（树、草、石头等）
+├── Nature/            # 自然物件（组合预制件）
 ├── Items/             # 道具物品
 ├── Pickables/         # 可拾取物品（继承PickableItem）
 ├── Gameplay/          # 游戏玩法相关预制件
@@ -44,10 +72,14 @@ Assets/Revive/Prefabs/
 └── Prototyping/       # 原型测试用预制件
 ```
 
-**使用说明**:
+**⚠️ 重要规范**:
+- **关卡搭建必须使用Prefab，不要直接使用FBX模型！**
 - 所有场景中使用的对象**必须先做成预制件**
-- 预制件命名使用帕斯卡命名法: `SlimeWater`, `TreeDry`, `RockCracked`
+- 3D模型的Prefab必须放在 `Models/[类型]/` 对应文件夹
+- 预制件命名使用帕斯卡命名法或小写下划线: `tree001`, `stone_large_02`
 - 变体预制件放在对应的子文件夹中
+
+**📘 如何创建Prefab**：参见 **[美术资产导入完整指南](ArtAssetImportGuide.md)** 的 "创建Prefab规范" 章节
 
 ---
 
@@ -91,10 +123,79 @@ Assets/Revive/Scenes/
 
 ```
 Assets/Revive/Documents/
-├── CONTRIBUTING.md    # 本文件
-├── TechnicalDesign.md # 技术设计文档（待创建）
-└── API_Reference.md   # API参考文档（待创建）
+├── CONTRIBUTING.md              # 本文件（开发贡献指南）
+├── ArtAssetImportGuide.md       # 美术资产导入完整指南 ⭐
+├── TrailSystem_ShaderGuide.md   # 尾迹系统Shader配置指南
+└── README.md                    # 项目说明（待创建）
 ```
+
+**文档说明**:
+- **ArtAssetImportGuide.md** - 美术团队必读，包含FBX导入、Prefab创建、Collider设置等完整流程
+- **TrailSystem_ShaderGuide.md** - VegetationWind Shader的使用说明，美术配置植被材质时参考
+- **CONTRIBUTING.md** - 本文件，团队协作规范总览
+
+---
+
+## 🎨 美术资产快速导入流程
+
+> **详细流程请参阅**: **[美术资产导入完整指南](ArtAssetImportGuide.md)**
+
+### 最小步骤（5分钟）
+
+#### 1️⃣ 放置FBX
+```
+将模型放入: Assets/Revive/Arts/Model/[类型]/模型名.fbx
+例如: Assets/Revive/Arts/Model/tree/tree010.fbx
+```
+
+#### 2️⃣ 配置Import Settings
+```
+选中FBX → Inspector → Model选项卡:
+  ✅ Convert Units (勾选)
+  ✅ Bake Axis Conversion (勾选，如果DCC是Y-Up)
+  点击 Apply
+```
+
+#### 3️⃣ 创建Prefab
+```
+右键FBX → Create → Prefab Variant
+重命名并移动到: Assets/Revive/Prefabs/Models/[类型]/模型名.prefab
+```
+
+#### 4️⃣ 添加Collider（可选）
+```
+双击Prefab → Add Component → 选择Collider类型:
+  - 树: Capsule Collider
+  - 石头（大）: Box Collider
+  - 石头（小）: Sphere Collider
+  - 灌木: Sphere Collider
+```
+
+#### 5️⃣ 测试并提交
+```
+拖入场景测试 → 确认尺寸、旋转、碰撞正常 → Git提交
+```
+
+### 常见问题速查
+
+| 问题 | 解决方案 |
+|------|---------|
+| 模型太大/太小 | 勾选 Convert Units 或调整 Scale Factor |
+| 模型躺平/倒置 | 勾选 Bake Axis Conversion 或在Prefab中调整旋转 |
+| 显示粉红色 | 在Prefab中重新分配材质 |
+| 玩家穿模 | 添加或调整Collider |
+
+### 文件夹对应关系表
+
+| 资源类型 | FBX位置 | Prefab位置 |
+|---------|---------|-----------|
+| 树木 | `Arts/Model/tree/` | `Prefabs/Models/tree/` |
+| 石头 | `Arts/Model/stone/` | `Prefabs/Models/stone/` |
+| 灌木 | `Arts/Model/bush/` | `Prefabs/Models/bush/` |
+| 花朵 | `Arts/Model/flower/` | `Prefabs/Models/flower/` |
+| 蘑菇 | `Arts/Model/mushroom/` | `Prefabs/Models/mushroom/` |
+| 树桩 | `Arts/Model/stump/` | `Prefabs/Models/stump/` |
+| 桥梁 | `Arts/Model/bridge/` | `Prefabs/Models/bridge/` |
 
 ---
 
