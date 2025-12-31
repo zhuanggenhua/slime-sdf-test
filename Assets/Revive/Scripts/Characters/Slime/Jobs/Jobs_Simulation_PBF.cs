@@ -49,6 +49,8 @@ namespace Revive.Slime
         public int FramesWithoutParticles; // 无粒子归属的帧数（用于延迟删除）
         public bool IsValid;           // 是否有效（未被删除）
         public float GroundY;          // 该控制器位置的地面高度（模拟坐标）
+        public float3 GroundPoint;
+        public float3 GroundNormal;
     }
     
     /// <summary>
@@ -1117,15 +1119,36 @@ namespace Revive.Slime
                 if (allowGroundClamp && p.Type == ParticleType.MainBody)
                 {
                     float groundY = FallbackGroundY;
+                    float3 groundPoint = new float3(simPos.x, groundY, simPos.z);
+                    float3 groundNormal = new float3(0, 1, 0);
                     if (Controllers.Length > 0)
                     {
-                        groundY = Controllers[0].GroundY;
+                        var ctrl0 = Controllers[0];
+                        groundY = ctrl0.GroundY;
+                        groundPoint = ctrl0.GroundPoint;
+                        groundNormal = ctrl0.GroundNormal;
                     }
-                    
-                    // 地面限制：防止主体粒子穿透地面
-                    if (simPos.y < groundY)
+
+                    float nLen2 = math.lengthsq(groundNormal);
+                    if (nLen2 < 1e-6f)
                     {
-                        simPos.y = groundY;
+                        groundNormal = new float3(0, 1, 0);
+                        groundPoint = new float3(simPos.x, groundY, simPos.z);
+                    }
+                    else
+                        groundNormal *= math.rsqrt(nLen2);
+
+                    const float minGroundNy = 0.55f;
+                    if (groundNormal.y < minGroundNy)
+                    {
+                        groundNormal = new float3(0, 1, 0);
+                        groundPoint = new float3(simPos.x, groundY, simPos.z);
+                    }
+
+                    float planeDist = math.dot(groundNormal, simPos - groundPoint);
+                    if (planeDist < 0f)
+                    {
+                        simPos -= groundNormal * planeDist;
                         collisionAxes.y = true;
                     }
                 }

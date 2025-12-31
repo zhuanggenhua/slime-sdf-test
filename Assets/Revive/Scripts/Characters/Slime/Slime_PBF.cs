@@ -1693,6 +1693,9 @@ namespace Revive.Slime
                 Velocity = float3.zero,
                 Concentration = concentration,
                 IsValid = true,
+                GroundY = initialCenter.y - 20f,
+                GroundPoint = new float3(initialCenter.x, initialCenter.y - 20f, initialCenter.z),
+                GroundNormal = new float3(0, 1, 0),
             };
             _controllerBuffer.Add(initialController);
 
@@ -3124,6 +3127,17 @@ namespace Revive.Slime
             // float dynamicConcentration = concentration * speedRatio;
             float dynamicConcentration = concentration; // 固定值
             
+            float prevGroundY0 = 0f;
+            float3 prevGroundPoint0 = float3.zero;
+            float3 prevGroundNormal0 = new float3(0, 1, 0);
+            if (_controllerBuffer.Length > 0)
+            {
+                var prev0 = _controllerBuffer[0];
+                prevGroundY0 = prev0.GroundY;
+                prevGroundPoint0 = prev0.GroundPoint;
+                prevGroundNormal0 = prev0.GroundNormal;
+            }
+
             _controllerBuffer[0] = new ParticleController()
             {
                 Center = mainCenter,
@@ -3133,6 +3147,9 @@ namespace Revive.Slime
                 ParticleCount = 0,  // 稍后统计
                 FramesWithoutParticles = 0,
                 IsValid = true,
+                GroundY = prevGroundY0,
+                GroundPoint = prevGroundPoint0,
+                GroundNormal = prevGroundNormal0,
             };
             
             // 重置所有分离控制器的 ParticleCount
@@ -3403,10 +3420,14 @@ namespace Revive.Slime
 
                 float3 currentCenter = center;
                 float prevGroundY = 0f;
+                float3 prevGroundPoint = float3.zero;
+                float3 prevGroundNormal = new float3(0, 1, 0);
                 if (controllerSlot > 0 && controllerSlot < _controllerBuffer.Length && _controllerBuffer[controllerSlot].IsValid)
                 {
                     currentCenter = math.lerp(_controllerBuffer[controllerSlot].Center, center, 0.5f);
                     prevGroundY = _controllerBuffer[controllerSlot].GroundY;
+                    prevGroundPoint = _controllerBuffer[controllerSlot].GroundPoint;
+                    prevGroundNormal = _controllerBuffer[controllerSlot].GroundNormal;
 
                     float3 prevVel = _controllerBuffer[controllerSlot].Velocity;
                     float2 prevXZ = new float2(prevVel.x, prevVel.z);
@@ -3426,6 +3447,8 @@ namespace Revive.Slime
                     FramesWithoutParticles = 0,
                     IsValid = true,
                     GroundY = prevGroundY,
+                    GroundPoint = prevGroundPoint,
+                    GroundNormal = prevGroundNormal,
                 };
 
                 ticksAssignWriteCtrl += System.Diagnostics.Stopwatch.GetTimestamp() - tWrite0;
@@ -5686,6 +5709,8 @@ namespace Revive.Slime
                 if (!shouldUpdate)
                 {
                     ctrl.GroundY = fallbackGroundY;
+                    ctrl.GroundPoint = new float3(ctrl.Center.x, fallbackGroundY, ctrl.Center.z);
+                    ctrl.GroundNormal = new float3(0, 1, 0);
                     _controllerBuffer[c] = ctrl;
                     continue;
                 }
@@ -5699,18 +5724,31 @@ namespace Revive.Slime
                 if (hitGround)
                 {
                     float oldGroundY = ctrl.GroundY;
-                    // 地面高度 + 粒子半径，转为模拟坐标
-                    float newGroundY = (hit.point.y + particleRadiusWorld) * PBF_Utils.InvScale;
+                    float3 hitPointSim = (float3)(hit.point * PBF_Utils.InvScale);
+                    float3 hitNormalSim = (float3)hit.normal;
+                    float nLen2 = math.lengthsq(hitNormalSim);
+                    if (nLen2 < 1e-6f)
+                        hitNormalSim = new float3(0, 1, 0);
+                    else
+                        hitNormalSim *= math.rsqrt(nLen2);
+
+                    float radiusSim = particleRadiusWorld * PBF_Utils.InvScale;
+                    float3 newGroundPoint = hitPointSim + hitNormalSim * radiusSim;
+                    float newGroundY = newGroundPoint.y;
                     
                     // 平滑过渡：避免射线命中护动导致地面高度突变
                     // 只有新值更低时才立即采纳（避免穿透地面），否则平滑过渡
                     if (oldGroundY <= 0 || newGroundY < oldGroundY)
                     {
                         ctrl.GroundY = newGroundY;
+                        ctrl.GroundPoint = newGroundPoint;
+                        ctrl.GroundNormal = hitNormalSim;
                     }
                     else
                     {
                         ctrl.GroundY = math.lerp(oldGroundY, newGroundY, 0.1f); // 缓慢上升
+                        ctrl.GroundPoint = math.lerp(ctrl.GroundPoint, newGroundPoint, 0.1f);
+                        ctrl.GroundNormal = math.normalizesafe(math.lerp(ctrl.GroundNormal, hitNormalSim, 0.1f), new float3(0, 1, 0));
                     }
                     
                 }
@@ -5718,6 +5756,8 @@ namespace Revive.Slime
                 {
                     // 未命中时使用控制器中心Y减去一定距离作为后备
                     ctrl.GroundY = ctrl.Center.y - 20f;
+                    ctrl.GroundPoint = new float3(ctrl.Center.x, ctrl.GroundY, ctrl.Center.z);
+                    ctrl.GroundNormal = new float3(0, 1, 0);
                 }
                 
                 _controllerBuffer[c] = ctrl;
