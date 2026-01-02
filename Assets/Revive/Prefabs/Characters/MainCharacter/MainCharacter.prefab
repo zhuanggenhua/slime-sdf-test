@@ -58,6 +58,7 @@ GameObject:
   - component: {fileID: 114072752581488692}
   - component: {fileID: 114710286730267884}
   - component: {fileID: 9165270163092382011}
+  - component: {fileID: 426881611863863319}
   m_Layer: 10
   m_Name: MainCharacter
   m_TagString: Player
@@ -75,12 +76,11 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 2, y: 2, z: 2}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 4586608631069042}
   - {fileID: 729844003759512574}
-  - {fileID: 8970056174943015117}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!143 &143932895876366992
@@ -662,6 +662,35 @@ MonoBehaviour:
   PhysicsInteractionsRaycastLength: 0.05
   PhysicsInteractionsRaycastOffset: {x: 0, y: 0, z: 0}
   PushPower: 1850
+--- !u!114 &426881611863863319
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1167761570092420}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1d9d8a0786e75c14fbff5378d97938ae, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AbilityStartSfx: {fileID: 0}
+  AbilityInProgressSfx: {fileID: 0}
+  AbilityStopSfx: {fileID: 0}
+  AbilityStartFeedbacks: {fileID: 0}
+  AbilityStopFeedbacks: {fileID: 0}
+  AbilityPermitted: 1
+  BlockingMovementStates: 
+  BlockingConditionStates: 
+  BlockingWeaponStates: 
+  PurificationInterval: 3
+  ContributionValue: 10
+  IndicatorType: SlimePuri
+  EnablePurification: 1
+  RemoveIndicatorsOnDisable: 0
+  _timeSinceLastPurification: 0
+  _indicatorCounter: 0
+  _totalIndicatorsCreated: 0
 --- !u!1 &1749803945586204
 GameObject:
   m_ObjectHideFlags: 0
@@ -866,80 +895,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 4586608631069042}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1001 &5459023209709826247
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 4161469876269846}
-    m_Modifications:
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 7586499587377896520, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-        type: 3}
-      propertyPath: m_Name
-      value: VegetationGrowthTrail
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: fc98fd85c7d118a4bb9860b2e984ea26, type: 3}
---- !u!4 &8970056174943015117 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 4016738350103453706, guid: fc98fd85c7d118a4bb9860b2e984ea26,
-    type: 3}
-  m_PrefabInstance: {fileID: 5459023209709826247}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &8145458671482641740
 PrefabInstance:
   m_ObjectHideFlags: 0
