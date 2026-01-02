@@ -116,6 +116,8 @@ namespace Revive.Slime
                 var col = colliders[i];
                 if (col == null)
                     continue;
+                if (col is TerrainCollider)
+                    continue;
                 if (!includeTriggers && col.isTrigger)
                     continue;
 
@@ -146,6 +148,8 @@ namespace Revive.Slime
                 var col = colliders[i];
                 if (col == null)
                     continue;
+                if (col is TerrainCollider)
+                    continue;
                 if (!includeTriggers && col.isTrigger)
                     continue;
 
@@ -173,6 +177,8 @@ namespace Revive.Slime
 
         private void RegisterInternal(Collider col, bool isDynamic)
         {
+            if (col is TerrainCollider)
+                return;
             int id = col.GetInstanceID();
 
             var info = col.GetComponent<SlimeColliderInfo>();

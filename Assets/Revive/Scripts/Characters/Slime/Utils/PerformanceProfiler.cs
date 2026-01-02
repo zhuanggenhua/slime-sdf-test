@@ -50,6 +50,7 @@ namespace Revive.Slime
         }
         
         private static Dictionary<string, StageData> _stages = new Dictionary<string, StageData>();
+        private static List<string> _stageKeys = new List<string>(64);
         private static Stopwatch _frameTimer = new Stopwatch();
         private static int _frameCount = 0;
         private static double _totalFrameTime = 0;
@@ -96,6 +97,7 @@ namespace Revive.Slime
                     CallCount = 0
                 };
                 _stages[stageName] = data;
+                _stageKeys.Add(stageName);
             }
             
             data.Timer.Restart();
@@ -180,13 +182,15 @@ namespace Revive.Slime
             _frameTimer.Restart();
             
             // 重置当前帧的阶段计时
-            var keys = new List<string>(_stages.Keys);
-            foreach (var key in keys)
+            for (int i = 0; i < _stageKeys.Count; i++)
             {
-                var data = _stages[key];
-                data.CurrentMs = 0;
-                data.CurrentFrameTotalMs = 0;
-                _stages[key] = data;
+                string key = _stageKeys[i];
+                if (_stages.TryGetValue(key, out var data))
+                {
+                    data.CurrentMs = 0;
+                    data.CurrentFrameTotalMs = 0;
+                    _stages[key] = data;
+                }
             }
         }
         
@@ -237,6 +241,7 @@ namespace Revive.Slime
         public static void Reset()
         {
             _stages.Clear();
+            _stageKeys.Clear();
             _endWithoutBeginLastWarningFrame.Clear();
             _frameCount = 0;
             _totalFrameTime = 0;

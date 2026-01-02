@@ -5,6 +5,7 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling; 
+using Revive.Environment;
 using Revive.Environment.Watering;
  
 namespace Revive.Slime
@@ -31,6 +32,15 @@ namespace Revive.Slime
             public float Radius;
             public int ControllerSlot;
         }
+        
+        private const int DefaultInitialMainCount = 800;
+        private const int MinParticlePoolCapacity = DropletSubsystem.DROPLET_START + DropletSubsystem.DROPLET_CAPACITY;
+        private const int MaxParticlePoolCapacity = 32768;
+        private const int batchCount = 64;
+        private const int MainBodyMaxParticles = DropletSubsystem.DROPLET_START;
+        private const float MainInitSpacingSim = 0.5f;
+        private const float MainRespawnRandomOffsetScale = 0.5f;
+        private const float RandomCenterOffset = 0.5f;
         
         #region 【核心物理参数】
         
@@ -105,6 +115,10 @@ namespace Revive.Slime
         [ChineseLabel("垂直偏移"), Tooltip("控制中心的垂直偏移系数，让史莱姆更立体")]
         [SerializeField, Range(0f, 0.5f), DefaultValue(0.2f)]
         private float verticalOffset = 0.2f;
+        
+        [ChineseLabel("水珠垂直偏移"), Tooltip("控制水珠凝聚中心的垂直偏移系数，让水珠更立体（仅影响 SceneDroplet 的凝聚方向）")]
+        [SerializeField, Range(0f, 0.5f), DefaultValue(0f)]
+        private float dropletVerticalOffset = 0f;
         
         #endregion
         
@@ -301,14 +315,257 @@ namespace Revive.Slime
         
         [ChineseLabel("粒子网格"), Tooltip("Particles模式下单个粒子使用的网格")]
         [SerializeField] private Mesh particleMesh;
+
+        private static readonly int _surfaceColorId = Shader.PropertyToID("_Color");
+        private MaterialPropertyBlock _surfaceTintBlock;
+        private bool _surfaceTintEnabled;
+
+        [ChineseHeader("水珠渲染")]
+        [ChineseLabel("水珠表面材质(可选)"), Tooltip("Surface模式下水珠网格使用的材质；为空则复用主体材质")]
+        [SerializeField] private Material dropletSurfaceMat;
         
         [ChineseLabel("粒子材质"), Tooltip("Particles模式下粒子的渲染材质")]
         [SerializeField] private Material particleMat;
         
         [ChineseLabel("气泡材质"), Tooltip("史莱姆内部气泡效果的渲染材质")]
         [SerializeField] private Material bubblesMat;
+
+        private static readonly int _bubblesSizeId = Shader.PropertyToID("_Size");
+        private MaterialPropertyBlock _bubblesBlock;
+        private float _bubblesBaseSize = 0.035f;
+        private bool _bubblesBaseSizeCached;
+
+        [ChineseHeader("气泡效果")]
+        [ChineseLabel("启用气泡")]
+        [SerializeField, DefaultValue(true)]
+        private bool enableBubbles = true;
+
+        [ChineseLabel("气泡速度"), Tooltip("控制内部气泡的生成概率/活跃度")]
+        [SerializeField, Range(0f, 100f), DefaultValue(10f)]
+        private float bubbleSpeed = 10f;
+
+        private float _bubbleBoostEndTime = -1f;
+        private float _bubbleBoostMultiplier = 1f;
+        private float _bubbleBoostSizeMultiplier = 1f;
+
+        private bool _consumeWindFieldImmune;
+        private float _consumeDeformLimitMultiplier = 1f;
+        private float _consumeDeformLimitMultiplierCurrent = 1f;
         
         #endregion
+
+        public void SetSurfaceTint(Color tint, bool enabled)
+        {
+            _surfaceTintEnabled = enabled;
+            if (!_surfaceTintEnabled)
+            {
+                return;
+            }
+
+            if (_surfaceTintBlock == null)
+            {
+                _surfaceTintBlock = new MaterialPropertyBlock();
+            }
+
+            _surfaceTintBlock.SetColor(_surfaceColorId, tint);
+        }
+
+        public bool TryGetSurfaceBaseColor(out Color color)
+        {
+            if (mat != null && mat.HasProperty(_surfaceColorId))
+            {
+                color = mat.GetColor(_surfaceColorId);
+                return true;
+            }
+
+            color = Color.white;
+            return false;
+        }
+
+        public void SetConsumeWindFieldImmune(bool immune)
+        {
+            _consumeWindFieldImmune = immune;
+        }
+
+        public void SetConsumeDeformLimitMultiplier(float multiplier)
+        {
+            _consumeDeformLimitMultiplier = Mathf.Max(0.01f, multiplier);
+        }
+
+        public void TriggerConsumeBubbleBurst(int count, float lifetimeSeconds, float radiusMultiplier, float upSpeedWorld)
+        {
+            if (!_runtimeInitialized)
+                return;
+            if (!_bubblesBuffer.IsCreated || !_bubblesPoolBuffer.IsCreated)
+                return;
+
+            int spawnCount = Mathf.Min(Mathf.Max(0, count), _bubblesPoolBuffer.Length);
+            if (spawnCount <= 0)
+                return;
+
+            uint seed = (uint)(Time.frameCount * 9781 + spawnCount * 6271);
+            if (seed == 0)
+                seed = 1;
+            var rnd = new global::Unity.Mathematics.Random(seed);
+
+            Vector3 centerWorld = MainBodyCentroidWorld;
+            if (centerWorld == Vector3.zero && trans != null)
+                centerWorld = trans.position;
+            float3 centerSim = (float3)(centerWorld * PBF_Utils.InvScale);
+
+            float radiusSim = MainBodyRadiusWorld * PBF_Utils.InvScale;
+            radiusSim = math.max(radiusSim, 0.5f);
+
+            float life = Mathf.Max(0f, lifetimeSeconds);
+            float upSpeedSim = Mathf.Max(0f, upSpeedWorld) * PBF_Utils.InvScale;
+            float rMul = Mathf.Max(0f, radiusMultiplier);
+
+            for (int i = 0; i < spawnCount; i++)
+            {
+                int last = _bubblesPoolBuffer.Length - 1;
+                int id = _bubblesPoolBuffer[last];
+                _bubblesPoolBuffer.RemoveAtSwapBack(last);
+
+                float3 dir = rnd.NextFloat3Direction();
+                float dist = rnd.NextFloat() * radiusSim;
+                float3 pos = centerSim + dir * dist;
+
+                float radius = (rnd.NextFloat() * 0.7f + 0.3f) * PBF_Utils.CellSize * rMul;
+                float3 vel = new float3(
+                    rnd.NextFloat(-0.15f, 0.15f) * PBF_Utils.InvScale,
+                    upSpeedSim,
+                    rnd.NextFloat(-0.15f, 0.15f) * PBF_Utils.InvScale
+                );
+
+                _bubblesBuffer[id] = new Effects.Bubble
+                {
+                    Pos = pos,
+                    Radius = radius,
+                    Vel = vel,
+                    LifeTime = life,
+                };
+            }
+        }
+
+        public void TriggerConsumeBubbleBoost(float multiplier, float durationSeconds, float sizeMultiplier)
+        {
+            float dur = Mathf.Max(0f, durationSeconds);
+            if (dur <= 0f)
+            {
+                _bubbleBoostEndTime = -1f;
+                _bubbleBoostMultiplier = 1f;
+                _bubbleBoostSizeMultiplier = 1f;
+                return;
+            }
+
+            _bubbleBoostEndTime = Time.time + dur;
+            _bubbleBoostMultiplier = Mathf.Max(0f, multiplier);
+            _bubbleBoostSizeMultiplier = Mathf.Max(0f, sizeMultiplier);
+        }
+
+        private void UpdateBubblesEffects()
+        {
+            if (!enableBubbles)
+                return;
+            if (!_runtimeInitialized)
+                return;
+            if (!_bubblesBuffer.IsCreated || !_bubblesPoolBuffer.IsCreated)
+                return;
+            if (!_gridBuffer.IsCreated)
+                return;
+            if (!_gridLut.IsCreated)
+                return;
+
+            float dt = deltaTime;
+
+            float boost = 1f;
+            float sizeBoost = 1f;
+            if (_bubbleBoostEndTime > 0f)
+            {
+                if (Time.time <= _bubbleBoostEndTime)
+                {
+                    boost = Mathf.Max(0f, _bubbleBoostMultiplier);
+                    sizeBoost = Mathf.Max(0f, _bubbleBoostSizeMultiplier);
+                }
+                else
+                {
+                    _bubbleBoostEndTime = -1f;
+                    _bubbleBoostMultiplier = 1f;
+                    _bubbleBoostSizeMultiplier = 1f;
+                }
+            }
+
+            float thresholdScaled = threshold * 1.2f;
+
+            int gridLen = Mathf.Max(1, Mathf.Min(_gridBuffer.Length, Mathf.Max(1, blockNum) * PBF_Utils.GridSize));
+            var grid = _gridBuffer.GetSubArray(0, gridLen);
+
+            JobHandle handle = default;
+
+            if (blockNum > 0)
+            {
+                float spawnProb = math.clamp(0.01f * bubbleSpeed * boost, 0f, 1f);
+                handle = new Effects.GenerateBubblesJobs()
+                {
+                    GridLut = _gridLut,
+                    Keys = _blockBuffer,
+                    Grid = grid,
+                    BubblesStack = _bubblesPoolBuffer,
+                    BubblesBuffer = _bubblesBuffer,
+                    Speed = spawnProb,
+                    Threshold = thresholdScaled,
+                    BlockCount = blockNum,
+                    MinPos = minPos,
+                    Seed = (uint)Time.frameCount,
+                }.Schedule();
+            }
+
+            handle = new Effects.BubblesViscosityJob()
+            {
+                Lut = _pbfSystem.Lut,
+                Particles = _particlesTemp,
+                VelocityR = _velocityTempBuffer,
+                Controllers = _controllerBuffer,
+                BubblesBuffer = _bubblesBuffer,
+                ViscosityStrength = viscosityStrength / 50f,
+            }.Schedule(_bubblesBuffer.Length, batchCount, handle);
+
+            handle = new Effects.UpdateBubblesJob()
+            {
+                GridLut = _gridLut,
+                Grid = grid,
+                BubblesBuffer = _bubblesBuffer,
+                BubblesStack = _bubblesPoolBuffer,
+                Threshold = thresholdScaled,
+                MinPos = minPos,
+                DeltaTime = dt,
+            }.Schedule(handle);
+
+            handle.Complete();
+
+            ApplyBubbleSizeBoost(sizeBoost);
+        }
+
+        private void ApplyBubbleSizeBoost(float sizeBoost)
+        {
+            if (bubblesMat == null)
+                return;
+            if (!bubblesMat.HasProperty(_bubblesSizeId))
+                return;
+
+            if (!_bubblesBaseSizeCached)
+            {
+                _bubblesBaseSize = bubblesMat.GetFloat(_bubblesSizeId);
+                _bubblesBaseSizeCached = true;
+            }
+
+            if (_bubblesBlock == null)
+            {
+                _bubblesBlock = new MaterialPropertyBlock();
+            }
+
+            _bubblesBlock.SetFloat(_bubblesSizeId, _bubblesBaseSize * Mathf.Max(0f, sizeBoost));
+        }
         
         #region 【渲染设置】
         
@@ -357,41 +614,67 @@ namespace Revive.Slime
         [ChineseLabel("脸部缩放上限"), Tooltip("按粒子数计算的缩放倍率上限")]
         [SerializeField, Range(0.05f, 4f), DefaultValue(1.5f)]
         private float faceScaleCountFactorMax = 1.5f;
-        
+
         #endregion
         
         #region 【运行时状态】（只读）
         
-        [ChineseHeader("运行时状态（只读）")]
-        [Tooltip("当前网格块数量")]
-        public int blockNum;
-        
-        [Tooltip("当前气泡数量")]
-        public int bubblesNum;
-        
-        [Tooltip("边界最小点")]
-        public float3 minPos;
-        
-        [Tooltip("边界最大点")]
-        public float3 maxPos;
+        		[ChineseHeader("运行时状态（只读）")]
+		[Tooltip("当前网格块数量")]
+		public int blockNum;
+		
+		[Tooltip("当前气泡数量")]
+		public int bubblesNum;
+		
+		[Tooltip("边界最小点")]
+		public float3 minPos;
+		
+		[Tooltip("边界最大点")]
+		public float3 maxPos;
 
-        public Vector3 MainBodyCentroidWorld => _mainBodyCentroidWorld;
+		public Bounds MainBodyBoundsWorld
+		{
+			get
+			{
+				Bounds b = default;
+				b.SetMinMax(minPos * PBF_Utils.Scale, maxPos * PBF_Utils.Scale);
+				return b;
+			}
+		}
 
-        public float MainBodyRadiusWorld
-        {
-            get
-            {
-                if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
-                    return _controllerBuffer[0].Radius * PBF_Utils.Scale;
+		public Bounds DropletBoundsWorld => _dropletBounds;
 
-                float3 sizeWorld = (maxPos - minPos) * PBF_Utils.Scale;
-                return math.max(sizeWorld.x, sizeWorld.z) * 0.5f;
-            }
-        }
+		public Bounds CombinedBoundsWorld
+		{
+			get
+			{
+				Bounds b = MainBodyBoundsWorld;
+				if (_dropletSubsystem.ActiveCount > 0)
+				{
+					b.Encapsulate(_dropletBounds.min);
+					b.Encapsulate(_dropletBounds.max);
+				}
+				return b;
+			}
+		}
 
-        public int MainActiveParticles => activeParticles;
+		public Vector3 MainBodyCentroidWorld => _mainBodyCentroidWorld;
 
-        public int DropletActiveParticles => _dropletSubsystem.ActiveCount;
+		public float MainBodyRadiusWorld
+		{
+			get
+			{
+				if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
+					return _controllerBuffer[0].Radius * PBF_Utils.Scale;
+
+				float3 sizeWorld = (maxPos - minPos) * PBF_Utils.Scale;
+				return math.max(sizeWorld.x, sizeWorld.z) * 0.5f;
+			}
+		}
+
+		public int MainActiveParticles => activeParticles;
+
+		public int DropletActiveParticles => _dropletSubsystem.ActiveCount;
 
         public NativeArray<Particle> Particles => _particles;
 
@@ -738,6 +1021,10 @@ namespace Revive.Slime
         [ChineseLabel("主体桶索引查询半径(世界)"), Tooltip("以史莱姆为中心进行桶索引查询的半径（米，世界坐标）")]
         [SerializeField, Range(5f, 50f), DefaultValue(20f)]
         private float mainColliderIndexQueryRadiusWorld = 20f;
+
+        [ChineseLabel("启用地面兜底射线"), Tooltip("开启后：每帧用向下射线更新控制器 GroundY，用于主体粒子的地面钳制。关闭后：不再做兜底射线，GroundY 将保持为很低值以避免粒子被错误抬高。")]
+        [SerializeField, DefaultValue(true)]
+        private bool enableGroundFallbackRaycast = true;
         
         [ChineseLabel("静态碰撞层"), Tooltip("用于查询静态场景碰撞体的层掩码。0 表示全部层（~0），可能导致 Default 等层也参与普通碰撞。")]
         [SerializeField]
@@ -763,6 +1050,27 @@ namespace Revive.Slime
         [ChineseLabel("使用SDF时禁用静态碰撞回退"), Tooltip("开启后：当 SDF 可用时，不再使用普通静态碰撞体回退（SDF-only）。")]
         [SerializeField]
         private bool disableStaticColliderFallbackWhenUsingSdf;
+
+        [ChineseHeader("SDF验证")]
+        [ChineseLabel("输出SDF验证日志"), Tooltip("输出 Raycast 命中点的 sdf@hit（期望接近0）以及法线一致性（dot 期望接近1）。")]
+        [SerializeField, DefaultValue(false)]
+        private bool sdfValidationLogs;
+
+        [ChineseLabel("输出SDF碰撞调试日志"), Tooltip("输出粒子与世界静态SDF的穿透/法线统计信息（较重，默认关闭）。")]
+        [SerializeField, DefaultValue(false)]
+        private bool sdfCollisionDebugLogs;
+
+        [ChineseLabel("SDF验证射线最大距离(世界)"), Tooltip("用于 Raycast 的最大距离（米）。")]
+        [SerializeField, Range(0.5f, 50f), DefaultValue(5f)]
+        private float sdfValidationRayMaxDistWorld = 5f;
+
+        [ChineseLabel("SDF验证射线高度偏移(世界)"), Tooltip("射线起点相对 transform.position 的高度偏移（米）。")]
+        [SerializeField, Range(0f, 2f), DefaultValue(0.3f)]
+        private float sdfValidationRayHeightOffsetWorld = 0.3f;
+
+        [ChineseLabel("SDF法线验证Eps(世界)"), Tooltip("用于采样 d(hit±eps) 的 eps（米）。")]
+        [SerializeField, Range(0.001f, 0.2f), DefaultValue(0.02f)]
+        private float sdfValidationNormalEpsWorld = 0.02f;
 
         [ChineseLabel("世界静态SDF摩擦"), Tooltip("SDF 碰撞的摩擦系数（0=无摩擦，1=强摩擦）。")]
         [SerializeField, Range(0f, 1f)]
@@ -817,12 +1125,6 @@ namespace Revive.Slime
 
         [Tooltip("显示召回避障 SphereCast 调试线框")]
         public bool recallAvoidanceGizmos;
-
-        [Tooltip("输出召回避障命中来源日志（每帧节流）")]
-        public bool recallAvoidanceLogs;
-
-        [Tooltip("召回调试：指定要输出日志的 controllerSlot；-1 表示维持每帧只输出一条的节流")]
-        public int recallAvoidanceLogControllerSlot = -1;
         
         #endregion
         
@@ -868,16 +1170,6 @@ namespace Revive.Slime
         private Vector3 _dbgRecallSphereHitPointW;
         private Vector3 _dbgRecallSphereHitNormalW;
 
-        private int _dbgRecallLogFrame;
-        private int _dbgRecallAvoidSlowLogFrame;
-        private int _dbgRecallSdfSamples;
-        private int _dbgRecallSdfInvalidSamples;
-        private float _dbgRecallSdfMinD;
-
-        private float _dbgRecallStateLogTime;
-        private float _dbgRecallGlobalFlowLogTime;
-        private float _dbgRecallGlobalFlowDirLogTime;
-
         private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
 
         private NativeArray<MyBoxCollider> _dropletColliderBuffer;
@@ -911,171 +1203,120 @@ namespace Revive.Slime
         private NativeArray<ParticleController> _sourceControllers;
         private int[] _componentToGroup;
         private Stack<int> _freeSeparatedControllerIds;
-        
-        private ComputeBuffer _bubblesDataBuffer;
-        
-        // 粒子渲染器（封装 GPU Buffer 管理）
-        private SlimeParticleRenderer _particleRenderer;
-        
-        // 场景水珠独立管理器（固定分区[8192-16383]）
-        private DropletSubsystem _dropletSubsystem;
-
-        private int _lastParticleRenderUploadFrame = -999999;
-
-        private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
-        private NativeParallelMultiHashMap<int, int> _mergeAbsorbLut;
-        private NativeArray<int> _autoSeparateClusterCounts;
-        private NativeArray<float3> _autoSeparateClusterCenters;
-
-        #endregion
-
-        #region 【World Static SDF Collision】
-        private bool _mouseDown;
-        private float3 _velocityY = float3.zero;
-        private Bounds _bounds;
-        private Vector3 _velocity = Vector3.zero;
-        private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
-
-        private Vector3 _renderVelocity = Vector3.zero;
-        private Vector3 _prevRenderTransPosition;
-        private bool _renderVelocityInitialized;
-        private bool _runtimeInitialized;
-        private float _lastMainRadius; // 用于 mainRadius 防抖
-        private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
-
-        private WorldSdfRuntime _worldStaticSdf;
-        private NativeArray<float> _dummyWorldSdfDistances;
-        private WorldSdfRuntime.Volume _dummyWorldSdfVolume;
-
-        private LMarchingCubes _marchingCubes;
-        private Mesh _mesh;
-        private Vector3 _meshOriginWorld;
-
-        private LMarchingCubes _marchingCubesDroplet;
-        private Mesh _dropletMesh;
-        private Bounds _dropletBounds;
-        private Vector3 _dropletMeshOriginWorld;
-        private int _lastDropletMarchingCubesFrame = -999999;
-
-        private int _lastSurfaceSpikeLogFrame = -999999;
-
-        private int _lastSdfCollisionDbgLogFrame = -999999;
-
-        private int _lastMergeScanMainRangeLogFrame = -999999;
-
-        private int _lastMergeScanDropletPartitionLogFrame = -999999;
-
-        private Camera _cachedMainCamera;
-        private UnityEngine.Plane[] _cachedFrustumPlanes;
-        
-        private bool _connect;
-        private float _connectStartTime;
-        private NativeArray<int> _blobIdToControllerSlot;
-        private NativeArray<byte> _recallEligibleBlobIds;
-
-        private int[] _recallEligibleBlobAbsentFrames;
-        private NativeList<SlimeInstance> _slimeInstances;
-        private int _controlledInstance;
-        private Stack<int> _instancePool;
-
-        private NativeArray<float3> _controllerMainBodyCentroid;
-        private NativeArray<int> _controllerMainBodyCount;
-        private NativeArray<float3> _controllerCentroidAll;
-        private NativeArray<int> _controllerCountAll;
-
-        private int _lastRearrangeFrame = -999999;
-        private int _lastRearrangeControllerCount = -1;
-
         private int[] _controllerFreeFramesCounts;
         private int[] _controllerSmallSeparatedFrames;
         private int[] _controllerFadeRemainingFrames;
         private int[] _controllerFadePerFrame;
         private int[] _controllerFadeBudget;
-
         private float[] _controllerStepJumpTargetCenterY;
         private int[] _controllerStepJumpTargetExpireFrame;
-
-        // Job System 批处理大小
-        private const int batchCount = 64;
-
-        /// <summary>
-        /// 未挂 SlimeVolume 时的默认主体粒子数（也是 activeParticles 字段的默认值）。
-        /// 真正影响性能的是 activeParticles；建议优先通过 SlimeVolume.initialMainVolume/maxVolume 控制。
-        /// </summary>
-        private const int DefaultInitialMainCount = 800;
-
-        /// <summary>
-        /// 主体粒子分区容量上限（[0 .. DROPLET_START-1]）。
-        /// 注意：DROPLET_START 之后是场景水珠固定分区，不能占用。
-        /// </summary>
-        private const int MainBodyMaxParticles = DropletSubsystem.DROPLET_START;
-
-        /// <summary>
-        /// 粒子池最小容量：主体分区 + 水珠分区。
-        /// </summary>
-        private const int MinParticlePoolCapacity = DropletSubsystem.DROPLET_START + DropletSubsystem.DROPLET_CAPACITY;
-
-        /// <summary>
-        /// Inspector 允许设置的粒子池最大容量（只是上限约束）。
-        /// </summary>
-        private const int MaxParticlePoolCapacity = 32768;
-
-        /// <summary>
-        /// 主体初始化生成间距（模拟坐标）。
-        /// 调大：初始更稀疏（视觉可能变薄/破洞，需要配合 threshold 调整），但不会自动减少 activeParticles。
-        /// </summary>
-        private const float MainInitSpacingSim = 0.5f;
-
-        /// <summary>
-        /// 主体“补回主体粒子”时的随机偏移尺度（offset = random[-0.5,0.5] * (h * scale)）。
-        /// </summary>
-        private const float MainRespawnRandomOffsetScale = 0.5f;
-
-        /// <summary>
-        /// Random.value 的中心偏移（Random.value - 0.5）。
-        /// </summary>
-        private const float RandomCenterOffset = 0.5f;
-
+        private bool _connect;
+        private float _connectStartTime;
+        private NativeArray<int> _blobIdToControllerSlot;
+        private NativeArray<byte> _recallEligibleBlobIds;
+        private int[] _recallEligibleBlobAbsentFrames;
+        private NativeList<SlimeInstance> _slimeInstances;
+        private int _controlledInstance;
+        private Stack<int> _instancePool;
+        private NativeArray<float3> _controllerMainBodyCentroid;
+        private NativeArray<int> _controllerMainBodyCount;
+        private NativeArray<float3> _controllerCentroidAll;
+        private NativeArray<int> _controllerCountAll;
+        private int _lastRearrangeFrame = -999999;
+        private int _lastRearrangeControllerCount = -1;
         
+            private ComputeBuffer _bubblesDataBuffer;
+        
+            // 粒子渲染器（封装 GPU Buffer 管理）
+            private SlimeParticleRenderer _particleRenderer;
+        
+            // 场景水珠独立管理器（固定分区[8192-16383]）
+            private DropletSubsystem _dropletSubsystem;
+
+            private int _lastParticleRenderUploadFrame = -999999;
+            private int _lastRenderDbgLogFrame = -999999;
+            private bool _renderInitErrorLogged;
+
+            private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
+            private NativeParallelMultiHashMap<int, int> _mergeAbsorbLut;
+            private NativeArray<int> _autoSeparateClusterCounts;
+            private NativeArray<float3> _autoSeparateClusterCenters;
+
+            private NativeList<WindFieldZoneData> _windZones;
+
+            #endregion
+
+            #region 【World Static SDF Collision】
+            private bool _mouseDown;
+            private float3 _velocityY = float3.zero;
+        		private Bounds _bounds;
+		private Vector3 _velocity = Vector3.zero;
+		private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
+
+		private Vector3 _renderVelocity = Vector3.zero;
+		private Vector3 _prevRenderTransPosition;
+		private bool _renderVelocityInitialized;
+		private bool _runtimeInitialized;
+		private float _lastMainRadius; // 用于 mainRadius 防抖
+		private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
+		private int _lastDropletMarchingCubesFrame = -999999;
+		private int _lastSurfaceSpikeLogFrame = -999999;
+		private int _lastSdfCollisionDbgLogFrame = -999999;
+		private int _lastSdfValidationLogFrame = -999999;
+		private int _lastGroundFallbackHitLogFrame = -999999;
+		private int _lastMergeScanMainRangeLogFrame = -999999;
+		private int _lastMergeScanDropletPartitionLogFrame = -999999;
+		private Camera _cachedMainCamera;
+		private UnityEngine.Plane[] _cachedFrustumPlanes;
+
+		private WorldSdfRuntime _worldStaticSdf;
+		private NativeArray<float> _dummyWorldSdfDistances;
+		private WorldSdfRuntime.Volume _dummyWorldSdfVolume;
+		private NativeArray<float> _dummyTerrainHeights01;
+		private NativeArray<float> _terrainHeights01;
+		private int _terrainResX;
+		private int _terrainResZ;
+		private float3 _terrainOriginSim;
+		private float3 _terrainSizeSim;
+		private bool _terrainHeightfieldLogged;
+		private bool _worldIndexMaskWarnLogged;
+		private Terrain _terrainHeightfieldSource;
+
+		private LMarchingCubes _marchingCubes;
+		private Mesh _mesh;
+		private Vector3 _meshOriginWorld;
+
+		private LMarchingCubes _marchingCubesDroplet;
+		private Mesh _dropletMesh;
+		private Bounds _dropletBounds;
+		private Vector3 _dropletMeshOriginWorld;
+
+        // ...
+
         void Awake()
         {
-            QualitySettings.vSyncCount = 0;
-            Application.targetFrameRate = 60;
-            PerformanceProfiler.Enabled = performanceProfilerEnabled;
-            _runtimeInitialized = false;
-
-            // 确保maxParticles足够支持水珠分区[8192-16383]
-            maxParticles = math.max(maxParticles, MinParticlePoolCapacity);
-
             if (trans == null)
             {
                 trans = transform;
             }
 
-            _pipeTravelAbility = GetComponentInParent<SlimePipeTravelAbility>();
-
-            
-            // 初始化碰撞体缓冲区（必须在Awake中，避免FixedUpdate先于Start执行）
-            _colliderBuffer = new NativeArray<MyBoxCollider>(mainColliderIndexQueryCacheCapacity, Allocator.Persistent);
-            _raycastHits = new RaycastHit[16];
-            _currentColliderCount = 0;
-
-            _dropletColliderBuffer = new NativeArray<MyBoxCollider>(dropletColliderIndexQueryCacheCapacity, Allocator.Persistent);
-            _currentDropletColliderCount = 0;
-
-            _boundsBuffer = new NativeArray<float3>(2, Allocator.Persistent);
-
-            // Job 参数必须始终是有效容器：即使未启用召回也需要一个已构造的数组
-            // 真正启用掩码由 UseRecallEligibleBlobIds 控制
-            if (!_blobIdToControllerSlot.IsCreated)
-                _blobIdToControllerSlot = new NativeArray<int>(1, Allocator.Persistent);
-            if (!_recallEligibleBlobIds.IsCreated)
-                _recallEligibleBlobIds = new NativeArray<byte>(1, Allocator.Persistent);
+            // ...
 
             if (!_dummyWorldSdfDistances.IsCreated)
             {
                 _dummyWorldSdfDistances = new NativeArray<float>(1, Allocator.Persistent);
                 _dummyWorldSdfDistances[0] = 1000000f;
+            }
+
+			if (!_dummyTerrainHeights01.IsCreated)
+			{
+				_dummyTerrainHeights01 = new NativeArray<float>(1, Allocator.Persistent);
+				_dummyTerrainHeights01[0] = 0f;
+			}
+            if (!_recallEligibleBlobIds.IsCreated)
+            {
+                _recallEligibleBlobIds = new NativeArray<byte>(1, Allocator.Persistent);
+                _recallEligibleBlobIds[0] = 0;
             }
             _dummyWorldSdfVolume = new WorldSdfRuntime.Volume
             {
@@ -1087,17 +1328,11 @@ namespace Revive.Slime
                 DenseDistancesSim = _dummyWorldSdfDistances,
             };
         }
-
-        private void OnValidate()
-        {
-            PerformanceProfiler.Enabled = performanceProfilerEnabled;
-        }
         
         public void StartRecall()
         {
             if (!PrepareRecallEligibleControllers())
             {
-                Debug.Log($"[Recall] StartRecall ignored: no eligible separated/emitted blobs. activeParticles={activeParticles} controllers={(_controllerBuffer.IsCreated ? _controllerBuffer.Length : -1)}");
                 return;
             }
 
@@ -1107,6 +1342,7 @@ namespace Revive.Slime
             // 召回是一次性快照：记录 eligible blobId 的“缺席帧数”。
             // 规则：eligible blobId 一旦在召回期间缺席过（>0帧），后续不允许被新组件继承，避免“发射后才出现的团”复用旧 eligible id 被预埋召回。
             int required = _recallEligibleBlobIds.IsCreated ? _recallEligibleBlobIds.Length : 0;
+
             if (_recallEligibleBlobAbsentFrames == null || _recallEligibleBlobAbsentFrames.Length < required)
                 _recallEligibleBlobAbsentFrames = new int[required];
             for (int i = 0; i < required; i++)
@@ -1136,7 +1372,6 @@ namespace Revive.Slime
 
             for (int i = 0; i < _recallEligibleBlobIds.Length; i++)
                 _recallEligibleBlobIds[i] = 0;
-
             if (_recallEligibleBlobIds.Length > 0)
                 _recallEligibleBlobIds[0] = 0;
 
@@ -1163,13 +1398,19 @@ namespace Revive.Slime
 
             return hasAny;
         }
+
         public void SwitchInstance()
         {
+            if (!_slimeInstances.IsCreated || _slimeInstances.Length <= 0)
+                return;
+
             for (int i = 0; i < _slimeInstances.Length; i++)
             {
-                if (!_slimeInstances[i].Active) continue;
+                if (!_slimeInstances[i].Active)
+                    continue;
                 _controlledInstance = i;
-                trans.position = _slimeInstances[i].Center * PBF_Utils.Scale;
+                if (trans != null)
+                    trans.position = _slimeInstances[i].Center * PBF_Utils.Scale;
                 break;
             }
         }
@@ -1307,30 +1548,21 @@ namespace Revive.Slime
                             Type = ParticleType.MainBody,
                             ControllerSlot = 0,
                             BlobId = 0,
-                            SourceId = -1,
-                            ClusterId = 0,
-                            FreeFrames = 0,
-                            FramesOutsideMain = 0,
                         };
-                        _velocityBuffer[activeParticles] = float3.zero;
-                        activeParticles++;
                     }
-
-                    if (i < activeParticles)
-                        i++;
-                    continue;
                 }
-
-                if (_controllerFadeBudget[cid] <= 0)
+                else
                 {
                     if (p.Type != ParticleType.FadingOut)
                         continue;
-                    if (_controllerFadeRemainingFrames[cid] > 0)
+
+                    int budget = _controllerFadeBudget[cid];
+                    if (budget <= 0)
                         continue;
 
+                    _controllerFadeBudget[cid]--;
                     ParticleStateManager.SetDormant(ref p);
                     _particles[i] = p;
-
                     if (i < activeParticles - 1)
                     {
                         ParticleStateManager.SwapParticles(ref _particles, i, activeParticles - 1);
@@ -1338,105 +1570,32 @@ namespace Revive.Slime
                         _velocityBuffer[i] = _velocityBuffer[activeParticles - 1];
                         _velocityBuffer[activeParticles - 1] = tempVel;
                     }
-
                     activeParticles--;
-
-                    if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
+                    _controllerFadeRemainingFrames[cid]--;
+                    if (_controllerFadeRemainingFrames[cid] <= 0)
                     {
-                        float3 offset = new float3(
-                            UnityEngine.Random.value - RandomCenterOffset,
-                            UnityEngine.Random.value - RandomCenterOffset,
-                            UnityEngine.Random.value - RandomCenterOffset
-                        ) * (PBF_Utils.h * MainRespawnRandomOffsetScale);
-
-                        _particles[activeParticles] = new Particle
-                        {
-                            Position = mainCenter + offset,
-                            Type = ParticleType.MainBody,
-                            SourceId = -1,
-                            ClusterId = 0,
-                            FreeFrames = 0,
-                            ControllerSlot = 0,
-                            BlobId = 0,
-                            FramesOutsideMain = 0,
-                        };
-                        _velocityBuffer[activeParticles] = float3.zero;
-                        activeParticles++;
-                    }
-
-                    if (i < activeParticles)
-                        i++;
-                    continue;
-                }
-
-                ParticleStateManager.SetDormant(ref p);
-                _particles[i] = p;
-
-                if (i < activeParticles - 1)
-                {
-                    ParticleStateManager.SwapParticles(ref _particles, i, activeParticles - 1);
-                    var tempVel = _velocityBuffer[i];
-                    _velocityBuffer[i] = _velocityBuffer[activeParticles - 1];
-                    _velocityBuffer[activeParticles - 1] = tempVel;
-                }
-
-                activeParticles--;
-                _controllerFadeBudget[cid]--;
-
-                if (activeParticles < DropletSubsystem.DROPLET_START && activeParticles >= 0 && activeParticles < _particles.Length)
-                {
-                    float3 offset = new float3(
-                        UnityEngine.Random.value - RandomCenterOffset,
-                        UnityEngine.Random.value - RandomCenterOffset,
-                        UnityEngine.Random.value - RandomCenterOffset
-                    ) * (PBF_Utils.h * MainRespawnRandomOffsetScale);
-
-                    _particles[activeParticles] = new Particle
-                    {
-                        Position = mainCenter + offset,
-                        Type = ParticleType.MainBody,
-                        ControllerSlot = 0,
-                        BlobId = 0,
-                        SourceId = -1,
-                        ClusterId = 0,
-                        FreeFrames = 0,
-                        FramesOutsideMain = 0,
-                    };
-                    _velocityBuffer[activeParticles] = float3.zero;
-                    activeParticles++;
-                }
-
-                if (i < activeParticles)
-                    i++;
-            }
-
-            for (int c = 1; c < controllerCount; c++)
-            {
-                if (_controllerFadeRemainingFrames[c] > 0)
-                {
-                    _controllerFadeRemainingFrames[c]--;
-                    if (_controllerFadeRemainingFrames[c] <= 0)
-                    {
-                        _controllerSmallSeparatedFrames[c] = 0;
-                        _controllerFadePerFrame[c] = 0;
-                        _controllerFadeBudget[c] = 0;
+                        _controllerSmallSeparatedFrames[cid] = 0;
+                        _controllerFadePerFrame[cid] = 0;
+                        _controllerFadeBudget[cid] = 0;
                     }
                 }
             }
         }
-        
+
         void Start()
         {
+            if (trans == null)
+            {
+                trans = transform;
+            }
+
+            PerformanceProfiler.Enabled = performanceProfilerEnabled;
+            
             // 使用 maxParticles 替代 PBF_Utils.Num
             _particles = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
             _particlesRenderBuffer = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
-            
-            // 从 SlimeVolume 获取初始主体粒子数
-            int initialMainCount = DefaultInitialMainCount; // 默认值
-            if (_slimeVolume != null)
-            {
-                initialMainCount = Mathf.Min(_slimeVolume.initialMainVolume, maxParticles);
-            }
+            int initialMainCount = DefaultInitialMainCount;
+            initialMainCount = Mathf.Min(initialMainCount, maxParticles);
             // 主体粒子分区为[0-8191]，最大8192个
             initialMainCount = Mathf.Min(initialMainCount, MainBodyMaxParticles);
             
@@ -1511,123 +1670,16 @@ namespace Revive.Slime
 
 
             var worldIndex = SlimeWorldColliderIndex.GetOrCreate();
-            bool wantStaticSdf = useWorldStaticSdf && worldStaticSdfBytes != null;
-            if (wantStaticSdf)
+            if (useWorldStaticSdf && worldStaticSdfBytes != null)
             {
                 _worldStaticSdf.LoadFromBytes(worldStaticSdfBytes);
-                if (!_worldStaticSdf.IsCreated)
-                {
-                    uint magic = 0;
-                    int version = 0;
-                    int len = 0;
-                    try
-                    {
-                        var bytes = worldStaticSdfBytes.bytes;
-                        len = bytes != null ? bytes.Length : 0;
-                        if (bytes != null && bytes.Length >= 8)
-                        {
-                            magic = BitConverter.ToUInt32(bytes, 0);
-                            version = BitConverter.ToInt32(bytes, 4);
-                        }
-                    }
-                    catch
-                    {
-                    }
-
-                    Debug.LogError($"[Slime_PBF] World Static SDF 加载失败：{worldStaticSdfBytes.name}（len={len} magic=0x{magic:X8} version={version}），将回退到普通静态碰撞层。 ");
-                }
-            }
-
-            bool enableStaticSdf = wantStaticSdf && _worldStaticSdf.IsCreated;
-            if (enableStaticSdf)
-            {
-                var v = _worldStaticSdf.Data;
-                float voxelWorld = v.VoxelSizeSim * PBF_Utils.Scale;
-                float maxDistanceWorld = v.MaxDistanceSim * PBF_Utils.Scale;
-                Vector3 originWorld = (Vector3)(v.OriginSim * PBF_Utils.Scale);
-                Debug.Log($"[Slime_PBF] World Static SDF 加载成功：asset={worldStaticSdfBytes.name} dims=({v.Dims.x},{v.Dims.y},{v.Dims.z}) voxelSim={v.VoxelSizeSim:F4} voxelWorld={voxelWorld:F4} maxDistanceSim={v.MaxDistanceSim:F4} maxDistanceWorld={maxDistanceWorld:F4} originWorld={originWorld}");
-
-                Vector3 minWorld = originWorld - Vector3.one * (voxelWorld * 0.5f);
-                Vector3 maxWorld = originWorld + new Vector3(v.Dims.x - 1, v.Dims.y - 1, v.Dims.z - 1) * voxelWorld + Vector3.one * (voxelWorld * 0.5f);
-                Vector3 p0World = trans.position;
-                bool inBounds = (p0World.x >= minWorld.x && p0World.y >= minWorld.y && p0World.z >= minWorld.z && p0World.x <= maxWorld.x && p0World.y <= maxWorld.y && p0World.z <= maxWorld.z);
-                Debug.Log($"[Slime_PBF] World Static SDF Bounds：minWorld={minWorld} maxWorld={maxWorld} p0World={p0World} inBounds={inBounds}");
-
-                float3 p0 = (float3)(trans.position * PBF_Utils.InvScale);
-                float3 h = new float3(v.VoxelSizeSim, v.VoxelSizeSim, v.VoxelSizeSim);
-                float minD = float.PositiveInfinity;
-                float maxD = float.NegativeInfinity;
-                int clipped = 0;
-
-                float Sample(float3 p)
-                {
-                    float d = v.SampleDistance(p);
-                    if (d >= v.MaxDistanceSim - 1e-5f) clipped++;
-                    if (d < minD) minD = d;
-                    if (d > maxD) maxD = d;
-                    return d;
-                }
-
-                float d0 = Sample(p0);
-                float d1 = Sample(p0 + new float3(h.x, 0, 0));
-                float d2 = Sample(p0 + new float3(-h.x, 0, 0));
-                float d3 = Sample(p0 + new float3(0, 0, h.z));
-                float d4 = Sample(p0 + new float3(0, 0, -h.z));
-                float d5 = Sample(p0 + new float3(0, h.y, 0));
-                float d6 = Sample(p0 + new float3(0, -h.y, 0));
-
-                Debug.Log($"[Slime_PBF] World Static SDF 运行时采样：p0(sim)={p0} d0={d0:F4} d+X={d1:F4} d-X={d2:F4} d+Z={d3:F4} d-Z={d4:F4} d+Y={d5:F4} d-Y={d6:F4} range=[{minD:F4},{maxD:F4}] clipped={clipped}/7");
-
-                float3 local = (p0 - v.OriginSim) / v.VoxelSizeSim;
-                int ix = Mathf.FloorToInt(local.x);
-                int iy = Mathf.FloorToInt(local.y);
-                int iz = Mathf.FloorToInt(local.z);
-                Debug.Log($"[Slime_PBF] World Static SDF Index：local={local} i=({ix},{iy},{iz}) dims=({v.Dims.x},{v.Dims.y},{v.Dims.z})");
-
-                int bitMask = worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers.value : ~0;
-                RaycastHit hit;
-                bool hasHit = Physics.Raycast(p0World + Vector3.up * 0.05f, Vector3.down, out hit, 50f, bitMask, QueryTriggerInteraction.Ignore);
-                if (hasHit)
-                {
-                    float hitDist = hit.distance;
-                    float3 hitSim = (float3)(hit.point * PBF_Utils.InvScale);
-                    float dHit = v.SampleDistance(hitSim);
-                    Debug.Log($"[Slime_PBF] World Static RaycastDown：hit={hit.collider.name} layer={LayerMask.LayerToName(hit.collider.gameObject.layer)} dist={hitDist:F3} hitPoint={hit.point} sdf@hit={dHit:F4}");
-
-                    if (trans != null && hitDist > maxDistanceWorld * 0.95f)
-                    {
-                        float snapY = hit.point.y + particleRadiusWorld + 0.05f;
-                        Vector3 before = trans.position;
-                        trans.position = new Vector3(before.x, snapY, before.z);
-                        _prevTransPosition = trans.position;
-                        float deltaWorldY = snapY - before.y;
-                        float deltaSimY = deltaWorldY * PBF_Utils.InvScale;
-                        if (_particles.IsCreated && activeParticles > 0)
-                        {
-                            int count = math.min(activeParticles, _particles.Length);
-                            for (int pi = 0; pi < count; pi++)
-                            {
-                                var pp = _particles[pi];
-                                if (pp.Type == ParticleType.Dormant || pp.Type == ParticleType.FadingOut)
-                                    continue;
-                                pp.Position.y += deltaSimY;
-                                _particles[pi] = pp;
-                            }
-                        }
-
-                        Debug.Log($"[Slime_PBF] Start高度超出SDF有效距离：hitDist={hitDist:F3} > maxDistanceWorld={maxDistanceWorld:F3}，已将 trans.y 从 {before.y:F3} 下调到 {snapY:F3}（deltaY={deltaWorldY:F3}m / {deltaSimY:F3}sim）以确保正常落地。");
-
-                        float3 p1 = (float3)(trans.position * PBF_Utils.InvScale);
-                        float d1_snap = v.SampleDistance(p1);
-                        Debug.Log($"[Slime_PBF] Start落地后SDF复采样：p1(sim)={p1} d={d1_snap:F4} (maxDistanceSim={v.MaxDistanceSim:F4})");
-                    }
-                }
-                else
-                {
-                    Debug.LogWarning($"[Slime_PBF] World Static RaycastDown：no hit within 50m, mask=0x{bitMask:X}");
-                }
             }
             LayerMask staticLayers = worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers : (LayerMask)(~0);
+            if (!_worldIndexMaskWarnLogged && worldStaticColliderLayers.value == 0)
+            {
+                _worldIndexMaskWarnLogged = true;
+                Debug.LogWarning("[Slime_PBF] worldStaticColliderLayers=0，静态碰撞层将使用 Everything(~0)。这可能把 TerrainCollider/大型体积碰撞体纳入普通碰撞（已在索引侧过滤 TerrainCollider，但仍建议显式配置层）。");
+            }
             LayerMask dynamicLayers = worldDynamicColliderLayers;
             worldIndex.Configure(staticLayers, dynamicLayers, includeTriggerColliders: false);
             worldIndex.Rebuild();
@@ -1683,6 +1735,15 @@ namespace Revive.Slime
             _dropletGridIDBuffer = new NativeArray<int>(_dropletGridBuffer.Length, Allocator.Persistent);
             _prevGridBlobId = new NativeArray<int>(_gridBuffer.Length, Allocator.Persistent);
             _controllerBuffer = new NativeList<ParticleController>(16, Allocator.Persistent);
+            _windZones = new NativeList<WindFieldZoneData>(16, Allocator.Persistent);
+            _boundsBuffer = new NativeArray<float3>(2, Allocator.Persistent);
+
+            _colliderBuffer = new NativeArray<MyBoxCollider>(mainColliderIndexQueryCacheCapacity, Allocator.Persistent);
+            _raycastHits = new RaycastHit[16];
+            _currentColliderCount = 0;
+
+            _dropletColliderBuffer = new NativeArray<MyBoxCollider>(dropletColliderIndexQueryCacheCapacity, Allocator.Persistent);
+            _currentDropletColliderCount = 0;
             
             // 初始控制器中心必须与粒子初始化时的 spawnCenter 一致
             float3 initialCenter = trans != null ? (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
@@ -1700,16 +1761,18 @@ namespace Revive.Slime
             _controllerBuffer.Add(initialController);
 
             _marchingCubes = new LMarchingCubes();
-            _marchingCubesDroplet = new LMarchingCubes();
+            			_marchingCubesDroplet = new LMarchingCubes();
 
 
-            _particleRenderer = new SlimeParticleRenderer(particleMat, particleMesh, maxParticles);
-            _bubblesDataBuffer = new ComputeBuffer(PBF_Utils.BubblesCount, sizeof(float) * 8);
-            bubblesMat.SetBuffer("_BubblesBuffer", _bubblesDataBuffer);
+			_particleRenderer = new SlimeParticleRenderer(particleMat, particleMesh, maxParticles);
+			_bubblesDataBuffer = new ComputeBuffer(PBF_Utils.BubblesCount, sizeof(float) * 8);
+			bubblesMat.SetBuffer("_BubblesBuffer", _bubblesDataBuffer);
+			if (particleMat != null && particleMat.HasProperty("_SimToWorldScale"))
+				particleMat.SetFloat("_SimToWorldScale", PBF_Utils.Scale);
 
-            _slimeInstances = new NativeList<SlimeInstance>(16,  Allocator.Persistent);
-            float3 initialInstanceCenter = trans != null ? (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
-            float3 initialDir = trans != null ? (float3)trans.forward : new float3(0, 0, 1);
+			_slimeInstances = new NativeList<SlimeInstance>(16,  Allocator.Persistent);
+			float3 initialInstanceCenter = trans != null ? (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
+			float3 initialDir = trans != null ? (float3)trans.forward : new float3(0, 0, 1);
             _slimeInstances.Add(new SlimeInstance()
             {
                 Active = true,
@@ -1745,10 +1808,118 @@ namespace Revive.Slime
 
             _runtimeInitialized = true;
 
+            // 初始化 Terrain 高度图缓存
+            InitTerrainHeightfield();
         }
 
+        private void InitTerrainHeightfield()
+        {
+            if (_terrainHeights01.IsCreated)
+                return;
+
+            var terrain = Terrain.activeTerrain;
+            if (terrain == null)
+                terrain = FindFirstObjectByType<Terrain>(FindObjectsInactive.Exclude);
+            if (terrain == null)
+            {
+                if (!_terrainHeightfieldLogged)
+                {
+                    _terrainHeightfieldLogged = true;
+                    Debug.LogWarning("[Slime_PBF] Terrain heightfield 未初始化：场景中未找到 Terrain。Terrain 碰撞将不会启用。 ");
+                }
+                return;
+            }
+            if (terrain.terrainData == null)
+            {
+                if (!_terrainHeightfieldLogged)
+                {
+                    _terrainHeightfieldLogged = true;
+                    Debug.LogWarning($"[Slime_PBF] Terrain heightfield 未初始化：{terrain.name} 的 terrainData 为 null。Terrain 碰撞将不会启用。 ");
+                }
+                return;
+            }
+
+            var td = terrain.terrainData;
+            int res = td.heightmapResolution;
+            if (res < 2)
+            {
+                if (!_terrainHeightfieldLogged)
+                {
+                    _terrainHeightfieldLogged = true;
+                    Debug.LogWarning($"[Slime_PBF] Terrain heightfield 未初始化：{terrain.name} heightmapResolution={res} 不合法。Terrain 碰撞将不会启用。 ");
+                }
+                return;
+            }
+
+            float[,] heights = td.GetHeights(0, 0, res, res);
+            _terrainResX = res;
+            _terrainResZ = res;
+            _terrainOriginSim = (float3)(terrain.GetPosition() * PBF_Utils.InvScale);
+            _terrainSizeSim = (float3)(td.size * PBF_Utils.InvScale);
+            _terrainHeightfieldSource = terrain;
+
+            _terrainHeights01 = new NativeArray<float>(res * res, Allocator.Persistent);
+            int idx = 0;
+            for (int z = 0; z < res; z++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    _terrainHeights01[idx++] = heights[z, x];
+                }
+            }
+
+            if (!_terrainHeightfieldLogged)
+            {
+                _terrainHeightfieldLogged = true;
+
+                float minH = float.PositiveInfinity;
+                float maxH = float.NegativeInfinity;
+                double sumH = 0.0;
+                for (int i = 0; i < _terrainHeights01.Length; i++)
+                {
+                    float hi01 = _terrainHeights01[i];
+                    if (hi01 < minH) minH = hi01;
+                    if (hi01 > maxH) maxH = hi01;
+                    sumH += hi01;
+                }
+                float avgH = _terrainHeights01.Length > 0 ? (float)(sumH / _terrainHeights01.Length) : 0f;
+
+                int cx = res / 2;
+                int cz = res / 2;
+                int idx00 = 0;
+                int idx11 = (res - 1) * res + (res - 1);
+                int idxCC = cz * res + cx;
+                float h00 = _terrainHeights01[idx00];
+                float h10 = _terrainHeights01[idx00 + 1];
+                float h01 = _terrainHeights01[idx00 + _terrainResX];
+                float h11 = _terrainHeights01[idx00 + _terrainResX + 1];
+                float h0 = math.lerp(h00, h10, 0.5f);
+                float h1 = math.lerp(h01, h11, 0.5f);
+                float h = math.lerp(h0, h1, 0.5f);
+                float cacheSimY = _terrainOriginSim.y + h * _terrainSizeSim.y;
+                float cacheW = cacheSimY * PBF_Utils.Scale;
+
+                Vector3 originW = terrain.GetPosition();
+                Vector3 sizeW = td.size;
+                float y00W = originW.y + h00 * sizeW.y;
+                float y11W = originW.y + h11 * sizeW.y;
+                float yCCW = originW.y + h * sizeW.y;
+
+                Vector3 p0W = activeParticles > 0 ? (Vector3)(_particles[0].Position * PBF_Utils.Scale) : Vector3.zero;
+                Debug.Log(
+                    $"[Slime_PBF] Terrain heightfield 已加载 terrain={terrain.name} res={res} " +
+                    $"originW=({originW.x:F2},{originW.y:F2},{originW.z:F2}) sizeW=({sizeW.x:F2},{sizeW.y:F2},{sizeW.z:F2}) " +
+                    $"originSim=({_terrainOriginSim.x:F2},{_terrainOriginSim.y:F2},{_terrainOriginSim.z:F2}) sizeSim=({_terrainSizeSim.x:F2},{_terrainSizeSim.y:F2},{_terrainSizeSim.z:F2}) " +
+                    $"h01[min,max,avg]=({minH:F4},{maxH:F4},{avgH:F4}) " +
+                    $"samples01[00,cc,11]=({h00:F4},{h:F4},{h11:F4}) samplesYw[00,cc,11]=({y00W:F2},{yCCW:F2},{y11W:F2}) " +
+                    $"activeParticles={activeParticles} p0W=({p0W.x:F2},{p0W.y:F2},{p0W.z:F2})" );
+            }
+        }
+        
         private void OnDestroy()
         {
+            _runtimeInitialized = false;
+
             if (_particles.IsCreated) _particles.Dispose();
             if (_particlesRenderBuffer.IsCreated) _particlesRenderBuffer.Dispose();
             if (_particlesTemp.IsCreated) _particlesTemp.Dispose();
@@ -1766,7 +1937,10 @@ namespace Revive.Slime
             
             // 释放PBF物理系统
             _pbfSystem?.Dispose();
-            if (_boundsBuffer.IsCreated) _boundsBuffer.Dispose();
+            if (_boundsBuffer.IsCreated) 
+            {
+                _boundsBuffer.Dispose();
+            }
             if (_gridBuffer.IsCreated) _gridBuffer.Dispose();
             if (_gridTempBuffer.IsCreated) _gridTempBuffer.Dispose();
             if (_dropletGridBuffer.IsCreated) _dropletGridBuffer.Dispose();
@@ -1798,8 +1972,11 @@ namespace Revive.Slime
             if (_dropletColliderBuffer.IsCreated) _dropletColliderBuffer.Dispose();
             if (_sourceControllers.IsCreated) _sourceControllers.Dispose();
 
+            if (_windZones.IsCreated) _windZones.Dispose();
+
             _worldStaticSdf.Dispose();
             if (_dummyWorldSdfDistances.IsCreated) _dummyWorldSdfDistances.Dispose();
+			if (_dummyTerrainHeights01.IsCreated) _dummyTerrainHeights01.Dispose();
             
             // 释放场景水珠子系统
             _dropletSubsystem.Dispose();
@@ -1825,6 +2002,8 @@ namespace Revive.Slime
                 _bubblesDataBuffer = null;
             }
 
+            // 释放 Terrain 高度图缓存
+            if (_terrainHeights01.IsCreated) _terrainHeights01.Dispose();
         }
 
         void Update()
@@ -1832,141 +2011,219 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
 
-            if (trans != null)
+            if (trans == null)
+                return;
+
+            if (!_renderVelocityInitialized)
             {
-                if (!_renderVelocityInitialized)
-                {
-                    _renderVelocityInitialized = true;
-                    _prevRenderTransPosition = trans.position;
-                    _renderVelocity = Vector3.zero;
-                }
-                else if (Time.deltaTime > 0f)
-                {
-                    _renderVelocity = (trans.position - _prevRenderTransPosition) / Time.deltaTime;
-                    _prevRenderTransPosition = trans.position;
-                }
-            }
-            // 更新场景水珠源的激活状态
-            using (PerformanceProfiler.Scope("UpdateSceneDropletSources"))
-            {
-                UpdateSceneDropletSources();
-            }
-            
-            // 更新控制器中心到最新位置（避免FixedUpdate和Update之间的延迟）
-            using (PerformanceProfiler.Scope("Update_SyncMainControllerCenter"))
-            {
-                if (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0 && trans != null)
-                {
-                    float3 mainCenter = (float3)(trans.position * PBF_Utils.InvScale);
-                    var mainController = _controllerBuffer[0];
-                    mainController.Center = mainCenter;
-                    _controllerBuffer[0] = mainController;
-                }
+                _renderVelocityInitialized = true;
+                _prevRenderTransPosition = trans.position;
+                _renderVelocity = Vector3.zero;
+                return;
             }
 
-            if (renderMode == RenderMode.Particles)
+            float dt = Time.deltaTime;
+            if (dt <= 1e-6f)
+                return;
+
+            Vector3 cur = trans.position;
+            _renderVelocity = (cur - _prevRenderTransPosition) / dt;
+            _prevRenderTransPosition = cur;
+        }
+
+        private void UpdateCombinedBoundsForParticlesRender()
+        {
+            float3 minSim = new float3(float.MaxValue);
+            float3 maxSim = new float3(float.MinValue);
+
+            for (int i = 0; i < activeParticles; i++)
             {
-                // 粒子模式：渲染数据准备/上传放到 Update（每渲染帧最多一次），避免 FixedUpdate 追帧时重复 SetData
-                int totalParticles = activeParticles + _dropletSubsystem.ActiveCount;
-                if (_lastParticleRenderUploadFrame != Time.frameCount)
-                {
-                    _lastParticleRenderUploadFrame = Time.frameCount;
-
-                    using (PerformanceProfiler.Scope("Particles_ConvertToWorld"))
-                    {
-                        totalParticles = ConvertToWorldPositionsForRendering();
-                    }
-
-                    using (PerformanceProfiler.Scope("Particles_Upload"))
-                    {
-                        _particleRenderer.UploadParticles(_particlesRenderBuffer, totalParticles);
-                    }
-
-                    using (PerformanceProfiler.Scope("Particles_CalcBounds"))
-                    {
-                        new Reconstruction.CalcBoundsJob()
-                        {
-                            Ps = _particlesRenderBuffer,
-                            Controllers = _controllerBuffer,
-                            SourceControllers = _sourceControllers,
-                            Bounds = _boundsBuffer,
-                            ActiveCount = totalParticles,
-                        }.Schedule().Complete();
-                    }
-
-                    using (PerformanceProfiler.Scope("Particles_SetBounds"))
-                    {
-                        _particleRenderer.SetBounds(_boundsBuffer[0] * PBF_Utils.Scale, _boundsBuffer[1] * PBF_Utils.Scale);
-                    }
-                }
-
-                using (PerformanceProfiler.Scope("Update_DrawParticles"))
-                {
-                    _particleRenderer.Draw(totalParticles);
-                }
-            }
-            else if (renderMode == RenderMode.Surface)
-            {
-                // Surface 渲染：主体 + 水珠都通过 Marching Cubes 表面重建
-                using (PerformanceProfiler.Scope("Update_DrawSurface"))
-                {
-                    if (_mesh != null)
-                        Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_meshOriginWorld, Quaternion.identity, Vector3.one), mat, 0);
-
-                    if (_dropletMesh != null)
-                        Graphics.DrawMesh(_dropletMesh, Matrix4x4.TRS(_dropletMeshOriginWorld, Quaternion.identity, Vector3.one), mat, 0);
-
-                    Graphics.DrawMeshInstancedProcedural(particleMesh, 0, bubblesMat, _bounds, PBF_Utils.BubblesCount);
-                }
+                var p = _particles[i];
+                if (p.Type == ParticleType.Dormant)
+                    continue;
+                float3 pos = p.Position;
+                minSim = math.min(minSim, pos);
+                maxSim = math.max(maxSim, pos);
             }
 
-            if (concentration > 5)
+            bool hasMain = minSim.x < float.MaxValue;
+
+            float3 dropletMinSim = float3.zero;
+            float3 dropletMaxSim = float3.zero;
+            bool hasDroplets = _dropletSubsystem.ActiveCount > 0 && _dropletSubsystem.TryGetActiveBounds(out dropletMinSim, out dropletMaxSim);
+
+            if (!hasMain && !hasDroplets)
             {
-                using (PerformanceProfiler.Scope("Update_DrawFaces"))
-                {
-                    foreach (var slime in _slimeInstances)
-                    {
-                        if (!slime.Active) continue;
-
-                        int controllerId = slime.ControllerSlot;
-                        if (controllerId > 0 && !showEyesOnSeparated)
-                            continue;
-                        if (controllerId > 0 && _controllerFreeFramesCounts != null && controllerId < _controllerFreeFramesCounts.Length && _controllerFreeFramesCounts[controllerId] > 0)
-                            continue;
-
-                        Vector3 renderDir = slime.Dir;
-                        renderDir.y = 0f;
-                        if (renderDir.sqrMagnitude > 0.001f)
-                        {
-                            int controllerIdForScale = slime.ControllerSlot;
-                            int countForScale = 0;
-                            if (controllerIdForScale == 0)
-                            {
-                                if (_controllerMainBodyCount.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerMainBodyCount.Length)
-                                    countForScale = _controllerMainBodyCount[controllerIdForScale];
-                            }
-                            else
-                            {
-                                if (_controllerCountAll.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerCountAll.Length)
-                                    countForScale = _controllerCountAll[controllerIdForScale];
-                            }
-
-                            float countFactor = 1f;
-                            if (faceScaleBaseParticles > 0 && countForScale > 0)
-                            {
-                                float ratio = (float)countForScale / faceScaleBaseParticles;
-                                countFactor = math.pow(math.max(1e-4f, ratio), 1f / 3f);
-                                countFactor = math.clamp(countFactor, faceScaleCountFactorMin, faceScaleCountFactorMax);
-                            }
-
-                            float faceWorldScale = faceScale * countFactor * math.sqrt(slime.Radius * PBF_Utils.Scale);
-                            Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * PBF_Utils.Scale,
-                                Quaternion.LookRotation(-renderDir),
-                                faceWorldScale * Vector3.one), faceMat, 0);
-                        }
-                    }
-                }
+                _bounds = new Bounds();
+                return;
             }
+
+            float radiusSim = particleRadiusWorld * PBF_Utils.InvScale;
+            float marginSim = math.max(PBF_Utils.h, radiusSim * 2f);
+
+            if (hasMain)
+            {
+                minSim -= marginSim;
+                maxSim += marginSim;
+            }
+
+            if (hasDroplets)
+            {
+                dropletMinSim -= marginSim;
+                dropletMaxSim += marginSim;
+                _dropletBounds = new Bounds()
+                {
+                    min = dropletMinSim * PBF_Utils.Scale,
+                    max = dropletMaxSim * PBF_Utils.Scale
+                };
+            }
+
+            if (!hasMain)
+            {
+                _bounds = _dropletBounds;
+                return;
+            }
+
+            _bounds = new Bounds()
+            {
+                min = minSim * PBF_Utils.Scale,
+                max = maxSim * PBF_Utils.Scale
+            };
+
+            if (hasDroplets)
+            {
+                _bounds.Encapsulate(_dropletBounds.min);
+                _bounds.Encapsulate(_dropletBounds.max);
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (!_runtimeInitialized)
+                return;
+            if (!isActiveAndEnabled)
+                return;
+
+            if (renderMode == RenderMode.Surface)
+                RenderSurfaceMeshes();
+            else if (renderMode == RenderMode.Particles)
+                RenderParticles();
+
+            RenderFaces();
+        }
+
+        private void RenderFaces()
+        {
+            if (concentration <= 5)
+                return;
+            if (faceMesh == null || faceMat == null)
+                return;
+            if (!_slimeInstances.IsCreated)
+                return;
+
+            int layer = gameObject.layer;
+            for (int i = 0; i < _slimeInstances.Length; i++)
+            {
+                var slime = _slimeInstances[i];
+                if (!slime.Active)
+                    continue;
+
+                int controllerId = slime.ControllerSlot;
+                if (controllerId > 0 && !showEyesOnSeparated)
+                    continue;
+                if (controllerId > 0 && _controllerFreeFramesCounts != null && controllerId < _controllerFreeFramesCounts.Length && _controllerFreeFramesCounts[controllerId] > 0)
+                    continue;
+
+                Vector3 renderDir = slime.Dir;
+                renderDir.y = 0f;
+                if (renderDir.sqrMagnitude <= 0.001f)
+                    continue;
+
+                int controllerIdForScale = slime.ControllerSlot;
+                int countForScale = 0;
+                if (controllerIdForScale == 0)
+                {
+                    if (_controllerMainBodyCount.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerMainBodyCount.Length)
+                        countForScale = _controllerMainBodyCount[controllerIdForScale];
+                }
+                else
+                {
+                    if (_controllerCountAll.IsCreated && controllerIdForScale >= 0 && controllerIdForScale < _controllerCountAll.Length)
+                        countForScale = _controllerCountAll[controllerIdForScale];
+                }
+
+                float countFactor = 1f;
+                if (faceScaleBaseParticles > 0 && countForScale > 0)
+                {
+                    float ratio = (float)countForScale / faceScaleBaseParticles;
+                    countFactor = math.pow(math.max(1e-4f, ratio), 1f / 3f);
+                    countFactor = math.clamp(countFactor, faceScaleCountFactorMin, faceScaleCountFactorMax);
+                }
+
+                float faceWorldScale = faceScale * countFactor * math.sqrt(slime.Radius * PBF_Utils.Scale);
+                Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * PBF_Utils.Scale,
+                    Quaternion.LookRotation(-renderDir),
+                    faceWorldScale * Vector3.one), faceMat, layer);
+            }
+        }
+
+        private void RenderSurfaceMeshes()
+        {
+            if (mat == null)
+                return;
+
+            MaterialPropertyBlock block = _surfaceTintEnabled ? _surfaceTintBlock : null;
+            int layer = gameObject.layer;
+
+            if (_mesh != null)
+                Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_meshOriginWorld, Quaternion.identity, Vector3.one), mat, layer, null, 0, block);
+
+            if (_dropletMesh != null)
+            {
+                Material dropletMatToUse = dropletSurfaceMat != null ? dropletSurfaceMat : mat;
+                Graphics.DrawMesh(_dropletMesh, Matrix4x4.TRS(_dropletMeshOriginWorld, Quaternion.identity, Vector3.one), dropletMatToUse, layer, null, 0, null);
+            }
+        }
+
+        private void RenderParticles()
+        {
+            if (_particleRenderer == null)
+                return;
+
+            if (particleMat == null || particleMesh == null)
+            {
+                if (!_renderInitErrorLogged)
+                {
+                    _renderInitErrorLogged = true;
+                    Debug.LogError($"[Slime_PBF] Particles 渲染缺少资源：particleMat={(particleMat != null)} particleMesh={(particleMesh != null)}");
+                }
+                return;
+            }
+
+            if (particleMat.HasProperty("_SimToWorldScale"))
+                particleMat.SetFloat("_SimToWorldScale", PBF_Utils.Scale);
+
+            int totalParticles = ConvertToWorldPositionsForRendering();
+            if (totalParticles <= 0)
+                return;
+
+            if (!particleMat.enableInstancing && !_renderInitErrorLogged)
+            {
+                _renderInitErrorLogged = true;
+                Debug.LogError("[Slime_PBF] particleMat.enableInstancing=false，DrawMeshInstancedProcedural 可能不会生效。");
+            }
+
+            if (_bounds.size.sqrMagnitude <= 1e-6f)
+                _particleRenderer.SetInfiniteBounds();
+            else
+                _particleRenderer.SetBounds((float3)_bounds.min, (float3)_bounds.max);
+
+            if (_lastParticleRenderUploadFrame != Time.frameCount)
+            {
+                _lastParticleRenderUploadFrame = Time.frameCount;
+                _particleRenderer.UploadParticles(_particlesRenderBuffer, totalParticles);
+            }
+            _particleRenderer.Draw(totalParticles, anisotropic: false);
         }
 
         private void FixedUpdate()
@@ -1976,6 +2233,14 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
             PerformanceProfiler.BeginFrame();
+
+            PerformanceProfiler.Begin("UpdateSceneDropletSources");
+            UpdateSceneDropletSources();
+            PerformanceProfiler.End("UpdateSceneDropletSources");
+
+            PerformanceProfiler.Begin("UpdateSourceControllers");
+            UpdateSourceControllers();
+            PerformanceProfiler.End("UpdateSourceControllers");
             
             // 不再移除场景水珠，让它们留在主粒子系统中以便渲染和交互
             
@@ -2040,7 +2305,8 @@ namespace Revive.Slime
                 DynamicDragStrength = dropletDynamicDragStrength,
                 DynamicDragRadius = dropletDynamicDragRadiusWorld * PBF_Utils.InvScale,
                 LiquidSolverIterations = dropletLiquidSolverIterations,
-                LiquidGravityY = dropletLiquidGravityY
+                LiquidGravityY = dropletLiquidGravityY,
+                DropletVerticalOffset = dropletVerticalOffset
             });
             
             // 地面高度：使用场景实际地面（世界Y=0）转为内部坐标
@@ -2058,9 +2324,12 @@ namespace Revive.Slime
             PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
 
-            PerformanceProfiler.Begin("Surface");
-            Surface();
-            PerformanceProfiler.End("Surface");
+            if (renderMode == RenderMode.Surface)
+            {
+                PerformanceProfiler.Begin("Surface");
+                Surface();
+                PerformanceProfiler.End("Surface");
+            }
             
             // Unshuffle 必须在 Surface() 之后执行，因为 Surface() 使用 Lut（基于排序后索引）
             // 关键修复：只处理 activeParticles 范围，避免越界读取垃圾数据覆盖有效粒子
@@ -2092,10 +2361,7 @@ namespace Revive.Slime
             Control();
             PerformanceProfiler.End("Control");
             
-            // Bubbles效果暂时禁用（方法未实现）
-            // PerformanceProfiler.Begin("Bubbles");
-            // Bubbles();
-            // PerformanceProfiler.End("Bubbles");
+            UpdateBubblesEffects();
             
             bubblesNum = PBF_Utils.BubblesCount - _bubblesPoolBuffer.Length;
             
@@ -2104,12 +2370,25 @@ namespace Revive.Slime
                 // Surface 模式：水珠数据在 Surface() 中一起处理
                 _bubblesDataBuffer.SetData(_bubblesBuffer);
             }
-            
-            _bounds = new Bounds()
+
+            if (renderMode == RenderMode.Particles)
             {
-                min = minPos * PBF_Utils.Scale,
-                max = maxPos * PBF_Utils.Scale
-            };
+                UpdateCombinedBoundsForParticlesRender();
+            }
+            else
+            {
+                _bounds = new Bounds()
+                {
+                    min = minPos * PBF_Utils.Scale,
+                    max = maxPos * PBF_Utils.Scale
+                };
+
+                if (_dropletSubsystem.ActiveCount > 0)
+                {
+                    _bounds.Encapsulate(_dropletBounds.min);
+                    _bounds.Encapsulate(_dropletBounds.max);
+                }
+            }
 
             if (_slimeVolume != null)
             {
@@ -2195,137 +2474,39 @@ namespace Revive.Slime
             maxPos = math.ceil(_boundsBuffer[1] / blockSize) * blockSize;
 
             Profiler.BeginSample("Allocate");
-            PerformanceProfiler.Begin("SurfaceMain_Allocate");
-            handle = new Reconstruction.AllocateBlockJob()
+            if (!PrepareSurfaceGridCore(
+                totalParticles,
+                minPos,
+                _gridLut,
+                _gridKeys,
+                _gridBuffer,
+                _gridTempBuffer,
+                _gridIDBuffer,
+                _blockBuffer,
+                _blockColorBuffer,
+                "SurfaceMain_Allocate",
+                "SurfaceMain_GetKeyArray",
+                "SurfaceMain_ClearGrid",
+                "SurfaceMain_ColorBlocks",
+                "SurfaceMain_Splat",
+                out var keys,
+                out blockNum,
+                out var grid,
+                out var gridTemp,
+                out var gridID))
             {
-                Ps = _particlesTemp,
-                GridLut = _gridLut,
-                Keys = _gridKeys,
-                MinPos = minPos,
-                ActiveCount = totalParticles,
-            }.Schedule();
-            handle.Complete();
-
-            PerformanceProfiler.Begin("SurfaceMain_GetKeyArray");
-            var keys = _gridKeys.AsArray();
-            PerformanceProfiler.End("SurfaceMain_GetKeyArray");
-            blockNum = keys.Length;
-
-            if (blockNum == 0)
-            {
-                PerformanceProfiler.End("SurfaceMain_Allocate");
                 Profiler.EndSample();
                 _mesh = null;
                 return;
             }
 
-            int clearLen = blockNum * PBF_Utils.GridSize;
-            var grid = _gridBuffer.GetSubArray(0, clearLen);
-            var gridTemp = _gridTempBuffer.GetSubArray(0, clearLen);
-            var gridID = _gridIDBuffer.GetSubArray(0, clearLen);
-
-            PerformanceProfiler.Begin("SurfaceMain_ClearGrid");
-            new Reconstruction.ClearGridJob
-            {
-                Grid = grid,
-                GridID = gridID,
-            }.Schedule(clearLen, batchCount).Complete();
-            PerformanceProfiler.End("SurfaceMain_ClearGrid");
-
-            PerformanceProfiler.Begin("SurfaceMain_ColorBlocks");
-            new Reconstruction.ColorBlockJob()
-            {
-                Keys = keys,
-                Blocks = _blockBuffer,
-                BlockColors = _blockColorBuffer,
-            }.Schedule().Complete();
-            PerformanceProfiler.End("SurfaceMain_ColorBlocks");
-            PerformanceProfiler.End("SurfaceMain_Allocate");
-
             Profiler.EndSample();
 
-            Profiler.BeginSample("Splat");
-            PerformanceProfiler.Begin("SurfaceMain_Splat");
+            JobHandle ccaHandle = default;
+            JobHandle particleIdHandle = default;
 
-#if USE_SPLAT_SINGLE_THREAD
-            handle = new Reconstruction.DensityProjectionJob()
-            {
-                Ps = _particlesTemp,
-                GMatrix = _covBuffer,
-                Grid = _gridBuffer,
-                GridLut = _gridLut,
-                MinPos = minPos,
-                UseAnisotropic = useAnisotropic,
-            }.Schedule();
-#elif USE_SPLAT_COLOR8
-            for (int i = 0; i < 8; i++)
-            {
-                int2 slice = new int2(_blockColorBuffer[i], _blockColorBuffer[i + 1]);
-                int count = slice.y - slice.x;
-                handle = new Reconstruction.DensitySplatColoredJob()
-                {
-                    ParticleLut = _renderLut,
-                    ColorKeys = _blockBuffer.Slice(slice.x, count),
-                    Ps = _particlesTemp,
-                    GMatrix = _covBuffer,
-                    Grid = _gridBuffer,
-                    GridLut = _gridLut,
-                    MinPos = minPos,
-                    UseAnisotropic = useAnisotropic,
-                }.Schedule(count, count, handle);
-            }
-#else
-            handle = new Reconstruction.DensityProjectionParallelJob()
-            {
-                Ps = _particlesTemp,
-                GMatrix = _covBuffer,
-                GridLut = _gridLut,
-                Grid = grid,
-                ParticleLut = _renderLut,
-                Keys = keys,
-                UseAnisotropic = useAnisotropic,
-                MinPos = minPos,
-            }.Schedule(keys.Length, batchCount);
-#endif
-            handle.Complete();
-            PerformanceProfiler.End("SurfaceMain_Splat");
-            Profiler.EndSample();
-
-            Profiler.BeginSample("Blur");
-            PerformanceProfiler.Begin("SurfaceMain_Blur");
-
-            new Reconstruction.GridBlurJob()
-            {
-                Keys = keys,
-                GridLut = _gridLut,
-                GridRead = grid,
-                GridWrite = gridTemp,
-            }.Schedule(keys.Length, batchCount, handle).Complete();
-            PerformanceProfiler.End("SurfaceMain_Blur");
-
-            Profiler.EndSample();
-
-            Profiler.BeginSample("Marching cubes");
-            PerformanceProfiler.Begin("SurfaceMain_MarchingCubes");
-            bool needMainMesh = renderMode == RenderMode.Surface;
-            if (needMainMesh)
-            {
-                _mesh = _marchingCubes.MarchingCubesParallel(keys, _gridLut, gridTemp, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
-                _meshOriginWorld = (Vector3)(minPos * PBF_Utils.Scale);
-                if (_mesh != null)
-                {
-                    Vector3 baseSizeW = (Vector3)((maxPos - minPos) * PBF_Utils.Scale);
-                    float marginW = PBF_Utils.CellSize * PBF_Utils.Scale * 8f;
-                    _mesh.bounds = new Bounds(baseSizeW * 0.5f, baseSizeW + Vector3.one * marginW);
-                }
-            }
-            PerformanceProfiler.End("SurfaceMain_MarchingCubes");
-            Profiler.EndSample();
-
-            Profiler.BeginSample("CCA");
-            PerformanceProfiler.Begin("SurfaceMain_CCA");
             _componentsBuffer.Clear();
-            handle = new Effects.ConnectComponentBlockJob()
+            ccaHandle = new Effects.ConnectComponentBlockJob()
             {
                 Keys = keys,
                 Grid = grid,
@@ -2335,7 +2516,38 @@ namespace Revive.Slime
                 Threshold = PBF_Utils.CCAThreshold,
             }.Schedule();
 
-            handle.Complete();
+            particleIdHandle = new Effects.ParticleIDJob()
+            {
+                GridLut = _gridLut,
+                GridID = gridID,
+                Controllers = _controllerBuffer,
+                SourceControllers = _sourceControllers,
+                Particles = _particles,
+                MinPos = minPos,
+            }.Schedule(activeParticles, batchCount, ccaHandle);
+
+            bool needMainMesh = renderMode == RenderMode.Surface;
+            if (needMainMesh)
+            {
+                Profiler.BeginSample("Blur");
+                _mesh = BuildSurfaceMeshFromGridCore(
+                    keys,
+                    _gridLut,
+                    grid,
+                    gridTemp,
+                    _marchingCubes,
+                    minPos,
+                    maxPos,
+                    "SurfaceMain_Blur",
+                    "SurfaceMain_MarchingCubes",
+                    out _meshOriginWorld);
+
+                Profiler.EndSample();
+            }
+
+            Profiler.BeginSample("CCA");
+            PerformanceProfiler.Begin("SurfaceMain_CCA");
+            ccaHandle.Complete();
             PerformanceProfiler.End("SurfaceMain_CCA");
             Profiler.EndSample();
 
@@ -2347,21 +2559,178 @@ namespace Revive.Slime
 
             Profiler.BeginSample("ParticleID");
             PerformanceProfiler.Begin("SurfaceMain_ParticleID");
-            handle = new Effects.ParticleIDJob()
-            {
-                GridLut = _gridLut,
-                GridID = gridID,
-                Controllers = _controllerBuffer,
-                SourceControllers = _sourceControllers,
-                Particles = _particles,
-                MinPos = minPos,
-            }.Schedule(activeParticles, batchCount);
-            handle.Complete();
+            particleIdHandle.Complete();
             PerformanceProfiler.End("SurfaceMain_ParticleID");
             Profiler.EndSample();
 
             PerformanceProfiler.Begin("SurfaceMain_DisposeKeys");
             PerformanceProfiler.End("SurfaceMain_DisposeKeys");
+        }
+
+        private bool PrepareSurfaceGridCore(
+            int activeCount,
+            float3 minPosSim,
+            NativeHashMap<int3, int> gridLut,
+            NativeList<int3> gridKeys,
+            NativeArray<float> gridBuffer,
+            NativeArray<float> gridTempBuffer,
+            NativeArray<int> gridIDBuffer,
+            NativeArray<int4> blockBuffer,
+            NativeArray<int> blockColorBuffer,
+            string profAllocate,
+            string profGetKeyArray,
+            string profClearGrid,
+            string profColorBlocks,
+            string profSplat,
+            out NativeArray<int3> keys,
+            out int blockNum,
+            out NativeArray<float> grid,
+            out NativeArray<float> gridTemp,
+            out NativeArray<int> gridID)
+        {
+            keys = default;
+            blockNum = 0;
+            grid = default;
+            gridTemp = default;
+            gridID = default;
+
+            gridLut.Clear();
+            gridKeys.Clear();
+
+            PerformanceProfiler.Begin(profAllocate);
+            var handle = new Reconstruction.AllocateBlockJob()
+            {
+                Ps = _particlesTemp,
+                GridLut = gridLut,
+                Keys = gridKeys,
+                MinPos = minPosSim,
+                ActiveCount = activeCount,
+            }.Schedule();
+            handle.Complete();
+
+            PerformanceProfiler.Begin(profGetKeyArray);
+            keys = gridKeys.AsArray();
+            PerformanceProfiler.End(profGetKeyArray);
+            blockNum = keys.Length;
+
+            if (blockNum == 0)
+            {
+                PerformanceProfiler.End(profAllocate);
+                return false;
+            }
+
+            int clearLen = blockNum * PBF_Utils.GridSize;
+            grid = gridBuffer.GetSubArray(0, clearLen);
+            gridTemp = gridTempBuffer.GetSubArray(0, clearLen);
+            gridID = gridIDBuffer.GetSubArray(0, clearLen);
+
+            var clearGridHandle = new Reconstruction.ClearGridJob
+            {
+                Grid = grid,
+                GridID = gridID,
+            }.Schedule(clearLen, batchCount);
+
+            var colorBlocksHandle = new Reconstruction.ColorBlockJob()
+            {
+                Keys = keys,
+                Blocks = blockBuffer,
+                BlockColors = blockColorBuffer,
+            }.Schedule();
+
+            PerformanceProfiler.Begin(profClearGrid);
+            clearGridHandle.Complete();
+            PerformanceProfiler.End(profClearGrid);
+
+            PerformanceProfiler.Begin(profColorBlocks);
+            colorBlocksHandle.Complete();
+            PerformanceProfiler.End(profColorBlocks);
+            PerformanceProfiler.End(profAllocate);
+
+            PerformanceProfiler.Begin(profSplat);
+
+            JobHandle splatHandle;
+
+            #if USE_SPLAT_SINGLE_THREAD
+            splatHandle = new Reconstruction.DensityProjectionJob()
+            {
+                Ps = _particlesTemp,
+                GMatrix = _covBuffer,
+                Grid = gridBuffer,
+                GridLut = gridLut,
+                MinPos = minPosSim,
+                UseAnisotropic = useAnisotropic,
+            }.Schedule();
+            #elif USE_SPLAT_COLOR8
+            splatHandle = default;
+            for (int i = 0; i < 8; i++)
+            {
+                int2 slice = new int2(blockColorBuffer[i], blockColorBuffer[i + 1]);
+                int count = slice.y - slice.x;
+                splatHandle = new Reconstruction.DensitySplatColoredJob()
+                {
+                    ParticleLut = _renderLut,
+                    ColorKeys = blockBuffer.Slice(slice.x, count),
+                    Ps = _particlesTemp,
+                    GMatrix = _covBuffer,
+                    Grid = gridBuffer,
+                    GridLut = gridLut,
+                    MinPos = minPosSim,
+                    UseAnisotropic = useAnisotropic,
+                }.Schedule(count, count, splatHandle);
+            }
+            #else
+            splatHandle = new Reconstruction.DensityProjectionParallelJob()
+            {
+                Ps = _particlesTemp,
+                GMatrix = _covBuffer,
+                GridLut = gridLut,
+                Grid = grid,
+                ParticleLut = _renderLut,
+                Keys = keys,
+                UseAnisotropic = useAnisotropic,
+                MinPos = minPosSim,
+            }.Schedule(keys.Length, batchCount);
+            #endif
+
+            splatHandle.Complete();
+            PerformanceProfiler.End(profSplat);
+            return true;
+        }
+
+        private Mesh BuildSurfaceMeshFromGridCore(
+            NativeArray<int3> keys,
+            NativeHashMap<int3, int> gridLut,
+            NativeArray<float> grid,
+            NativeArray<float> gridTemp,
+            LMarchingCubes marchingCubes,
+            float3 minPosSim,
+            float3 maxPosSim,
+            string profBlur,
+            string profMarchingCubes,
+            out Vector3 meshOriginWorld)
+        {
+            meshOriginWorld = (Vector3)(minPosSim * PBF_Utils.Scale);
+
+            PerformanceProfiler.Begin(profBlur);
+            new Reconstruction.GridBlurJob()
+            {
+                Keys = keys,
+                GridLut = gridLut,
+                GridRead = grid,
+                GridWrite = gridTemp,
+            }.Schedule(keys.Length, batchCount).Complete();
+            PerformanceProfiler.End(profBlur);
+
+            PerformanceProfiler.Begin(profMarchingCubes);
+            var mesh = marchingCubes.MarchingCubesParallel(keys, gridLut, gridTemp, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
+            if (mesh != null)
+            {
+                Vector3 baseSizeW = (Vector3)((maxPosSim - minPosSim) * PBF_Utils.Scale);
+                float marginW = PBF_Utils.CellSize * PBF_Utils.Scale * 8f;
+                mesh.bounds = new Bounds(baseSizeW * 0.5f, baseSizeW + Vector3.one * marginW);
+            }
+            PerformanceProfiler.End(profMarchingCubes);
+            return mesh;
         }
 
         private void SurfaceDroplets()
@@ -2376,6 +2745,21 @@ namespace Revive.Slime
             if (renderMode != RenderMode.Surface)
                 return;
 
+            if (!_dropletSubsystem.TryGetActiveBounds(out float3 dropletMinSim, out float3 dropletMaxSim))
+            {
+                _dropletMesh = null;
+                return;
+            }
+
+            float blockSize = PBF_Utils.CellSize * 4;
+            float3 dropletMinPos = math.floor(dropletMinSim / blockSize) * blockSize;
+            float3 dropletMaxPos = math.ceil(dropletMaxSim / blockSize) * blockSize;
+            _dropletBounds = new Bounds()
+            {
+                min = dropletMinPos * PBF_Utils.Scale,
+                max = dropletMaxPos * PBF_Utils.Scale
+            };
+
             bool shouldUpdateDropletMesh = (Time.frameCount - _lastDropletMarchingCubesFrame) >= dropletMarchingCubesIntervalFrames;
             if (!shouldUpdateDropletMesh)
             {
@@ -2387,24 +2771,21 @@ namespace Revive.Slime
             var cam = _cachedMainCamera;
             if (cam != null)
             {
-                if (_dropletSubsystem.TryGetActiveBounds(out float3 dropletMinSim, out float3 dropletMaxSim))
-                {
-                    Vector3 minW = (Vector3)(dropletMinSim * PBF_Utils.Scale);
-                    Vector3 maxW = (Vector3)(dropletMaxSim * PBF_Utils.Scale);
-                    Vector3 centerW = (minW + maxW) * 0.5f;
-                    Vector3 sizeW = (maxW - minW);
-                    float marginW = PBF_Utils.h * PBF_Utils.Scale * 4f;
-                    sizeW += Vector3.one * marginW;
-                    var testBounds = new Bounds(centerW, sizeW);
+                Vector3 minW = (Vector3)(dropletMinSim * PBF_Utils.Scale);
+                Vector3 maxW = (Vector3)(dropletMaxSim * PBF_Utils.Scale);
+                Vector3 centerW = (minW + maxW) * 0.5f;
+                Vector3 sizeW = (maxW - minW);
+                float marginW = PBF_Utils.h * PBF_Utils.Scale * 4f;
+                sizeW += Vector3.one * marginW;
+                var testBounds = new Bounds(centerW, sizeW);
 
-                    if (_cachedFrustumPlanes == null || _cachedFrustumPlanes.Length != 6)
-                        _cachedFrustumPlanes = new UnityEngine.Plane[6];
-                    GeometryUtility.CalculateFrustumPlanes(cam, _cachedFrustumPlanes);
-                    if (!GeometryUtility.TestPlanesAABB(_cachedFrustumPlanes, testBounds))
-                    {
-                        _dropletMesh = null;
-                        return;
-                    }
+                if (_cachedFrustumPlanes == null || _cachedFrustumPlanes.Length != 6)
+                    _cachedFrustumPlanes = new UnityEngine.Plane[6];
+                GeometryUtility.CalculateFrustumPlanes(cam, _cachedFrustumPlanes);
+                if (!GeometryUtility.TestPlanesAABB(_cachedFrustumPlanes, testBounds))
+                {
+                    _dropletMesh = null;
+                    return;
                 }
             }
 
@@ -2433,137 +2814,51 @@ namespace Revive.Slime
                 }.Schedule(dropletCount, batchCount, handle);
             }
 
-            new Reconstruction.CalcBoundsJob()
-            {
-                Ps = _particlesRenderBuffer,
-                Controllers = _controllerBuffer,
-                SourceControllers = _sourceControllers,
-                Bounds = _boundsBuffer,
-                ActiveCount = dropletCount,
-            }.Schedule(handle).Complete();
+            handle.Complete();
             PerformanceProfiler.End("SurfaceDroplet_MeanPos");
-
-            float blockSize = PBF_Utils.CellSize * 4;
-            float3 dropletMinPos = math.floor(_boundsBuffer[0] / blockSize) * blockSize;
-            float3 dropletMaxPos = math.ceil(_boundsBuffer[1] / blockSize) * blockSize;
-            _dropletBounds = new Bounds()
-            {
-                min = dropletMinPos * PBF_Utils.Scale,
-                max = dropletMaxPos * PBF_Utils.Scale
-            };
 
             _dropletGridLut.Clear();
             _dropletGridKeys.Clear();
 
-            PerformanceProfiler.Begin("SurfaceDroplet_Allocate");
-            handle = new Reconstruction.AllocateBlockJob()
-            {
-                Ps = _particlesTemp,
-                GridLut = _dropletGridLut,
-                Keys = _dropletGridKeys,
-                MinPos = dropletMinPos,
-                ActiveCount = dropletCount,
-            }.Schedule();
-            handle.Complete();
-
-            PerformanceProfiler.Begin("SurfaceDroplet_GetKeyArray");
-            var keys = _dropletGridKeys.AsArray();
-            PerformanceProfiler.End("SurfaceDroplet_GetKeyArray");
-            int dropletBlockNum = keys.Length;
-            if (dropletBlockNum == 0)
+            if (!PrepareSurfaceGridCore(
+                dropletCount,
+                dropletMinPos,
+                _dropletGridLut,
+                _dropletGridKeys,
+                _dropletGridBuffer,
+                _dropletGridTempBuffer,
+                _dropletGridIDBuffer,
+                _dropletBlockBuffer,
+                _dropletBlockColorBuffer,
+                "SurfaceDroplet_Allocate",
+                "SurfaceDroplet_GetKeyArray",
+                "SurfaceDroplet_ClearGrid",
+                "SurfaceDroplet_ColorBlocks",
+                "SurfaceDroplet_Splat",
+                out var keys,
+                out var dropletBlockNum,
+                out var grid,
+                out var gridTemp,
+                out var gridID))
             {
                 PerformanceProfiler.Begin("SurfaceDroplet_DisposeKeys");
                 PerformanceProfiler.End("SurfaceDroplet_DisposeKeys");
                 _dropletMesh = null;
-                PerformanceProfiler.End("SurfaceDroplet_Allocate");
                 return;
             }
 
-            int clearLen = dropletBlockNum * PBF_Utils.GridSize;
-
-            PerformanceProfiler.Begin("SurfaceDroplet_ClearGrid");
-            new Reconstruction.ClearGridJob
-            {
-                Grid = _dropletGridBuffer.GetSubArray(0, clearLen),
-                GridID = _dropletGridIDBuffer.GetSubArray(0, clearLen),
-            }.Schedule(clearLen, batchCount).Complete();
-            PerformanceProfiler.End("SurfaceDroplet_ClearGrid");
-
-            PerformanceProfiler.Begin("SurfaceDroplet_ColorBlocks");
-            new Reconstruction.ColorBlockJob()
-            {
-                Keys = keys,
-                Blocks = _dropletBlockBuffer,
-                BlockColors = _dropletBlockColorBuffer,
-            }.Schedule().Complete();
-            PerformanceProfiler.End("SurfaceDroplet_ColorBlocks");
-            PerformanceProfiler.End("SurfaceDroplet_Allocate");
-
-            PerformanceProfiler.Begin("SurfaceDroplet_Splat");
-#if USE_SPLAT_SINGLE_THREAD
-            handle = new Reconstruction.DensityProjectionJob()
-            {
-                Ps = _particlesTemp,
-                GMatrix = _covBuffer,
-                Grid = _dropletGridBuffer,
-                GridLut = _dropletGridLut,
-                MinPos = dropletMinPos,
-                UseAnisotropic = useAnisotropic,
-            }.Schedule();
-#elif USE_SPLAT_COLOR8
-            for (int i = 0; i < 8; i++)
-            {
-                int2 slice = new int2(_dropletBlockColorBuffer[i], _dropletBlockColorBuffer[i + 1]);
-                int count = slice.y - slice.x;
-                handle = new Reconstruction.DensitySplatColoredJob()
-                {
-                    ParticleLut = _renderLut,
-                    ColorKeys = _dropletBlockBuffer.Slice(slice.x, count),
-                    Ps = _particlesTemp,
-                    GMatrix = _covBuffer,
-                    Grid = _dropletGridBuffer,
-                    GridLut = _dropletGridLut,
-                    MinPos = dropletMinPos,
-                    UseAnisotropic = useAnisotropic,
-                }.Schedule(count, count, handle);
-            }
-#else
-            handle = new Reconstruction.DensityProjectionParallelJob()
-            {
-                Ps = _particlesTemp,
-                GMatrix = _covBuffer,
-                GridLut = _dropletGridLut,
-                Grid = _dropletGridBuffer,
-                ParticleLut = _renderLut,
-                Keys = keys,
-                UseAnisotropic = useAnisotropic,
-                MinPos = dropletMinPos,
-            }.Schedule(keys.Length, batchCount);
-#endif
-            handle.Complete();
-            PerformanceProfiler.End("SurfaceDroplet_Splat");
-
-            PerformanceProfiler.Begin("SurfaceDroplet_Blur");
-            new Reconstruction.GridBlurJob()
-            {
-                Keys = keys,
-                GridLut = _dropletGridLut,
-                GridRead = _dropletGridBuffer,
-                GridWrite = _dropletGridTempBuffer,
-            }.Schedule(keys.Length, batchCount, handle).Complete();
-            PerformanceProfiler.End("SurfaceDroplet_Blur");
-
-            PerformanceProfiler.Begin("SurfaceDroplet_MarchingCubes");
-            _dropletMesh = _marchingCubesDroplet.MarchingCubesParallel(keys, _dropletGridLut, _dropletGridTempBuffer, threshold, PBF_Utils.Scale * PBF_Utils.CellSize);
-            _dropletMeshOriginWorld = (Vector3)(dropletMinPos * PBF_Utils.Scale);
-            if (_dropletMesh != null)
-            {
-                Vector3 baseSizeW = (Vector3)((dropletMaxPos - dropletMinPos) * PBF_Utils.Scale);
-                float marginW = PBF_Utils.CellSize * PBF_Utils.Scale * 8f;
-                _dropletMesh.bounds = new Bounds(baseSizeW * 0.5f, baseSizeW + Vector3.one * marginW);
-            }
+            _dropletMesh = BuildSurfaceMeshFromGridCore(
+                keys,
+                _dropletGridLut,
+                grid,
+                gridTemp,
+                _marchingCubesDroplet,
+                dropletMinPos,
+                dropletMaxPos,
+                "SurfaceDroplet_Blur",
+                "SurfaceDroplet_MarchingCubes",
+                out _dropletMeshOriginWorld);
             _lastDropletMarchingCubesFrame = Time.frameCount;
-            PerformanceProfiler.End("SurfaceDroplet_MarchingCubes");
 
             PerformanceProfiler.Begin("SurfaceDroplet_DisposeKeys");
             PerformanceProfiler.End("SurfaceDroplet_DisposeKeys");
@@ -2586,29 +2881,64 @@ namespace Revive.Slime
             
             PerformanceProfiler.Begin("ApplyForce");
              
-             // 获取主体控制器中心，用于分离粒子排除指向主体的凝聚力分量
-            float3 mainCenterForJob = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Center : float3.zero;
+            if (!_controllerBuffer.IsCreated)
+                return;
+
+            var controllersForJob = _controllerBuffer.AsArray();
+            float3 mainCenterForJob = controllersForJob.Length > 0 ? controllersForJob[0].Center : float3.zero;
+            float3 mainVelocityForJob = controllersForJob.Length > 0 ? controllersForJob[0].Velocity : float3.zero;
+
+            NativeArray<WindFieldZoneData> windZonesForJob;
+            bool disposeWindZonesForJob = false;
+            if (_windZones.IsCreated)
+            {
+                _windZones.Clear();
+                if (!_consumeWindFieldImmune)
+                {
+                    WindFieldRegistry.FillActiveZonesSimData(_windZones, PBF_Utils.InvScale);
+                }
+                windZonesForJob = _windZones.AsArray();
+            }
+            else
+            {
+                windZonesForJob = new NativeArray<WindFieldZoneData>(0, Allocator.Temp);
+                disposeWindZonesForJob = true;
+            }
+
+            int windTargetLayerBit = 1 << gameObject.layer;
+            float consumeDeformMulTarget = Mathf.Max(0.01f, _consumeDeformLimitMultiplier);
+            float consumeAlpha = 1f - Mathf.Exp(-12f * deltaTime);
+            _consumeDeformLimitMultiplierCurrent = Mathf.Lerp(_consumeDeformLimitMultiplierCurrent, consumeDeformMulTarget, consumeAlpha);
+            float consumeDeformMul = _consumeDeformLimitMultiplierCurrent;
             new Simulation_PBF.ApplyForceJob
             {
                 Ps = _particles,
                 Velocity = _velocityBuffer,
                 PsNew = _particlesTemp,
-                Controllers = _controllerBuffer.AsArray(),
+                Controllers = controllersForJob,
                 SourceControllers = _sourceControllers,
                 BlobIdToControllerSlot = _blobIdToControllerSlot,
+                WindZones = windZonesForJob,
+                WindTargetLayerBit = windTargetLayerBit,
+                ParticleRadiusSim = particleRadiusWorld * PBF_Utils.InvScale,
                 Gravity = new float3(0, gravity, 0),
                 DeltaTime = deltaTime,
                 PredictStep = predictStep,
                 VelocityDamping = velocityDamping,
                 VerticalOffset = verticalOffset,
+                DropletVerticalOffset = dropletVerticalOffset,
                 EnableRecall = _connect,
                 RecallEligibleBlobIds = _recallEligibleBlobIds,
                 UseRecallEligibleBlobIds = _connect && _recallEligibleBlobIds.IsCreated,
                 MainCenter = mainCenterForJob,
-                MainVelocity = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Velocity : float3.zero,
-                MaxDeformDistXZ = maxDeformDistXZ * PBF_Utils.InvScale, // 水平形变上限
-                MaxDeformDistY = maxDeformDistY * PBF_Utils.InvScale,   // 垂直形变上限
+                MainVelocity = mainVelocityForJob,
+                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * PBF_Utils.InvScale, // 水平形变上限
+                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * PBF_Utils.InvScale,   // 垂直形变上限
             }.Schedule(activeParticles, batchCount).Complete();
+            if (disposeWindZonesForJob)
+            {
+                windZonesForJob.Dispose();
+            }
             PerformanceProfiler.End("ApplyForce");
 
             // 召回调试日志已移除
@@ -2682,12 +3012,14 @@ namespace Revive.Slime
                 PosPredict = _pbfSystem.PosPredict,
                 Lambda = _pbfSystem.Lambda,
                 Hashes = _pbfSystem.Hashes, // 用于从排序索引映射回原始粒子索引
+                Controllers = controllersForJob,
+                BlobIdToControllerSlot = _blobIdToControllerSlot,
                 PsOriginal = _particlesTemp, // 排序后的粒子数组
                 PsNew = _particles,
                 ClampDelta = _clampDelta, // 【P4】输出钳制位移量
                 TargetDensity = targetDensity,
-                MaxDeformDistXZ = maxDeformDistXZ * PBF_Utils.InvScale, // 【P4】启用椭球钳制
-                MaxDeformDistY = maxDeformDistY * PBF_Utils.InvScale,   // 【P4】启用椭球钳制
+                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * PBF_Utils.InvScale,
+                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * PBF_Utils.InvScale,
                 MainCenter = mainCenterForJob,
             }.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("ComputeDeltaPos");
@@ -2706,9 +3038,27 @@ namespace Revive.Slime
             PerformanceProfiler.Begin("Update_GroundHeights");
             bool travelling = _pipeTravelAbility != null && _pipeTravelAbility.IsTravelling;
             bool useStaticSdfThisFrame = useWorldStaticSdf && _worldStaticSdf.IsCreated && !travelling;
-            if (!useStaticSdfThisFrame || disableStaticColliderFallbackWhenUsingSdf)
+            if (enableGroundFallbackRaycast)
             {
-                RefreshGroundY();
+                if (!useStaticSdfThisFrame || disableStaticColliderFallbackWhenUsingSdf)
+                {
+                    RefreshGroundY();
+                }
+            }
+            else
+            {
+                if (_controllerBuffer.IsCreated)
+                {
+                    const float veryLowGroundYSim = -10000f;
+                    for (int ci = 0; ci < _controllerBuffer.Length; ci++)
+                    {
+                        var ctrl = _controllerBuffer[ci];
+                        ctrl.GroundY = veryLowGroundYSim;
+                        ctrl.GroundPoint = new float3(ctrl.Center.x, veryLowGroundYSim, ctrl.Center.z);
+                        ctrl.GroundNormal = new float3(0, 1, 0);
+                        _controllerBuffer[ci] = ctrl;
+                    }
+                }
             }
             PerformanceProfiler.End("Update_GroundHeights");
 
@@ -2716,26 +3066,35 @@ namespace Revive.Slime
             float fallbackGroundY = -10f;
 
             PerformanceProfiler.Begin("Update_Job");
-            int useSdf = useStaticSdfThisFrame ? 1 : 0;
-            new Simulation_PBF.UpdateJob
-            {
-                Ps = _particles,
-                PosOld = _posOld,
-                ClampDelta = _clampDelta, // 【P4】钳制位移量，用于速度回算修正
-                Colliders = _colliderBuffer,
-                Controllers = _controllerBuffer, // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
-                ColliderCount = _currentColliderCount,
-                UseStaticSdf = useSdf,
-                StaticSdf = useSdf != 0 ? _worldStaticSdf.Data : _dummyWorldSdfVolume,
-                DisableStaticColliderFallback = (useSdf != 0 && disableStaticColliderFallbackWhenUsingSdf) ? 1 : 0,
-                ParticleRadiusSim = particleRadiusWorld * PBF_Utils.InvScale,
-                StaticFriction = worldStaticSdfFriction,
-                Velocity = _velocityTempBuffer,
-                MaxVelocity = dynamicMaxVelocity,
-                DeltaTime = deltaTime,
-                FallbackGroundY = fallbackGroundY,
-                MaxDeformDistXZ = maxDeformDistXZ * PBF_Utils.InvScale, // 水平形变上限
-                MaxDeformDistY = maxDeformDistY * PBF_Utils.InvScale,   // 垂直形变上限
+			int useSdf = useStaticSdfThisFrame ? 1 : 0;
+			NativeArray<float> terrainHeights01 = _terrainHeights01.IsCreated ? _terrainHeights01 : _dummyTerrainHeights01;
+			int terrainResX = _terrainHeights01.IsCreated ? _terrainResX : 0;
+			int terrainResZ = _terrainHeights01.IsCreated ? _terrainResZ : 0;
+			new Simulation_PBF.UpdateJob
+			{
+				Ps = _particles,
+				PosOld = _posOld,
+				ClampDelta = _clampDelta, // 【P4】ComputeDeltaPosJob 输出的钳制位移量
+				Colliders = _colliderBuffer,
+				Controllers = _controllerBuffer, // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
+				BlobIdToControllerSlot = _blobIdToControllerSlot,
+				ColliderCount = _currentColliderCount,
+				UseStaticSdf = useStaticSdfThisFrame ? 1 : 0,
+				StaticSdf = useStaticSdfThisFrame ? _worldStaticSdf.Data : _dummyWorldSdfVolume,
+				DisableStaticColliderFallback = (useStaticSdfThisFrame && disableStaticColliderFallbackWhenUsingSdf) ? 1 : 0,
+				ParticleRadiusSim = particleRadiusWorld * PBF_Utils.InvScale,
+				StaticFriction = worldStaticSdfFriction,
+				TerrainHeights01 = terrainHeights01,
+				TerrainResX = terrainResX,
+				TerrainResZ = terrainResZ,
+				TerrainOriginSim = _terrainOriginSim,
+				TerrainSizeSim = _terrainSizeSim,
+				Velocity = _velocityTempBuffer,
+				MaxVelocity = dynamicMaxVelocity,
+				DeltaTime = deltaTime,
+				FallbackGroundY = fallbackGroundY,
+                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * PBF_Utils.InvScale, // 水平形变上限
+                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * PBF_Utils.InvScale,   // 垂直形变上限
                 MainCenter = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Center : float3.zero,
                 MainVelocity = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Velocity : float3.zero,
                 EnableCollisionDeformLimit = enableCollisionDeformLimit,
@@ -2746,7 +3105,7 @@ namespace Revive.Slime
             if (useSdf != 0 && _worldStaticSdf.IsCreated)
             {
                 const int logIntervalFrames = 30;
-                if (Time.frameCount - _lastSdfCollisionDbgLogFrame >= logIntervalFrames)
+                if (sdfCollisionDebugLogs && Time.frameCount - _lastSdfCollisionDbgLogFrame >= logIntervalFrames)
                 {
                     _lastSdfCollisionDbgLogFrame = Time.frameCount;
 
@@ -2759,6 +3118,9 @@ namespace Revive.Slime
 
                     int sample = 0;
                     int hit = 0;
+                    int clipped = 0;
+                    int nearZero = 0;
+                    int neg = 0;
                     float penSum = 0f;
                     float penMax = 0f;
                     float dMin = float.MaxValue;
@@ -2766,6 +3128,13 @@ namespace Revive.Slime
                     float dotMin = 2f;
                     float dotSum = 0f;
                     int dotBad = 0;
+                    int closestIdx = -1;
+                    float closestD = float.MaxValue;
+                    float closestPen = 0f;
+                    float closestDot = 0f;
+                    float3 closestPosSim = float3.zero;
+                    float3 closestNCell = float3.zero;
+                    float3 closestNFwd = float3.zero;
                     int worstIdx = -1;
                     float worstD = 0f;
                     float worstPen = 0f;
@@ -2782,6 +3151,9 @@ namespace Revive.Slime
 
                         float3 simPos = p.Position;
                         float d = v.SampleDistanceDenseWithLocalAndIndices(simPos, out float3 local0, out int3 i0, out int3 i1, out float3 f);
+                        if (d >= v.MaxDistanceSim - 1e-5f) clipped++;
+                        if (math.abs(d) <= voxel * 0.5f) nearZero++;
+                        if (d < 0f) neg++;
                         dMin = math.min(dMin, d);
                         dMax = math.max(dMax, d);
 
@@ -2791,6 +3163,17 @@ namespace Revive.Slime
                         dotMin = math.min(dotMin, dot);
                         dotSum += dot;
                         if (dot < 0.5f) dotBad++;
+
+                        if (d < closestD)
+                        {
+                            closestD = d;
+                            closestIdx = pi;
+                            closestDot = dot;
+                            closestPosSim = simPos;
+                            closestNCell = nCell;
+                            closestNFwd = nFwd;
+                            closestPen = math.max(0f, contactRadius - d);
+                        }
 
                         if (d < contactRadius)
                         {
@@ -2815,9 +3198,23 @@ namespace Revive.Slime
                         sample++;
                     }
 
+                    if (worstIdx < 0 && closestIdx >= 0)
+                    {
+                        worstIdx = closestIdx;
+                        worstD = closestD;
+                        worstPen = closestPen;
+                        worstDot = closestDot;
+                        worstPosSim = closestPosSim;
+                        worstNCell = closestNCell;
+                        worstNFwd = closestNFwd;
+                    }
+
                     float hitPct = sample > 0 ? (float)hit / sample : 0f;
                     float penAvg = hit > 0 ? penSum / hit : 0f;
                     float dotAvg = sample > 0 ? dotSum / sample : 0f;
+                    float clippedPct = sample > 0 ? (float)clipped / sample : 0f;
+                    float nearZeroPct = sample > 0 ? (float)nearZero / sample : 0f;
+                    float negPct = sample > 0 ? (float)neg / sample : 0f;
 
                     float3 worstPosWorld = worstPosSim * PBF_Utils.Scale;
                     int disableFallback = disableStaticColliderFallbackWhenUsingSdf ? 1 : 0;
@@ -2857,13 +3254,51 @@ namespace Revive.Slime
                         $"[SdfCollDbg] frame={Time.frameCount} active={activeParticles} sample={sample} " +
                         $"voxelSim={v.VoxelSizeSim:F3} radiusSim={radiusSim:F3} contactRadiusSim={contactRadius:F3} " +
                         $"hit={hit} hitPct={hitPct:P1} penAvg={penAvg:F4} penMax={penMax:F4} " +
-                        $"dMin={dMin:F4} dMax={dMax:F4} " +
+                        $"dMin={dMin:F4} dMax={dMax:F4} clippedPct={clippedPct:P1} near0Pct={nearZeroPct:P1} negPct={negPct:P1} " +
                         $"nDotMin={dotMin:F3} nDotAvg={dotAvg:F3} nDotBad(lt0.5)={dotBad} " +
                         $"disableFallback={disableFallback} " +
                         $"colliders={colCount} static={staticCount} nearStaticDistW={nearStaticDistW:F3} " +
                         $"worstIdx={worstIdx} worstD={worstD:F4} worstPen={worstPen:F4} worstDot={worstDot:F3} " +
                         $"worstPosW=({worstPosWorld.x:F2},{worstPosWorld.y:F2},{worstPosWorld.z:F2}) " +
                         $"worstNCell=({worstNCell.x:F2},{worstNCell.y:F2},{worstNCell.z:F2}) worstNFwd=({worstNFwd.x:F2},{worstNFwd.y:F2},{worstNFwd.z:F2})");
+                }
+
+                if (sdfValidationLogs && Time.frameCount - _lastSdfValidationLogFrame >= logIntervalFrames)
+                {
+                    _lastSdfValidationLogFrame = Time.frameCount;
+                    var v = _worldStaticSdf.Data;
+                    int bitMask = worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers.value : ~0;
+                    float epsSim = sdfValidationNormalEpsWorld * PBF_Utils.InvScale;
+
+                    void Validate(string tag, Vector3 originW, Vector3 dirW)
+                    {
+                        if (!TryRaycastFiltered(originW, dirW, sdfValidationRayMaxDistWorld, bitMask, out RaycastHit hit))
+                        {
+                            Debug.Log($"[SdfValidate] frame={Time.frameCount} {tag} noHit maxDistW={sdfValidationRayMaxDistWorld:F2}");
+                            return;
+                        }
+
+                        float3 hitSim = (float3)(hit.point * PBF_Utils.InvScale);
+                        float dHit = v.SampleDistance(hitSim);
+                        float3 nSdf = math.normalizesafe(v.SampleNormalForward(hitSim, dHit), new float3(0, 1, 0));
+                        float3 nHit = math.normalizesafe((float3)hit.normal, new float3(0, 1, 0));
+                        float dot = math.dot(nSdf, nHit);
+
+                        float dPlus = v.SampleDistance(hitSim + nHit * epsSim);
+                        float dMinus = v.SampleDistance(hitSim - nHit * epsSim);
+                        Debug.Log($"[SdfValidate] frame={Time.frameCount} {tag} hit={hit.collider.name} layer={LayerMask.LayerToName(hit.collider.gameObject.layer)} distW={hit.distance:F3} dHit={dHit:F4} d+={dPlus:F4} d-={dMinus:F4} dot={dot:F3} hitP={hit.point}");
+                    }
+
+                    Vector3 pW = trans != null ? trans.position : Vector3.zero;
+                    Vector3 originW = pW + Vector3.up * sdfValidationRayHeightOffsetWorld;
+                    Validate("D", originW, Vector3.down);
+                    if (trans != null)
+                    {
+                        Validate("F", originW, trans.forward);
+                        Validate("B", originW, -trans.forward);
+                        Validate("R", originW, trans.right);
+                        Validate("L", originW, -trans.right);
+                    }
                 }
             }
             
@@ -3066,16 +3501,6 @@ namespace Revive.Slime
                 (float3)(trans.position * PBF_Utils.InvScale) : float3.zero;
             
             bool travelling = _pipeTravelAbility != null && _pipeTravelAbility.IsTravelling;
-            float tNowGFlowCtrl = Time.time;
-            if (tNowGFlowCtrl - _dbgRecallGlobalFlowCtrlLogTime > 0.5f)
-            {
-                _dbgRecallGlobalFlowCtrlLogTime = tNowGFlowCtrl;
-                Debug.Log(
-                    $"[RecallGFlow][Ctrl] frame={Time.frameCount} name={name} id={GetInstanceID()} connect={_connect} useGFlow={recallUseGlobalFlowField} travelling={travelling} " +
-                    $"useWorldStaticSdf={useWorldStaticSdf} sdfIsCreated={_worldStaticSdf.IsCreated} sdfDataIsCreated={(_worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated)} " +
-                    $"lastUpdateFrame={_recallGlobalFlowLastUpdateFrame} interval={recallGlobalFlowUpdateIntervalFrames}",
-                    this);
-            }
             if (_connect && recallUseGlobalFlowField && !travelling)
             {
                 UpdateRecallGlobalFlowField(mainCenter);
@@ -3328,27 +3753,6 @@ namespace Revive.Slime
                                                _recallEligibleBlobIds[blobId] != 0 &&
                                                !suppressRecallByRecentProtection;
 
-                bool dbgCtrl = recallAvoidanceLogControllerSlot >= 0 && controllerSlot == recallAvoidanceLogControllerSlot;
-                float distToMainW_dbg = math.length((center - mainCenter) * PBF_Utils.Scale);
-                int eligibleValDbg = (_recallEligibleBlobIds.IsCreated && blobId > 0 && blobId < _recallEligibleBlobIds.Length)
-                    ? _recallEligibleBlobIds[blobId]
-                    : -1;
-                int recentCountDbg = recentFromEmitCountPerComp.IsCreated ? recentFromEmitCountPerComp[ci] : 0;
-
-                if (_connect && !allowRecallForController && particleCount > 0)
-                {
-                    float tNow = Time.time;
-                    if (tNow - _dbgRecallStateLogTime > 0.5f)
-                    {
-                        _dbgRecallStateLogTime = tNow;
-                        int recentCountDbgInner = recentFromEmitCountPerComp.IsCreated ? recentFromEmitCountPerComp[ci] : 0;
-                        int eligibleLenDbg = _recallEligibleBlobIds.IsCreated ? _recallEligibleBlobIds.Length : -1;
-                        bool inRangeDbg = eligibleLenDbg > 0 && blobId >= 0 && blobId < eligibleLenDbg;
-                        int eligibleValDbgInner = (inRangeDbg && blobId >= 0) ? _recallEligibleBlobIds[blobId] : -1;
-                        Debug.Log($"[Recall] ctrlNotEligible: comp={ci} blobId={blobId} ctrlSlot={controllerSlot} particleCount={particleCount} recentProtect={recentCountDbgInner} eligibleLen={eligibleLenDbg} inRange={inRangeDbg} eligibleVal={eligibleValDbgInner} suppressedByRecentProtect={suppressRecallByRecentProtection}");
-                    }
-                }
-
                 if (allowRecallForController)
                 {
                     float3 recallCenter = center;
@@ -3404,22 +3808,6 @@ namespace Revive.Slime
                     }
                     else
                         toMain = recallSpeedSim * rawDir;
-
-                    if (distToMain > 2f && math.lengthsq(toMain) < 0.01f)
-                    {
-                        float tNow = Time.time;
-                        if (tNow - _dbgRecallStateLogTime > 0.5f)
-                        {
-                            _dbgRecallStateLogTime = tNow;
-                            Debug.Log($"[Recall] velTooSmall: ctrlSlot={controllerSlot} blobId={blobId} distToMainSim={distToMain:F2} toMain=({toMain.x:F2},{toMain.y:F2},{toMain.z:F2}) useAvoid={useAvoid} useSdf={(useWorldStaticSdf && _worldStaticSdf.IsCreated)} colliderCount={_currentColliderCount}");
-                        }
-                    }
-                }
-
-                if (dbgCtrl)
-                {
-                    float toMainLenW = math.length(toMain * PBF_Utils.Scale);
-                    Debug.Log($"[RecallCtrlDbg] frame={Time.frameCount} comp={ci} blobId={blobId} ctrlSlot={controllerSlot} particleCount={particleCount} minSeparateClusterSize={minSeparateClusterSize} allowRecall={allowRecallForController} eligibleVal={eligibleValDbg} recentProtect={recentCountDbg} suppressedByRecentProtect={suppressRecallByRecentProtection} distToMainW={distToMainW_dbg:F2} toMainLenW={toMainLenW:F2}");
                 }
 
                 float3 currentCenter = center;
@@ -3745,7 +4133,6 @@ namespace Revive.Slime
             if (_connect && Time.time - _connectStartTime > 5f)
             {
                 _connect = false;
-                Debug.Log($"[Recall] stopped by timeout. elapsed={(Time.time - _connectStartTime):F2}s");
             }
 
             PerformanceProfiler.End("Control_RecallTimeout");
@@ -5466,32 +5853,35 @@ namespace Revive.Slime
             // 使用渲染专用邻域表，不破坏模拟用的 _lut
             _renderLut.Clear();
             
-            // 使用渲染专用 HashJob（_particlesRenderBuffer 已是世界坐标）
-            new Reconstruction.HashRenderJob
-            {
-                Ps = _particlesRenderBuffer,
-                Hashes = renderHashes,
-            }.Schedule(totalParticles, batchCount).Complete();
-            
-            // 排序
-            renderHashes.SortJob(new PBF_Utils.Int2Comparer()).Schedule().Complete();
-            
             // Shuffle _particlesRenderBuffer 以匹配排序后的顺序
             // 使用 _particlesTemp 作为临时缓冲
             NativeArray<Particle>.Copy(_particlesRenderBuffer, _particlesTemp, totalParticles);
-            new Reconstruction.ShuffleRenderJob
+
+            // 使用渲染专用 HashJob（_particlesRenderBuffer 已是世界坐标）
+            var hashHandle = new Reconstruction.HashRenderJob
+            {
+                Ps = _particlesRenderBuffer,
+                Hashes = renderHashes,
+            }.Schedule(totalParticles, batchCount);
+            
+            // 排序
+            var sortHandle = renderHashes.SortJob(new PBF_Utils.Int2Comparer()).Schedule(hashHandle);
+            
+            var shuffleHandle = new Reconstruction.ShuffleRenderJob
             {
                 Hashes = renderHashes,
                 PsRaw = _particlesTemp,
                 PsShuffled = _particlesRenderBuffer,
-            }.Schedule(totalParticles, batchCount).Complete();
+            }.Schedule(totalParticles, batchCount, sortHandle);
             
             // 构建 LUT
-            new Simulation_PBF.BuildLutJob
+            var lutHandle = new Simulation_PBF.BuildLutJob
             {
                 Hashes = renderHashes,
                 Lut = _renderLut
-            }.Schedule().Complete();
+            }.Schedule(sortHandle);
+            
+            JobHandle.CombineDependencies(shuffleHandle, lutHandle).Complete();
         }
 
         private int GetGroupParticleCount(int groupId)
@@ -5697,9 +6087,6 @@ namespace Revive.Slime
             }
         }
         
-        /// <summary>
-        /// 为每个有效控制器独立射线检测地面高度，存入 ctrl.GroundY
-        /// </summary>
         private void RefreshGroundY()
         {
             float fallbackGroundY = -10f; // 后备地面高度（模拟坐标）
@@ -5721,12 +6108,22 @@ namespace Revive.Slime
                 
                 // 从控制器中心向下射线检测
                 Vector3 worldPos = (Vector3)(ctrl.Center * PBF_Utils.Scale);
-                float rayStartY = worldPos.y + 2f; // 抬高起点
+                float rayStartY = worldPos.y;
                 worldPos.y = rayStartY;
                 
                 bool hitGround = TryRaycastFiltered(worldPos, Vector3.down, 30f, GroundQueryMask, out RaycastHit hit);
                 if (hitGround)
                 {
+                    const int logIntervalFrames = 30;
+                    if (Time.frameCount - _lastGroundFallbackHitLogFrame >= logIntervalFrames)
+                    {
+                        _lastGroundFallbackHitLogFrame = Time.frameCount;
+                        string colType = hit.collider != null ? hit.collider.GetType().Name : "null";
+                        string colName = hit.collider != null ? hit.collider.name : "null";
+                        string layerName = hit.collider != null ? LayerMask.LayerToName(hit.collider.gameObject.layer) : "null";
+                        Debug.Log($"[GroundFallbackRay] frame={Time.frameCount} c={c} type={colType} name={colName} layer={layerName} distW={hit.distance:F3} p={hit.point}");
+                    }
+
                     float oldGroundY = ctrl.GroundY;
                     float3 hitPointSim = (float3)(hit.point * PBF_Utils.InvScale);
                     float3 hitNormalSim = (float3)hit.normal;
@@ -5736,25 +6133,32 @@ namespace Revive.Slime
                     else
                         hitNormalSim *= math.rsqrt(nLen2);
 
-                    float radiusSim = particleRadiusWorld * PBF_Utils.InvScale;
-                    float3 newGroundPoint = hitPointSim + hitNormalSim * radiusSim;
-                    float newGroundY = newGroundPoint.y;
-                    
-                    // 平滑过渡：避免射线命中护动导致地面高度突变
-                    // 只有新值更低时才立即采纳（避免穿透地面），否则平滑过渡
-                    if (oldGroundY <= 0 || newGroundY < oldGroundY)
+                    const float minGroundNy = 0.55f;
+                    if (hitNormalSim.y < minGroundNy)
                     {
-                        ctrl.GroundY = newGroundY;
-                        ctrl.GroundPoint = newGroundPoint;
-                        ctrl.GroundNormal = hitNormalSim;
+                        hitGround = false;
                     }
                     else
                     {
-                        ctrl.GroundY = math.lerp(oldGroundY, newGroundY, 0.1f); // 缓慢上升
-                        ctrl.GroundPoint = math.lerp(ctrl.GroundPoint, newGroundPoint, 0.1f);
-                        ctrl.GroundNormal = math.normalizesafe(math.lerp(ctrl.GroundNormal, hitNormalSim, 0.1f), new float3(0, 1, 0));
+                        float radiusSim = particleRadiusWorld * PBF_Utils.InvScale;
+                        float3 newGroundPoint = hitPointSim + hitNormalSim * radiusSim;
+                        float newGroundY = newGroundPoint.y;
+                        
+                        // 平滑过渡：避免射线命中护动导致地面高度突变
+                        // 只有新值更低时才立即采纳（避免穿透地面），否则平滑过渡
+                        if (oldGroundY <= 0 || newGroundY < oldGroundY)
+                        {
+                            ctrl.GroundY = newGroundY;
+                            ctrl.GroundPoint = newGroundPoint;
+                            ctrl.GroundNormal = hitNormalSim;
+                        }
+                        else
+                        {
+                            ctrl.GroundY = math.lerp(oldGroundY, newGroundY, 0.1f); // 缓慢上升
+                            ctrl.GroundPoint = math.lerp(ctrl.GroundPoint, newGroundPoint, 0.1f);
+                            ctrl.GroundNormal = math.normalizesafe(math.lerp(ctrl.GroundNormal, hitNormalSim, 0.1f), new float3(0, 1, 0));
+                        }
                     }
-                    
                 }
                 else
                 {
@@ -5839,10 +6243,6 @@ namespace Revive.Slime
             filteredByNormal = false;
             hitFromSdf = false;
 
-            _dbgRecallSdfSamples = 0;
-            _dbgRecallSdfInvalidSamples = 0;
-            _dbgRecallSdfMinD = float.MaxValue;
-
             float3 rayDir = new float3(dirXZ.x, 0f, dirXZ.y);
             if (math.lengthsq(rayDir) < 1e-6f)
                 return false;
@@ -5864,7 +6264,6 @@ namespace Revive.Slime
 
                     for (float t = 0f; t <= checkDistSim;)
                     {
-                        _dbgRecallSdfSamples++;
                         perf.SdfSamples++;
                         float3 pp0 = p0 + rayDir * t;
                         float3 pp1 = p1 + rayDir * t;
@@ -5946,14 +6345,10 @@ namespace Revive.Slime
 
                         if (!anyValid)
                         {
-                            _dbgRecallSdfInvalidSamples++;
                             perf.SdfInvalid++;
                             t += minStep;
                             continue;
                         }
-
-                        if (dMin < _dbgRecallSdfMinD)
-                            _dbgRecallSdfMinD = dMin;
 
                         if (hasWallHit)
                         {
@@ -6241,64 +6636,6 @@ namespace Revive.Slime
 
             perf.HitFromSdf = (byte)(obstacleHitFromSdf ? 1 : 0);
             perf.HitFromObb = (byte)((obstacleHit && !obstacleHitFromSdf) ? 1 : 0);
-
-            bool dbgLogThisController = recallAvoidanceLogs &&
-                                        (recallAvoidanceLogControllerSlot < 0
-                                            ? (_dbgRecallLogFrame != Time.frameCount)
-                                            : (controllerId == recallAvoidanceLogControllerSlot));
-            if (dbgLogThisController)
-            {
-                int logFrame = Time.frameCount;
-                if (recallAvoidanceLogControllerSlot < 0)
-                    _dbgRecallLogFrame = logFrame;
-                string src = obstacleHit ? (obstacleHitFromSdf ? "SDF" : "OBB") : "None";
-                float distW = obstacleHit ? (obstacleDistSim * PBF_Utils.Scale) : -1f;
-                bool useSdfDbg = _currentColliderCount <= 0 && recallAvoidUseStaticSdf && useWorldStaticSdf && _worldStaticSdf.IsCreated;
-
-                float nXZLen = math.length(new float2(obstacleNormalSim.x, obstacleNormalSim.z));
-                float stepHeightSim = obstacleTopY - (center.y - halfHeight);
-                float stepHeightW_dbg = stepHeightSim * PBF_Utils.Scale;
-                float triggerAdvanceSim = recallStepTriggerAdvance * PBF_Utils.InvScale;
-                float radiusW_dbg = radiusXZ * PBF_Utils.Scale;
-                float keepMarginW_dbg = recallObstacleKeepDistanceMarginSim * PBF_Utils.Scale;
-                float triggerDistW_dbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSim) * PBF_Utils.Scale;
-                bool withinTriggerDbg = obstacleHit && (obstacleDistSim * PBF_Utils.Scale) <= triggerDistW_dbg;
-
-                float baseVelYW_dbg = baseVel.y * PBF_Utils.Scale;
-                float stepTargetYW_dbg = float.NaN;
-                float stepTargetDyW_dbg = float.NaN;
-                if (hasStepJumpTarget && _controllerStepJumpTargetCenterY != null && controllerId > 0 && controllerId < _controllerStepJumpTargetCenterY.Length)
-                {
-                    float targetY = _controllerStepJumpTargetCenterY[controllerId];
-                    stepTargetYW_dbg = targetY * PBF_Utils.Scale;
-                    stepTargetDyW_dbg = (targetY - center.y) * PBF_Utils.Scale;
-                }
-
-                float distToMainW_dbg = math.length((mainCenter - center) * PBF_Utils.Scale);
-
-                float sdfDAtHit = float.NaN;
-                float sdfNYAtHit = float.NaN;
-                if (useSdfDbg && obstacleHit && !obstacleHitFromSdf)
-                {
-                    var v = _worldStaticSdf.Data;
-                    float3 sp = center + new float3(dirXZ.x, 0f, dirXZ.y) * obstacleDistSim;
-                    float d = v.SampleDistance(sp);
-                    if (d < (v.MaxDistanceSim - 1e-5f))
-                    {
-                        float3 n = v.SampleNormalForward(sp, d);
-                        sdfDAtHit = d;
-                        sdfNYAtHit = n.y;
-                    }
-                }
-                Debug.Log(
-                    $"[RecallAvoid] frame={logFrame} ctrl={controllerId} src={src} hit={obstacleHit} distW={distW:F3} filteredByNormal={obstacleFilteredByNormal} " +
-                    $"useSdf={useSdfDbg} colliderCount={_currentColliderCount} disableStaticFallback={disableStaticColliderFallbackWhenUsingSdf} " +
-                    $"sdfSamples={_dbgRecallSdfSamples} sdfInvalid={_dbgRecallSdfInvalidSamples} sdfMinD={_dbgRecallSdfMinD:F4} " +
-                    $"rawDir=({rawDir.x:F2},{rawDir.z:F2}) distToMainW={distToMainW_dbg:F2} baseVelY_W={baseVelYW_dbg:F3} stepTargetY_W={stepTargetYW_dbg:F3} stepTargetDy_W={stepTargetDyW_dbg:F3} " +
-                    $"nY={obstacleNormalSim.y:F3} nXZLen={nXZLen:F3} topY_W={(obstacleTopY * PBF_Utils.Scale):F3} stepH_W={stepHeightW_dbg:F3} stepMaxH_W={(recallStepMaxHeightSim * PBF_Utils.Scale):F3} adv_W={(triggerAdvanceSim * PBF_Utils.Scale):F3} " +
-                    $"radiusW={radiusW_dbg:F3} keepW={keepMarginW_dbg:F3} triggerDistW={triggerDistW_dbg:F3} withinTrigger={withinTriggerDbg} " +
-                    $"sdfAtHit_dSim={sdfDAtHit:F3} sdfAtHit_nY={sdfNYAtHit:F3}");
-            }
 
             if (recallAvoidanceGizmos)
             {
@@ -6625,20 +6962,6 @@ namespace Revive.Slime
             ProjectVelocityNotAwayFromDir(ref resultVel, rawDir);
 
             perf.TicksTotal += System.Diagnostics.Stopwatch.GetTimestamp() - tTotal0;
-            if (recallAvoidanceLogs)
-            {
-                double invFreqMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                float totalMs = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - tTotal0) * invFreqMs);
-                if (totalMs > 0.75f && _dbgRecallAvoidSlowLogFrame != Time.frameCount)
-                {
-                    _dbgRecallAvoidSlowLogFrame = Time.frameCount;
-                    float qMs = (float)(perf.TicksQuery * invFreqMs);
-                    float sdfMs = (float)(perf.TicksSdf * invFreqMs);
-                    float obbMs = (float)(perf.TicksObb * invFreqMs);
-                    float gMs = (float)(perf.TicksGround * invFreqMs);
-                    Debug.Log($"[RecallAvoidSlow] frame={Time.frameCount} ctrl={controllerId} totalMs={totalMs:F2} queryMs={qMs:F2} sdfMs={sdfMs:F2} obbMs={obbMs:F2} groundMs={gMs:F2} sdfSamples={perf.SdfSamples} sdfInvalid={perf.SdfInvalid} obbChecked={perf.ObbChecked} raycasts={perf.RaycastCount} hitSdf={perf.HitFromSdf} hitObb={perf.HitFromObb}");
-                }
-            }
             return resultVel;
         }
 
@@ -6652,10 +6975,6 @@ namespace Revive.Slime
         private byte[] _recallGlobalFlowBlocked;
         private int[] _recallGlobalFlowQueue;
         private int _recallGlobalFlowLastUpdateFrame = int.MinValue;
-        private float _dbgRecallGlobalFlowSkipLogTime;
-        private float _dbgRecallGlobalFlowCtrlLogTime;
-        private float _dbgRecallGlobalFlowIntervalSkipLogTime;
-        private float _dbgRecallGlobalFlowDirOkLogTime;
 
         private void EnsureRecallGlobalFlowBuffers(int gridSize)
         {
@@ -6676,14 +6995,6 @@ namespace Revive.Slime
         {
             if (!(useWorldStaticSdf && _worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated))
             {
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowSkipLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowSkipLogTime = tNow;
-                    Debug.Log(
-                        $"[RecallGFlow][Skip] frame={Time.frameCount} reason=noSdf useWorldStaticSdf={useWorldStaticSdf} sdfIsCreated={_worldStaticSdf.IsCreated} sdfDataIsCreated={(_worldStaticSdf.IsCreated && _worldStaticSdf.Data.IsCreated)}",
-                        this);
-                }
                 return;
             }
 
@@ -6691,14 +7002,6 @@ namespace Revive.Slime
             long dtFrame = (long)Time.frameCount - (long)_recallGlobalFlowLastUpdateFrame;
             if (dtFrame < interval)
             {
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowIntervalSkipLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowIntervalSkipLogTime = tNow;
-                    Debug.Log(
-                        $"[RecallGFlow][Skip] frame={Time.frameCount} reason=interval dtFrame={dtFrame} interval={interval}",
-                        this);
-                }
                 return;
             }
 
@@ -6819,28 +7122,6 @@ namespace Revive.Slime
                 }
             }
 
-            {
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowLogTime = tNow;
-                    int blockedCount = 0;
-                    int reachableCount = 0;
-                    for (int i = 0; i < nAll; i++)
-                    {
-                        if (_recallGlobalFlowBlocked[i] != 0)
-                            blockedCount++;
-                        if (_recallGlobalFlowCost[i] < RecallGlobalFlowCostUnreachable)
-                            reachableCount++;
-                    }
-                    Debug.Log(
-                        $"[RecallGFlow][Build] frame={Time.frameCount} grid={gridSize} rangeW={rangeW:F2} cellW={cellW:F2} " +
-                        $"blockedDistW={recallGlobalFlowBlockedDistance:F3} yOffW={recallGlobalFlowSampleHalfHeight:F2} " +
-                        $"blocked={blockedCount}/{nAll} reachable={reachableCount}/{nAll}",
-                        this);
-                }
-            }
-
             _recallGlobalFlowLastUpdateFrame = Time.frameCount;
         }
 
@@ -6854,14 +7135,6 @@ namespace Revive.Slime
             float3 rel = centerSim - _recallGlobalFlowCenterSim;
             if (math.abs(rel.x) > _recallGlobalFlowHalfExtentSim || math.abs(rel.z) > _recallGlobalFlowHalfExtentSim)
             {
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowDirLogTime = tNow;
-                    Debug.Log(
-                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=outOfRange rel=({rel.x:F2},{rel.y:F2},{rel.z:F2}) halfExtentSim={_recallGlobalFlowHalfExtentSim:F2}",
-                        this);
-                }
                 return fallbackDirSim;
             }
 
@@ -6921,15 +7194,6 @@ namespace Revive.Slime
                     float3 dir3Unr = new float3(dir2Unr.x, 0f, dir2Unr.y);
                     if (math.lengthsq(dir3Unr) > 1e-6f)
                         return dir3Unr;
-                }
-
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowDirLogTime = tNow;
-                    Debug.Log(
-                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=unreachable ix={ix} iz={iz} cost={cC}",
-                        this);
                 }
                 return fallbackDirSim;
             }
@@ -6997,15 +7261,6 @@ namespace Revive.Slime
                     if (math.lengthsq(dir3Zg) > 1e-6f)
                         return dir3Zg;
                 }
-
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowDirLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowDirLogTime = tNow;
-                    Debug.Log(
-                        $"[RecallGFlow][Dir] frame={Time.frameCount} fallback=zeroGradient ix={ix} iz={iz} cC={cC} cXp={cXp} cXm={cXm} cZp={cZp} cZm={cZm} g=({g.x:F2},{g.y:F2})",
-                        this);
-                }
                 return fallbackDirSim;
             }
 
@@ -7013,17 +7268,6 @@ namespace Revive.Slime
             float3 dir3 = new float3(dir2.x, 0f, dir2.y);
             if (math.lengthsq(dir3) < 1e-6f)
                 return fallbackDirSim;
-            {
-                float tNow = Time.time;
-                if (tNow - _dbgRecallGlobalFlowDirOkLogTime > 0.5f)
-                {
-                    _dbgRecallGlobalFlowDirOkLogTime = tNow;
-                    float dot = math.dot(math.normalizesafe(fallbackDirSim), math.normalizesafe(dir3));
-                    Debug.Log(
-                        $"[RecallGFlow][DirOk] frame={Time.frameCount} ix={ix} iz={iz} cC={cC} dir=({dir3.x:F2},{dir3.z:F2}) fallback=({fallbackDirSim.x:F2},{fallbackDirSim.z:F2}) dot={dot:F3}",
-                        this);
-                }
-            }
             return dir3;
         }
         

@@ -605,6 +605,7 @@ namespace Revive.Slime.Editor
                 total++;
                 var c = colliders[i];
                 if (c == null) continue;
+                if (c is TerrainCollider) continue;
                 if (!includeTriggers && c.isTrigger)
                 {
                     skippedByTrigger++;
@@ -822,6 +823,7 @@ namespace Revive.Slime.Editor
             {
                 var c = colliders[i];
                 if (c == null) continue;
+                if (c is TerrainCollider) continue;
 
                 if (!includeTriggers && c.isTrigger)
                 {

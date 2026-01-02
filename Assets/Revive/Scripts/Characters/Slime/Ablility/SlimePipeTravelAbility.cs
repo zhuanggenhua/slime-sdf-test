@@ -35,7 +35,7 @@ namespace Revive.Slime
 
         private float _travelElapsed;
 
-        private const float SpeedRampSeconds = 1.0f;
+        private float _speedRampSeconds = 1.0f;
 
         private float _cooldownUntilTime;
         private CharacterController _cachedCharacterController;
@@ -43,8 +43,8 @@ namespace Revive.Slime
         private bool _prevEnableOverlapRecovery;
         private bool _prevCharacterControllerEnabled;
 
-        private const float TravelReentryCooldownSeconds = 0.25f;
-        private const float SamePathReentryCooldownSeconds = 0.25f;
+        private const float TravelReentryCooldownSeconds = 0.35f;
+        private const float SamePathReentryCooldownSeconds = 1.0f;
         private const float ExitPushDistance = 0.5f;
         private const float ExitPushUp = 0.05f;
         private const float ExitEaseOutSeconds = 0.25f;
@@ -105,7 +105,7 @@ namespace Revive.Slime
             }
 
             _travelElapsed += dt;
-            float ramp01 = SpeedRampSeconds > 1e-4f ? Mathf.Clamp01(_travelElapsed / SpeedRampSeconds) : 1f;
+            float ramp01 = _speedRampSeconds > 1e-4f ? Mathf.Clamp01(_travelElapsed / _speedRampSeconds) : 1f;
             ramp01 = ramp01 * ramp01 * (3f - 2f * ramp01);
             float effectiveSpeed = _speed * ramp01;
 
@@ -129,15 +129,8 @@ namespace Revive.Slime
                 if (_exitPushStepsRemaining <= 0)
                 {
                     _isExitPushing = false;
-                    if (ExitEaseOutSeconds > 1e-4f)
-                    {
-                        _isExitEasingOut = true;
-                        _exitEaseTimeRemaining = ExitEaseOutSeconds;
-                    }
-                    else
-                    {
-                        _pendingStopTravel = true;
-                    }
+                    _isExitEasingOut = true;
+                    _exitEaseTimeRemaining = ExitEaseOutSeconds;
                 }
 
                 return;
@@ -228,16 +221,16 @@ namespace Revive.Slime
                     if (deltaToEnd.magnitude <= maxMove && maxMove > 1e-6f)
                     {
                         Vector3 tangent = _path.EvaluateTangent(_t);
+                        if (_reverse)
+                        {
+                            tangent = -tangent;
+                        }
                         if (tangent.sqrMagnitude < 1e-6f)
                         {
-                            tangent = _lastForward;
+                            tangent = _lastTravelVelocity.sqrMagnitude > 1e-6f ? _lastTravelVelocity : _lastForward;
                         }
 
                         Vector3 dir = tangent.normalized;
-                        if (_reverse)
-                        {
-                            dir = -dir;
-                        }
 
                         float deltaMag = deltaToEnd.magnitude;
                         _exitPreAdvanceDistance = Mathf.Max(0f, maxMove - deltaMag);
@@ -309,6 +302,11 @@ namespace Revive.Slime
             Vector3 tangent = _path.EvaluateTangent(_t);
             Vector3 up = _path.EvaluateUp(_t);
 
+            if (_reverse)
+            {
+                tangent = -tangent;
+            }
+
             Quaternion targetRot;
             if (_rotationMode == TravelRotationMode.FollowFullTangent)
             {
@@ -365,6 +363,7 @@ namespace Revive.Slime
             _t = Mathf.Clamp01(startT);
             _reverse = reverse;
             _speed = Mathf.Max(0f, path.DefaultSpeed);
+            _speedRampSeconds = Mathf.Max(0f, path.SpeedRampSeconds);
             _rotationMode = rotationMode;
             _alignedToPath = false;
             _travelElapsed = 0f;
@@ -473,16 +472,16 @@ namespace Revive.Slime
             }
 
             Vector3 tangent = _path.EvaluateTangent(_t);
+            if (_reverse)
+            {
+                tangent = -tangent;
+            }
             if (tangent.sqrMagnitude < 1e-6f)
             {
-                tangent = _lastForward;
+                tangent = _lastTravelVelocity.sqrMagnitude > 1e-6f ? _lastTravelVelocity : _lastForward;
             }
 
             Vector3 dir = tangent.normalized;
-            if (_reverse)
-            {
-                dir = -dir;
-            }
 
             Vector3 push = dir * ExitPushDistance + Vector3.up * ExitPushUp;
             if (_exitPreAdvanceDistance > 0f)

@@ -1,6 +1,7 @@
 ﻿using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
 using Revive.Effects;
+using Revive.Slime;
 using UnityEngine;
 
 namespace Revive
@@ -8,6 +9,7 @@ namespace Revive
     /// <summary>
     /// 史莱姆角色类
     /// </summary>
+    [RequireComponent(typeof(SlimeWindFieldResistanceAbility))]
     public class SlimeCharacter : Character
     {
         [Header("Slime State Machine")]

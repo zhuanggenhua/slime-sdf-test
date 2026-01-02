@@ -2,6 +2,7 @@
     Properties {
         _Color ("Color", Color) = (1, 1, 1, 1)
         _Size ("Size", float) = 0.035
+        _SimToWorldScale ("Sim To World Scale", float) = 0.1
     }
 
     SubShader {
@@ -48,6 +49,7 @@
             float _Size;
             float4 _Color;
             int _Aniso;
+            float _SimToWorldScale;
 
             StructuredBuffer<Particle> _ParticleBuffer;
             StructuredBuffer<float4x4> _CovarianceBuffer;
@@ -57,7 +59,7 @@
                 v2f o;
                 float3x3 covMatrix = _Aniso > 0 ? (float3x3)_CovarianceBuffer[id] : float3x3(1,0,0,0,1,0,0,0,1);
                 float3 anisoPos = mul(covMatrix, v.vertex.xyz);
-                float3 worldPosition = (_ParticleBuffer[id].x * 0.1) + anisoPos * _Size;
+                float3 worldPosition = (_ParticleBuffer[id].x * _SimToWorldScale) + anisoPos * _Size;
                 // project into camera space
                 o.pos = TransformWorldToHClip(worldPosition);
                 o.normal = TransformObjectToWorldNormal(v.normal);

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Revive.Environment;
 using Revive.Mathematics;
 using Unity.Burst;
 using Unity.Collections;
@@ -52,7 +53,7 @@ namespace Revive.Slime
         public float3 GroundPoint;
         public float3 GroundNormal;
     }
-    
+
     /// <summary>
     /// 碰撞体类型常量
     /// </summary>
@@ -306,6 +307,9 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<ParticleController> Controllers;
             [ReadOnly] public NativeArray<ParticleController> SourceControllers;
             [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
+            [ReadOnly] public NativeArray<WindFieldZoneData> WindZones;
+            public int WindTargetLayerBit;
+            public float ParticleRadiusSim;
             [WriteOnly] public NativeArray<Particle> PsNew;
             public NativeArray<float3> Velocity;
             public float3 Gravity;
@@ -313,6 +317,7 @@ namespace Revive.Slime
             public float PredictStep;
             public float VelocityDamping;
             public float VerticalOffset;
+            public float DropletVerticalOffset;
             public bool EnableRecall;
             [ReadOnly] public NativeArray<byte> RecallEligibleBlobIds;
             public bool UseRecallEligibleBlobIds;
@@ -343,18 +348,6 @@ namespace Revive.Slime
                     }
                 }
 
-                // 【关键】自由飞行粒子：只受重力影响，不受速度衰减和控制器影响
-                if (p.FreeFrames > 0)
-                {
-                    float3 freeVel = Velocity[i] + Gravity * DeltaTime; // 无衰减，只加重力
-                    p.Position += freeVel * PredictStep;
-                    PsNew[i] = p;
-                    Velocity[i] = freeVel;
-                    return;
-                }
-
-                var velocity = Velocity[i] * VelocityDamping + Gravity * DeltaTime;
-                
                 int controllerIndex = 0;
                 if (p.Type != ParticleType.MainBody)
                 {
@@ -363,6 +356,69 @@ namespace Revive.Slime
                         controllerIndex = BlobIdToControllerSlot[blobId];
                     else
                         controllerIndex = -1;
+                }
+
+                bool windEligible = p.Type == ParticleType.Emitted || p.Type == ParticleType.Separated;
+                bool hasWindZones = windEligible && WindZones.IsCreated && WindZones.Length > 0 && WindTargetLayerBit != 0;
+
+                float windGroundDrag = 0f;
+                float windAirDrag = 0f;
+                float3 windPush = float3.zero;
+                if (hasWindZones)
+                {
+                    float3 pos = p.Position;
+                    for (int z = 0; z < WindZones.Length; z++)
+                    {
+                        var zone = WindZones[z];
+                        if ((zone.AffectsLayerMask & WindTargetLayerBit) == 0)
+                            continue;
+                        float3 d = math.abs(pos - zone.CenterSim);
+                        if (d.x > zone.ExtentsSim.x || d.y > zone.ExtentsSim.y || d.z > zone.ExtentsSim.z)
+                            continue;
+
+                        windGroundDrag += zone.GroundDrag;
+                        windAirDrag += zone.AirDrag;
+                        windPush += zone.PushSim;
+                    }
+                }
+
+                // 【关键】自由飞行粒子：只受重力影响，不受速度衰减和控制器影响
+                if (p.FreeFrames > 0)
+                {
+                    float3 freeVel = Velocity[i] + Gravity * DeltaTime;
+
+                    if (hasWindZones && (windGroundDrag > 0f || windAirDrag > 0f || math.lengthsq(windPush) > 0f))
+                    {
+                        float groundY = Controllers.Length > 0 ? Controllers[0].GroundY : -1000000f;
+                        if (controllerIndex >= 0 && controllerIndex < Controllers.Length)
+                            groundY = Controllers[controllerIndex].GroundY;
+                        bool grounded = p.Position.y <= (groundY + ParticleRadiusSim);
+                        float drag = grounded ? windGroundDrag : windAirDrag;
+                        if (drag > 0f)
+                            freeVel *= 1f / (1f + drag * DeltaTime);
+                        if (math.lengthsq(windPush) > 0f)
+                            freeVel += windPush * DeltaTime;
+                    }
+
+                    p.Position += freeVel * PredictStep;
+                    PsNew[i] = p;
+                    Velocity[i] = freeVel;
+                    return;
+                }
+
+                var velocity = Velocity[i] * VelocityDamping + Gravity * DeltaTime;
+
+                if (hasWindZones && (windGroundDrag > 0f || windAirDrag > 0f || math.lengthsq(windPush) > 0f))
+                {
+                    float groundY = Controllers.Length > 0 ? Controllers[0].GroundY : -1000000f;
+                    if (controllerIndex >= 0 && controllerIndex < Controllers.Length)
+                        groundY = Controllers[controllerIndex].GroundY;
+                    bool grounded = p.Position.y <= (groundY + ParticleRadiusSim);
+                    float drag = grounded ? windGroundDrag : windAirDrag;
+                    if (drag > 0f)
+                        velocity *= 1f / (1f + drag * DeltaTime);
+                    if (math.lengthsq(windPush) > 0f)
+                        velocity += windPush * DeltaTime;
                 }
                 
                 // 场景水珠使用 SourceControllers
@@ -373,7 +429,7 @@ namespace Revive.Slime
                         ParticleController cl = SourceControllers[p.SourceId];
                         if (cl.Concentration > 0)
                         {
-                            float3 toCenter = cl.Center - p.Position;
+                            float3 toCenter = cl.Center + new float3(0f, cl.Radius * DropletVerticalOffset, 0f) - p.Position;
                             float len = math.length(toCenter);
                             if (len > 0.1f)
                             {
@@ -530,10 +586,14 @@ namespace Revive.Slime
                 // 【P3 预测式软限制-椭球约束】预测粒子下一帧位置，若会超出椭球边界则提前消除外扩速度
                 // XZ 方向用 MaxDeformDistXZ，Y 方向用 MaxDeformDistY
                 // 【关键】使用相对速度，避免影响整体移动；使用预测位置而非当前位置进行判断
-                if (p.Type == ParticleType.MainBody && MaxDeformDistXZ > 0 && MaxDeformDistY > 0)
+                bool deformLimitEnabled = MaxDeformDistXZ > 0f && MaxDeformDistY > 0f;
+                if (deformLimitEnabled && p.Type == ParticleType.MainBody)
                 {
+                    float3 deformCenter = MainCenter;
+                    float3 deformVelocity = MainVelocity;
+
                     // 预测下一帧位置（相对于预测的控制器中心）
-                    float3 predictedMainCenter = MainCenter + MainVelocity * PredictStep;
+                    float3 predictedMainCenter = deformCenter + deformVelocity * PredictStep;
                     float3 predictedPos = p.Position + velocity * PredictStep;
                     float3 d_pred = predictedPos - predictedMainCenter; // 预测位置相对于预测中心的偏移
                     
@@ -558,7 +618,7 @@ namespace Revive.Slime
                         
                         // 【关键】使用相对速度判断是否远离中心
                         // 只消除粒子相对于控制器的"扩张"速度，保留整体移动速度
-                        float3 relativeVel = velocity - MainVelocity;
+                        float3 relativeVel = velocity - deformVelocity;
                         float outwardVel = math.dot(relativeVel, outwardDir); // 相对于控制器的远离速度
                         
                         if (outwardVel > 0)
@@ -812,6 +872,8 @@ namespace Revive.Slime
             [ReadOnly] public NativeArray<float3> PosPredict;
             [ReadOnly] public NativeArray<float> Lambda;
             [ReadOnly] public NativeArray<int2> Hashes;
+            [ReadOnly] public NativeArray<ParticleController> Controllers;
+            [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
             [ReadOnly] public NativeArray<Particle> PsOriginal; // 排序后的粒子数组
             [WriteOnly] public NativeArray<Particle> PsNew;
             [WriteOnly] public NativeArray<float3> ClampDelta; // 【P4】输出钳制位移量，用于速度回算修正
@@ -976,12 +1038,18 @@ namespace Revive.Slime
         {
             [ReadOnly] public NativeArray<MyBoxCollider> Colliders;
             [ReadOnly] public NativeList<ParticleController> Controllers; // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
+            [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
             public int ColliderCount;
             public int UseStaticSdf;
             public WorldSdfRuntime.Volume StaticSdf;
             public int DisableStaticColliderFallback;
             public float ParticleRadiusSim;
             public float StaticFriction;
+            [ReadOnly] public NativeArray<float> TerrainHeights01;
+            public int TerrainResX;
+            public int TerrainResZ;
+            public float3 TerrainOriginSim;
+            public float3 TerrainSizeSim;
             [ReadOnly] public NativeArray<float3> PosOld;
             [ReadOnly] public NativeArray<float3> ClampDelta; // 【P4】ComputeDeltaPosJob 输出的钳制位移量
             public NativeArray<Particle> Ps;
@@ -995,6 +1063,74 @@ namespace Revive.Slime
             public float3 MainVelocity; // 主体控制器速度，用于计算相对速度
             public bool EnableCollisionDeformLimit; // 是否在碰撞后应用形变上限
             public bool EnableP4VelocityConsistency; // 【P4开关】是否启用速度一致化（排除钳制位移）
+
+            private bool TrySampleTerrain(float2 xzSim, out float heightSim, out float3 normal)
+            {
+                heightSim = 0f;
+                normal = new float3(0, 1, 0);
+
+                if (!TerrainHeights01.IsCreated || TerrainResX < 2 || TerrainResZ < 2)
+                    return false;
+
+                float sizeX = TerrainSizeSim.x;
+                float sizeY = TerrainSizeSim.y;
+                float sizeZ = TerrainSizeSim.z;
+
+                if (sizeX <= 1e-6f || sizeZ <= 1e-6f)
+                    return false;
+
+                float2 rel = xzSim - TerrainOriginSim.xz;
+                if (rel.x < 0f || rel.y < 0f || rel.x > sizeX || rel.y > sizeZ)
+                    return false;
+
+                float u = rel.x / sizeX;
+                float v = rel.y / sizeZ;
+
+                float fx = u * (TerrainResX - 1);
+                float fz = v * (TerrainResZ - 1);
+
+                int x0 = (int)math.floor(fx);
+                int z0 = (int)math.floor(fz);
+                x0 = math.clamp(x0, 0, TerrainResX - 2);
+                z0 = math.clamp(z0, 0, TerrainResZ - 2);
+                float tx = fx - x0;
+                float tz = fz - z0;
+
+                int idx00 = z0 * TerrainResX + x0;
+                float h00 = TerrainHeights01[idx00];
+                float h10 = TerrainHeights01[idx00 + 1];
+                float h01 = TerrainHeights01[idx00 + TerrainResX];
+                float h11 = TerrainHeights01[idx00 + TerrainResX + 1];
+
+                float h0 = math.lerp(h00, h10, tx);
+                float h1 = math.lerp(h01, h11, tx);
+                float h = math.lerp(h0, h1, tz);
+                heightSim = TerrainOriginSim.y + h * sizeY;
+
+                int xi = math.clamp((int)math.round(fx), 1, TerrainResX - 2);
+                int zi = math.clamp((int)math.round(fz), 1, TerrainResZ - 2);
+
+                int idxC = zi * TerrainResX + xi;
+                float hL = TerrainHeights01[idxC - 1];
+                float hR = TerrainHeights01[idxC + 1];
+                float hD = TerrainHeights01[idxC - TerrainResX];
+                float hU = TerrainHeights01[idxC + TerrainResX];
+
+                float dh01dx = (hR - hL) * 0.5f;
+                float dh01dz = (hU - hD) * 0.5f;
+
+                float cellX = sizeX / (TerrainResX - 1);
+                float cellZ = sizeZ / (TerrainResZ - 1);
+
+                float dhdx = (dh01dx * sizeY) / math.max(cellX, 1e-6f);
+                float dhdz = (dh01dz * sizeY) / math.max(cellZ, 1e-6f);
+
+                normal = math.normalizesafe(new float3(-dhdx, 1f, -dhdz), new float3(0, 1, 0));
+                if (normal.y < 0.55f)
+                    normal = new float3(0, 1, 0);
+
+                return true;
+            }
 
             public void Execute(int i)
             {
@@ -1016,6 +1152,7 @@ namespace Revive.Slime
                 float3 sdfNormal = new float3(0, 1, 0);
                 bool sdfInBounds = false;
                 float sdfDistSim = float.MaxValue;
+                bool sdfValid = false;
                 bool sdfSkipStaticColliders = false;
                 if (UseStaticSdf != 0 && StaticSdf.IsCreated)
                 {
@@ -1031,9 +1168,10 @@ namespace Revive.Slime
                                    simPos.x > (maxSim.x + boundsMargin) || simPos.y > (maxSim.y + boundsMargin) || simPos.z > (maxSim.z + boundsMargin));
                     float d = StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out float3 sdfLocal, out int3 sdfI0, out int3 sdfI1, out float3 sdfF);
                     sdfDistSim = d;
+                    sdfValid = d < (StaticSdf.MaxDistanceSim - 1e-5f);
                     float skipMargin = voxel * 0.5f;
-                    sdfSkipStaticColliders = sdfInBounds && (d > (contactRadius + skipMargin));
-                    if (d < contactRadius)
+                    sdfSkipStaticColliders = sdfInBounds && sdfValid && (d > (contactRadius + skipMargin));
+                    if (sdfValid && d < contactRadius)
                     {
                         hadSdfCollision = true;
                         float maxStep = voxel * 1.25f;
@@ -1063,10 +1201,11 @@ namespace Revive.Slime
                 float3 obbNormal = float3.zero;
                 float obbFriction = 0f;
                 float3 obbSurfaceVelocity = float3.zero;
+
                 for (int c = 0; c < ColliderCount; c++)
                 {
                     MyBoxCollider box = Colliders[c];
-                    if (box.IsDynamic == 0 && UseStaticSdf != 0 && StaticSdf.IsCreated && (DisableStaticColliderFallback != 0 || sdfSkipStaticColliders || hadSdfCollision))
+                    if (box.IsDynamic == 0 && UseStaticSdf != 0 && StaticSdf.IsCreated && ((DisableStaticColliderFallback != 0 && sdfInBounds && sdfValid) || sdfSkipStaticColliders || hadSdfCollision))
                         continue;
 
                      switch (box.Shape)
@@ -1145,26 +1284,62 @@ namespace Revive.Slime
                              break;
                          }
                      }
+
+                }
+
+                bool terrainCovers = false;
+                bool hadTerrainCollision = false;
+                float3 terrainNormal = new float3(0, 1, 0);
+                float terrainYSimFinal = 0f;
+                float planeDistFinal = 0f;
+
+                for (int it = 0; it < 3; it++)
+                {
+                    if (!TrySampleTerrain(simPos.xz, out terrainYSimFinal, out terrainNormal))
+                        break;
+
+                    if (!terrainCovers)
+                        terrainCovers = true;
+
+                    float3 surfacePoint = new float3(simPos.x, terrainYSimFinal, simPos.z);
+                    float3 groundPoint = surfacePoint + terrainNormal * ParticleRadiusSim;
+                    float pd = math.dot(terrainNormal, simPos - groundPoint);
+                    planeDistFinal = pd;
+
+                    if (pd >= 0f)
+                        break;
+
+                    simPos -= terrainNormal * pd;
+                    collisionAxes.y = true;
+                    hadTerrainCollision = true;
+                }
+
+                if (terrainCovers)
+                {
+                    float minY = terrainYSimFinal + ParticleRadiusSim;
+                    if (simPos.y < minY)
+                    {
+                        simPos.y = minY;
+                        collisionAxes.y = true;
+                        hadTerrainCollision = true;
+                    }
                 }
                 
-                // 【改进】只对主体粒子（ControllerSlot == 0）应用 GroundY 钳制
-                // 分离团依靠碰撞体限制，避免因控制器中心射线护动导致粒子被错误抬高
                 bool allowGroundClamp = PBF_Utils.AllowGroundClamp(UseStaticSdf, DisableStaticColliderFallback);
-
-                if (allowGroundClamp && p.Type == ParticleType.MainBody)
+                if (!terrainCovers && allowGroundClamp && p.Type == ParticleType.MainBody)
                 {
                     float groundY = FallbackGroundY;
-                    float3 groundPoint = new float3(simPos.x, groundY, simPos.z);
+                    float3 fallbackGroundPoint = new float3(simPos.x, groundY, simPos.z);
                     float3 groundNormal = new float3(0, 1, 0);
                     if (Controllers.Length > 0)
                     {
                         var ctrl0 = Controllers[0];
                         groundY = ctrl0.GroundY;
-                        groundPoint = ctrl0.GroundPoint;
+                        fallbackGroundPoint = ctrl0.GroundPoint;
                         groundNormal = ctrl0.GroundNormal;
                     }
 
-                    if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, groundPoint, groundNormal))
+                    if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, fallbackGroundPoint, groundNormal))
                         collisionAxes.y = true;
                 }
                 
@@ -1213,6 +1388,20 @@ namespace Revive.Slime
 
                     float vn = math.dot(velCalc, sdfNormal);
                     float3 vN = sdfNormal * vn;
+                    float3 vT = velCalc - vN;
+                    vN *= normalCollisionDamping;
+                    vT *= math.max(0f, 1f - StaticFriction);
+                    velCalc = vN + vT;
+                }
+
+                if (hadTerrainCollision)
+                {
+                    float vnInto = math.dot(velCalc, terrainNormal);
+                    if (vnInto < 0f)
+                        velCalc -= terrainNormal * vnInto;
+
+                    float vn = math.dot(velCalc, terrainNormal);
+                    float3 vN = terrainNormal * vn;
                     float3 vT = velCalc - vN;
                     vN *= normalCollisionDamping;
                     vT *= math.max(0f, 1f - StaticFriction);

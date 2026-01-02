@@ -21,6 +21,7 @@ namespace Revive.Slime
             public float DynamicDragRadius;
             public int LiquidSolverIterations;
             public float LiquidGravityY;
+            public float DropletVerticalOffset;
         }
 
         // 固定分区边界（仅用于模拟层内存管理）
@@ -968,7 +969,8 @@ namespace Revive.Slime
 
                 ticksSourceCentroid += Stopwatch.GetTimestamp() - tStageStart;
 
-                float3 targetCenter = centroid;
+                float radius = math.max(0.1f, info.cohesionRadius);
+                float3 targetCenter = centroid + new float3(0f, radius * _interactionSettings.DropletVerticalOffset, 0f);
 
                 tStageStart = Stopwatch.GetTimestamp();
                 for (int k = 0; k < count; k++)
@@ -988,12 +990,17 @@ namespace Revive.Slime
                     {
                         float3 toCenter = targetCenter - pos;
                         float dist = math.length(toCenter);
-                        float radius = math.max(0.1f, info.cohesionRadius);
-                        if (dist > 0.1f && dist < radius)
+                        if (dist > 0.1f)
                         {
                             float3 dir = toCenter / dist;
-                            float strength = cohesionStrength * deltaTime * math.min(1f, dist);
+                            float t = dist / radius;
+                            float falloff = 1f / (1f + t * t);
+                            float strength = cohesionStrength * deltaTime * math.min(1f, dist) * falloff;
                             float3 dv = dir * strength;
+                            if (dv.y < 0f)
+                            {
+                                dv.y *= info.verticalCohesionScale;
+                            }
                             if (dv.y > 0f)
                             {
                                 float upDVMax = math.abs(gravity.y) * deltaTime * 0.5f;

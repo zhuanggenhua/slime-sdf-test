@@ -45,6 +45,9 @@ namespace Revive.Environment
         [SerializeField]
         private float _defaultSpeed = 4f;
 
+        [SerializeField]
+        private float _speedRampSeconds = 0.5f;
+
         [Tooltip("是否将该路径视为闭环。")]
         [SerializeField]
         private bool _closedLoop;
@@ -55,6 +58,7 @@ namespace Revive.Environment
 
         public int SplineIndex => _splineIndex;
         public float DefaultSpeed => _defaultSpeed;
+        public float SpeedRampSeconds => _speedRampSeconds;
         public bool ClosedLoop => _closedLoop;
         public TravelRotationMode RotationModeDefault => _rotationModeDefault;
 

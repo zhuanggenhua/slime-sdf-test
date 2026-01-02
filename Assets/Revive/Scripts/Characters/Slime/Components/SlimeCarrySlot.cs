@@ -1,7 +1,7 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using MoreMountains.TopDownEngine;
 
 namespace Revive.Slime
 {
@@ -19,12 +19,15 @@ namespace Revive.Slime
         [Min(0f)]
         public float PickupTransitionSeconds = 0.12f;
 
+        [Min(0f)]
+        public float StuckAutoDetachSeconds = 0.35f;
+
+        [Min(0f)]
+        public float StuckAutoDetachOutsideSlimeMarginWorld = 0.5f;
+
         [Header("投掷")]
         [Range(1f, 89f)]
         public float FixedThrowAngleDegrees = 45f;
-
-        [Min(0.01f)]
-        public float MaxThrowRange = 10f;
 
         public LayerMask GroundRaycastLayers = ~0;
 
@@ -41,11 +44,14 @@ namespace Revive.Slime
 
         public bool HasHeldObject => _held != null;
 
+        public SlimeCarryableObject HeldObject => _held;
+
         private SlimeCarryableObject _held;
         private Rigidbody _heldRigidbody;
         private bool _heldWasKinematic;
         private bool _heldUsedGravity;
         private Collider[] _heldColliders;
+        private bool[] _heldColliderWasTrigger;
         private bool _heldIndexIgnored;
         private Renderer[] _heldRenderers;
         private bool[] _heldRendererReceiveShadows;
@@ -56,6 +62,9 @@ namespace Revive.Slime
 
         private Slime_PBF _slimePbf;
 
+        private SlimeConsumeBuffController _consumeBuffController;
+        private SlimeCarryBuffController _carryBuffController;
+
         private Collider[] _playerColliders;
         private Coroutine _restoreCollisionCoroutine;
         private Collider[] _postThrowIgnoredColliders;
@@ -63,24 +72,155 @@ namespace Revive.Slime
         private bool _pickupInTransition;
         private float _pickupTransitionElapsed;
         private Vector3 _pickupTransitionStart;
-        private int _dbgThrowFailLogFrame;
+        private bool _heldMoveBlockedThisFrame;
+        private float _heldMoveBlockedSeconds;
 
         private void Awake()
         {
-            _playerColliders = GetComponentsInChildren<Collider>(true);
-            _dbgThrowFailLogFrame = -999999;
+            CachePlayerColliders();
+        }
+
+        private void CachePlayerColliders()
+        {
+            var root = transform.root;
+            if (root != null)
+            {
+                _playerColliders = root.GetComponentsInChildren<Collider>(true);
+            }
+            else
+            {
+                _playerColliders = GetComponentsInParent<Collider>(true);
+            }
         }
 
         private void Start()
         {
             ResolveCenterAnchorIfNeeded();
             ResolveSlimePbfIfNeeded();
+            ResolveConsumeBuffControllerIfNeeded();
+            ResolveCarryBuffControllerIfNeeded();
+            ApplyCarrySpecIfNeeded();
+        }
+
+        private void ResolveCarryBuffControllerIfNeeded()
+        {
+            if (_carryBuffController != null)
+            {
+                return;
+            }
+
+            var root = transform.root;
+            if (root != null)
+            {
+                _carryBuffController = root.GetComponentInChildren<SlimeCarryBuffController>(true);
+                if (_carryBuffController == null)
+                {
+                    _carryBuffController = root.gameObject.AddComponent<SlimeCarryBuffController>();
+                }
+            }
+            else
+            {
+                _carryBuffController = GetComponentInChildren<SlimeCarryBuffController>(true);
+                if (_carryBuffController == null)
+                {
+                    _carryBuffController = gameObject.AddComponent<SlimeCarryBuffController>();
+                }
+            }
+        }
+
+        private void ApplyCarrySpecIfNeeded()
+        {
+            ResolveCarryBuffControllerIfNeeded();
+            if (_carryBuffController == null)
+            {
+                return;
+            }
+
+            SlimeCarryableCarrySpec spec = null;
+            if (_held != null)
+            {
+                spec = _held.GetComponent<SlimeCarryableCarrySpec>();
+            }
+            _carryBuffController.Apply(spec);
+        }
+
+        private void ResolveConsumeBuffControllerIfNeeded()
+        {
+            if (_consumeBuffController != null)
+            {
+                return;
+            }
+
+            var root = transform.root;
+            if (root != null)
+            {
+                _consumeBuffController = root.GetComponentInChildren<SlimeConsumeBuffController>(true);
+            }
+            else
+            {
+                _consumeBuffController = GetComponentInChildren<SlimeConsumeBuffController>(true);
+            }
+        }
+
+        public bool ConsumeHeld(out SlimeCarryableObject consumed)
+        {
+            return ConsumeHeld(out consumed, true);
+        }
+
+        public bool ConsumeHeld(out SlimeCarryableObject consumed, bool restoreVisuals)
+        {
+            consumed = null;
+
+            if (_held == null)
+            {
+                return false;
+            }
+
+            consumed = _held;
+
+            if (restoreVisuals)
+            {
+                RestoreHeldShadowState();
+            }
+
+            if (_heldColliders != null)
+            {
+                RestoreHeldColliderTriggerState();
+                SetIgnorePlayerCollision(_heldColliders, false);
+                if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var index))
+                {
+                    index.RegisterDynamicColliders(_heldColliders);
+                }
+            }
+            _held.IsHeld = false;
+
+            _held = null;
+            _heldRigidbody = null;
+            _heldColliders = null;
+            _heldColliderWasTrigger = null;
+            _heldIndexIgnored = false;
+            _heldRenderers = null;
+            _heldRendererReceiveShadows = null;
+            _heldRendererShadowCastingModes = null;
+            _heldRendererMaterials = null;
+            _heldMaterialReceiveShadowsValues = null;
+            _heldMaterialReceiveShadowsKeywordOff = null;
+            _pickupInTransition = false;
+
+            ApplyCarrySpecIfNeeded();
+
+            return true;
         }
 
         private void FixedUpdate()
         {
             if (_held == null || CenterAnchor == null)
+            {
+                _heldMoveBlockedThisFrame = false;
+                _heldMoveBlockedSeconds = 0f;
+                ApplyCarrySpecIfNeeded();
                 return;
+            }
 
             Vector3 baseAnchor = GetBaseAnchorWorldPosition();
             Vector3 targetPos = baseAnchor + HeldAnchorOffset;
@@ -96,17 +236,34 @@ namespace Revive.Slime
             if (_heldRigidbody != null)
             {
                 MoveHeldRigidbodySafely(targetPos);
+                if (_heldMoveBlockedThisFrame)
+                {
+                    _heldMoveBlockedSeconds += Time.fixedDeltaTime;
+                    if (_heldMoveBlockedSeconds >= Mathf.Max(0f, StuckAutoDetachSeconds))
+                    {
+                        AutoDetachHeldBecauseStuck();
+                        return;
+                    }
+                }
+                else
+                {
+                    _heldMoveBlockedSeconds = 0f;
+                }
             }
             else
             {
                 _held.transform.position = targetPos;
             }
+
+            ApplyCarrySpecIfNeeded();
         }
 
         private void OnControllerColliderHit(ControllerColliderHit hit)
         {
             if (_held != null)
+            {
                 return;
+            }
 
             if (hit == null || hit.collider == null)
                 return;
@@ -126,6 +283,8 @@ namespace Revive.Slime
                 return false;
             if (!carryable.PickupEnabled || carryable.IsHeld)
                 return false;
+
+            CachePlayerColliders();
 
             ResolveCenterAnchorIfNeeded();
             if (CenterAnchor == null)
@@ -163,6 +322,8 @@ namespace Revive.Slime
             _heldRigidbody = carryable.Rigidbody;
             _heldWasKinematic = _heldRigidbody.isKinematic;
             _heldUsedGravity = _heldRigidbody.useGravity;
+            _heldMoveBlockedThisFrame = false;
+            _heldMoveBlockedSeconds = 0f;
 
             if (!_heldWasKinematic)
             {
@@ -174,6 +335,7 @@ namespace Revive.Slime
             _heldRigidbody.useGravity = false;
 
             _heldColliders = carryable.Colliders;
+            CacheAndSetHeldColliderTriggerState(true);
             SetIgnorePlayerCollision(_heldColliders, true);
 
             _heldIndexIgnored = false;
@@ -205,18 +367,13 @@ namespace Revive.Slime
         {
             if (_held == null || _heldRigidbody == null)
             {
-                if (_dbgThrowFailLogFrame != Time.frameCount)
-                {
-                    _dbgThrowFailLogFrame = Time.frameCount;
-                    Debug.LogWarning($"[SlimeCarrySlot] ThrowHeld failed. held={( _held != null ? _held.name : "null" )} heldRbNull={(_heldRigidbody == null)} postThrowIgnored={(_postThrowIgnoredColliders != null)} pickupInTransition={_pickupInTransition}", this);
-                }
-
                 if (_held != null)
                 {
                     RestoreHeldShadowState();
 
                     if (_heldColliders != null)
                     {
+                        RestoreHeldColliderTriggerState();
                         SetIgnorePlayerCollision(_heldColliders, false);
                         if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var failIndex))
                         {
@@ -231,6 +388,7 @@ namespace Revive.Slime
                 _held = null;
                 _heldRigidbody = null;
                 _heldColliders = null;
+                _heldColliderWasTrigger = null;
                 _heldIndexIgnored = false;
                 _heldRenderers = null;
                 _heldRendererReceiveShadows = null;
@@ -240,12 +398,16 @@ namespace Revive.Slime
                 _heldMaterialReceiveShadowsKeywordOff = null;
                 _pickupInTransition = false;
 
+                ApplyCarrySpecIfNeeded();
+
                 return false;
             }
 
             var carryable = _held;
             var rb = _heldRigidbody;
             var objectColliders = _heldColliders;
+
+            RestoreHeldColliderTriggerState();
 
             RestoreHeldShadowState();
 
@@ -273,12 +435,9 @@ namespace Revive.Slime
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
+            carryable.RecordThrower(transform);
+
             Vector3 impulse = ComputeThrowImpulse(carryable, rb);
-            if (impulse.sqrMagnitude <= 0.000001f && _dbgThrowFailLogFrame != Time.frameCount)
-            {
-                _dbgThrowFailLogFrame = Time.frameCount;
-                Debug.LogWarning($"[SlimeCarrySlot] ThrowHeld impulse is near zero. held={carryable.name} angleDeg={FixedThrowAngleDegrees} maxRange={MaxThrowRange} gravityY={Physics.gravity.y}", this);
-            }
             rb.AddForce(impulse, ForceMode.Impulse);
 
             if (objectColliders != null)
@@ -287,9 +446,7 @@ namespace Revive.Slime
 
                 if (wantIgnorePlayer)
                 {
-                    int verifiedIgnored = 0;
-                    int verifiedMismatch = 0;
-                    SetIgnorePlayerCollision(objectColliders, true, out verifiedIgnored, out verifiedMismatch);
+                    SetIgnorePlayerCollision(objectColliders, true);
                 }
 
                 if (wantIgnorePlayer || _postThrowIndexIgnored)
@@ -304,6 +461,7 @@ namespace Revive.Slime
             _held = null;
             _heldRigidbody = null;
             _heldColliders = null;
+            _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
@@ -312,6 +470,8 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsValues = null;
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
+
+            ApplyCarrySpecIfNeeded();
 
             return true;
         }
@@ -367,6 +527,7 @@ namespace Revive.Slime
         {
             if (_heldRigidbody == null)
                 return;
+            _heldMoveBlockedThisFrame = false;
 
             Vector3 start = _heldRigidbody.position;
             Vector3 delta = targetWorldPos - start;
@@ -398,11 +559,130 @@ namespace Revive.Slime
                 {
                     float skin = 0.001f;
                     float safeDist = Mathf.Max(0f, minDist - skin);
+                    if (safeDist < dist - 0.0005f)
+                    {
+                        _heldMoveBlockedThisFrame = true;
+                    }
                     targetWorldPos = start + dir * safeDist;
                 }
             }
 
             _heldRigidbody.MovePosition(targetWorldPos);
+        }
+
+        private void AutoDetachHeldBecauseStuck()
+        {
+            if (_held == null)
+                return;
+
+            var carryable = _held;
+            var rb = _heldRigidbody;
+            var objectColliders = _heldColliders;
+
+            RestoreHeldShadowState();
+
+            if (objectColliders != null)
+            {
+                RestoreHeldColliderTriggerState();
+                SetIgnorePlayerCollision(objectColliders, false);
+                if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var index))
+                {
+                    index.RegisterDynamicColliders(objectColliders);
+                }
+            }
+            _heldIndexIgnored = false;
+
+            carryable.IsHeld = false;
+
+            Vector3 releasePos = rb != null ? rb.position : carryable.transform.position;
+            ResolveSlimePbfIfNeeded();
+            if (_slimePbf != null)
+            {
+                Bounds b = _slimePbf.MainBodyBoundsWorld;
+                float margin = Mathf.Max(0.01f, StuckAutoDetachOutsideSlimeMarginWorld);
+                Vector3 min = b.min;
+                Vector3 max = b.max;
+                bool inside = releasePos.x >= min.x && releasePos.x <= max.x &&
+                              releasePos.y >= min.y && releasePos.y <= max.y &&
+                              releasePos.z >= min.z && releasePos.z <= max.z;
+                if (inside && b.size.sqrMagnitude > 1e-6f)
+                {
+                    float dxMin = releasePos.x - min.x;
+                    float dxMax = max.x - releasePos.x;
+                    float dzMin = releasePos.z - min.z;
+                    float dzMax = max.z - releasePos.z;
+
+                    float best = dxMin;
+                    int axis = 0;
+                    int sign = -1;
+                    if (dxMax < best)
+                    {
+                        best = dxMax;
+                        axis = 0;
+                        sign = 1;
+                    }
+                    if (dzMin < best)
+                    {
+                        best = dzMin;
+                        axis = 2;
+                        sign = -1;
+                    }
+                    if (dzMax < best)
+                    {
+                        best = dzMax;
+                        axis = 2;
+                        sign = 1;
+                    }
+
+                    if (axis == 0)
+                        releasePos.x = sign < 0 ? (min.x - margin) : (max.x + margin);
+                    else
+                        releasePos.z = sign < 0 ? (min.z - margin) : (max.z + margin);
+                }
+                else
+                {
+                    Vector3 center = b.center;
+                    Vector3 dir = releasePos - center;
+                    if (dir.sqrMagnitude < 1e-6f)
+                        dir = transform.forward;
+                    float radius = Mathf.Max(0.01f, _slimePbf.MainBodyRadiusWorld);
+                    releasePos = center + dir.normalized * (radius + margin);
+                }
+            }
+
+            TryProjectPointToGround(ref releasePos);
+
+            if (rb != null)
+            {
+                rb.isKinematic = _heldWasKinematic;
+                rb.useGravity = _heldUsedGravity;
+                rb.position = releasePos;
+                if (!rb.isKinematic)
+                {
+                    rb.linearVelocity = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                }
+            }
+            else
+            {
+                carryable.transform.position = releasePos;
+            }
+
+            _held = null;
+            _heldRigidbody = null;
+            _heldColliders = null;
+            _heldColliderWasTrigger = null;
+            _heldRenderers = null;
+            _heldRendererReceiveShadows = null;
+            _heldRendererShadowCastingModes = null;
+            _heldRendererMaterials = null;
+            _heldMaterialReceiveShadowsValues = null;
+            _heldMaterialReceiveShadowsKeywordOff = null;
+            _pickupInTransition = false;
+            _heldMoveBlockedThisFrame = false;
+            _heldMoveBlockedSeconds = 0f;
+
+            ApplyCarrySpecIfNeeded();
         }
 
         private bool IsIgnoredHeldSweepCollider(Collider col)
@@ -442,27 +722,32 @@ namespace Revive.Slime
             Vector3 startWorldPos = rb != null ? rb.position : GetBaseAnchorWorldPosition();
             float mass = rb != null ? Mathf.Max(0.0001f, rb.mass) : 1f;
 
+            ResolveConsumeBuffControllerIfNeeded();
+            float throwMultiplier = _consumeBuffController != null ? _consumeBuffController.CurrentThrowRangeMultiplier : 1f;
+            float maxThrowRange = carryable.MaxThrowRange * throwMultiplier;
+
             Vector3 targetWorldPos;
             switch (carryable.DirectionMode)
             {
                 case SlimeCarryableObject.ThrowDirectionMode.MouseXZ:
                     if (!TryGetMouseAimPointOnGround(out targetWorldPos))
                     {
-                        targetWorldPos = GetForwardAimPointOnGround(startWorldPos);
+                        targetWorldPos = GetForwardAimPointOnGround(startWorldPos, maxThrowRange);
                     }
                     break;
                 case SlimeCarryableObject.ThrowDirectionMode.CharacterForward:
                 default:
-                    targetWorldPos = GetForwardAimPointOnGround(startWorldPos);
+                    targetWorldPos = GetForwardAimPointOnGround(startWorldPos, maxThrowRange);
                     break;
             }
 
-            ClampTargetToMaxRangeAndProjectToGround(startWorldPos, ref targetWorldPos, out Vector3 deltaXZ, out float distXZ);
+            ClampTargetToMaxRangeAndProjectToGround(startWorldPos, maxThrowRange, ref targetWorldPos, out Vector3 deltaXZ, out float distXZ);
             return ComputeBallisticImpulseAutoAngle(startWorldPos, targetWorldPos, deltaXZ, distXZ, mass);
         }
 
         private void ClampTargetToMaxRangeAndProjectToGround(
             Vector3 startWorldPos,
+            float maxThrowRange,
             ref Vector3 targetWorldPos,
             out Vector3 deltaXZ,
             out float distXZ
@@ -473,7 +758,7 @@ namespace Revive.Slime
             deltaXZ = targetXZ - startXZ;
             distXZ = deltaXZ.magnitude;
 
-            float maxRange = Mathf.Max(0.01f, MaxThrowRange);
+            float maxRange = Mathf.Max(0.01f, maxThrowRange);
             if (distXZ > maxRange)
             {
                 deltaXZ = deltaXZ / distXZ * maxRange;
@@ -497,7 +782,7 @@ namespace Revive.Slime
             }
         }
 
-        private Vector3 GetForwardAimPointOnGround(Vector3 startWorldPos)
+        private Vector3 GetForwardAimPointOnGround(Vector3 startWorldPos, float maxThrowRange)
         {
             Vector3 fwd = transform.forward;
             fwd.y = 0f;
@@ -505,7 +790,7 @@ namespace Revive.Slime
                 fwd = Vector3.forward;
             fwd.Normalize();
 
-            float range = Mathf.Max(0.01f, MaxThrowRange);
+            float range = Mathf.Max(0.01f, maxThrowRange);
             Vector3 pos = startWorldPos + fwd * range;
             TryProjectPointToGround(ref pos);
             return pos;
@@ -599,38 +884,10 @@ namespace Revive.Slime
                     var objectCol = objectColliders[j];
                     if (objectCol == null)
                         continue;
-
-                    UnityEngine.Physics.IgnoreCollision(playerCol, objectCol, ignore);
-                }
-            }
-        }
-
-        private void SetIgnorePlayerCollision(Collider[] objectColliders, bool ignore, out int verifiedIgnored, out int verifiedMismatch)
-        {
-            verifiedIgnored = 0;
-            verifiedMismatch = 0;
-
-            if (objectColliders == null || _playerColliders == null)
-                return;
-
-            for (int i = 0; i < _playerColliders.Length; i++)
-            {
-                var playerCol = _playerColliders[i];
-                if (playerCol == null)
-                    continue;
-
-                for (int j = 0; j < objectColliders.Length; j++)
-                {
-                    var objectCol = objectColliders[j];
-                    if (objectCol == null)
+                    if (playerCol == objectCol)
                         continue;
 
                     UnityEngine.Physics.IgnoreCollision(playerCol, objectCol, ignore);
-                    bool state = UnityEngine.Physics.GetIgnoreCollision(playerCol, objectCol);
-                    if (state == ignore)
-                        verifiedIgnored++;
-                    else
-                        verifiedMismatch++;
                 }
             }
         }
@@ -655,16 +912,10 @@ namespace Revive.Slime
                 yield return new WaitForFixedUpdate();
             }
 
-            int verifiedNotIgnored = 0;
-            int stillIgnored = 0;
-            SetIgnorePlayerCollision(objectColliders, false, out verifiedNotIgnored, out stillIgnored);
+            SetIgnorePlayerCollision(objectColliders, false);
             if (_postThrowIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var index))
             {
                 index.RegisterDynamicColliders(objectColliders);
-            }
-
-            if (thrownObject != null)
-            {
             }
             _postThrowIndexIgnored = false;
             _postThrowIgnoredColliders = null;
@@ -673,6 +924,11 @@ namespace Revive.Slime
 
         private void OnDisable()
         {
+            if (_carryBuffController != null)
+            {
+                _carryBuffController.Clear();
+            }
+
             RestoreHeldShadowState();
 
             if (_held != null)
@@ -681,6 +937,7 @@ namespace Revive.Slime
 
                 if (_heldColliders != null)
                 {
+                    RestoreHeldColliderTriggerState();
                     SetIgnorePlayerCollision(_heldColliders, false);
                     if (_heldIndexIgnored && SlimeWorldColliderIndex.TryGetInstance(out var failIndex))
                     {
@@ -721,6 +978,7 @@ namespace Revive.Slime
             _held = null;
             _heldRigidbody = null;
             _heldColliders = null;
+            _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
@@ -729,6 +987,72 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsValues = null;
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
+        }
+
+        private bool IsHeldCollider(Collider col)
+        {
+            if (col == null || _heldColliders == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < _heldColliders.Length; i++)
+            {
+                var held = _heldColliders[i];
+                if (held == null)
+                {
+                    continue;
+                }
+                if (held == col)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void CacheAndSetHeldColliderTriggerState(bool isTrigger)
+        {
+            if (_heldColliders == null || _heldColliders.Length == 0)
+            {
+                _heldColliderWasTrigger = null;
+                return;
+            }
+
+            _heldColliderWasTrigger = new bool[_heldColliders.Length];
+            for (int i = 0; i < _heldColliders.Length; i++)
+            {
+                var col = _heldColliders[i];
+                if (col == null)
+                {
+                    _heldColliderWasTrigger[i] = false;
+                    continue;
+                }
+
+                _heldColliderWasTrigger[i] = col.isTrigger;
+                col.isTrigger = isTrigger;
+            }
+        }
+
+        private void RestoreHeldColliderTriggerState()
+        {
+            if (_heldColliders == null || _heldColliderWasTrigger == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _heldColliders.Length; i++)
+            {
+                var col = _heldColliders[i];
+                if (col == null)
+                {
+                    continue;
+                }
+
+                bool wasTrigger = i < _heldColliderWasTrigger.Length && _heldColliderWasTrigger[i];
+                col.isTrigger = wasTrigger;
+            }
         }
 
         private void CacheAndDisableHeldShadowState()

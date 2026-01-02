@@ -21,6 +21,8 @@ GameObject:
   - component: {fileID: 8866674475157012359}
   - component: {fileID: 2494007224200162004}
   - component: {fileID: 4923431413906178474}
+  - component: {fileID: 1020764093948391069}
+  - component: {fileID: 2917138552587269748}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -292,6 +294,7 @@ MonoBehaviour:
   BlockingWeaponStates: 
   SlimePBF: {fileID: 8866674475157012359}
   CarrySlot: {fileID: 0}
+  ConsumeBuffController: {fileID: 0}
   UseShootForEmit: 1
   UseSecondaryShootForRecall: 1
   UseSwitchCharacterForSwitch: 1
@@ -374,6 +377,7 @@ MonoBehaviour:
   maxVelocity: 30
   faceHeightFactor: 0.2
   verticalOffset: 0.1
+  dropletVerticalOffset: 0.1
   emitSpeed: 1
   emitAngleThreshold: 0.7
   emitCooldown: 0.2
@@ -414,8 +418,11 @@ MonoBehaviour:
   faceMat: {fileID: 2100000, guid: 24cdfa6d5af709a48bb6b12867e8e7d2, type: 2}
   mat: {fileID: 2100000, guid: 5e35cf563f1708d4686e402621db7f69, type: 2}
   particleMesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+  dropletSurfaceMat: {fileID: 2100000, guid: 867bea1fec47cae48a8ee180366037b1, type: 2}
   particleMat: {fileID: 2100000, guid: 8692fec3cd971cf4d8d8af04a82826ff, type: 2}
   bubblesMat: {fileID: 2100000, guid: d3ad7e9b0d79bbc4587fd6d464617cba, type: 2}
+  enableBubbles: 1
+  bubbleSpeed: 0.1
   trans: {fileID: 840677875511296776}
   _slimeVolume: {fileID: -8990146840772306320}
   renderMode: 1
@@ -440,6 +447,7 @@ MonoBehaviour:
   enableWatering: 1
   mainColliderIndexQueryCacheCapacity: 64
   mainColliderIndexQueryRadiusWorld: 20
+  enableGroundFallbackRaycast: 1
   worldStaticColliderLayers:
     serializedVersion: 2
     m_Bits: 512
@@ -449,6 +457,11 @@ MonoBehaviour:
   useWorldStaticSdf: 1
   worldStaticSdfBytes: {fileID: 4900000, guid: dec04e336a0218b438b2816f0f5dbbc8, type: 3}
   disableStaticColliderFallbackWhenUsingSdf: 1
+  sdfValidationLogs: 1
+  sdfCollisionDebugLogs: 1
+  sdfValidationRayMaxDistWorld: 5
+  sdfValidationRayHeightOffsetWorld: 0.3
+  sdfValidationNormalEpsWorld: 0.02
   worldStaticSdfFriction: 0.2
   particleRadiusWorld: 0.05
   dropletColliderIndexQueryCacheCapacity: 128
@@ -457,13 +470,11 @@ MonoBehaviour:
   dropletDynamicDragRadiusWorld: 1
   dropletLiquidSolverIterations: 1
   dropletLiquidGravityY: -10
-  performanceProfilerEnabled: 0
+  performanceProfilerEnabled: 1
   gridDebug: 0
   colliderCollectDebug: 0
   ccaDebug: 0
   recallAvoidanceGizmos: 1
-  recallAvoidanceLogs: 1
-  recallAvoidanceLogControllerSlot: -1
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -480,8 +491,9 @@ MonoBehaviour:
   PreferSlimePbfCentroid: 1
   HeldAnchorOffset: {x: 0, y: 0, z: 0}
   PickupTransitionSeconds: 0.12
+  StuckAutoDetachSeconds: 0.35
+  StuckAutoDetachOutsideSlimeMarginWorld: 0.5
   FixedThrowAngleDegrees: 45
-  MaxThrowRange: 20
   GroundRaycastLayers:
     serializedVersion: 2
     m_Bits: 512
@@ -510,6 +522,45 @@ MonoBehaviour:
   BlockingMovementStates: 
   BlockingConditionStates: 
   BlockingWeaponStates: 
+--- !u!114 &1020764093948391069
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c53f94f05bddf7d4b9c8d2415c082aa2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  slimePbf: {fileID: 0}
+  movementAbility: {fileID: 0}
+  jumpAbility: {fileID: 0}
+  tintTransitionSeconds: 1
+--- !u!114 &2917138552587269748
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 04ac0cb87b8b75247b28d231f1790a65, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AbilityStartSfx: {fileID: 0}
+  AbilityInProgressSfx: {fileID: 0}
+  AbilityStopSfx: {fileID: 0}
+  AbilityStartFeedbacks: {fileID: 0}
+  AbilityStopFeedbacks: {fileID: 0}
+  AbilityPermitted: 1
+  BlockingMovementStates: 
+  BlockingConditionStates: 
+  BlockingWeaponStates: 
+  enableTailwindBoost: 0
+  consumeBuffController: {fileID: 0}
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0

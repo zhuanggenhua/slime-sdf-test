@@ -371,7 +371,7 @@ namespace Revive.Slime
                             return;
                         
                         var coord = key * 4 + GetLocalCoord(j);
-                        
+
                         if (coord.y > 2 || rnd.NextFloat() > Speed) continue;
                         
                         int id = BubblesStack[0];
