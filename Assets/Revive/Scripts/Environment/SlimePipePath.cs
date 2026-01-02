@@ -17,22 +17,39 @@ namespace Revive.Environment
     {
         public SplineContainer Container { get; private set; }
 
-        /// <summary>
-        /// 碰撞忽略根节点。按规范，应为 SlimePipePath 所在节点的父节点（整个管线 Prefab 的根）。
-        /// </summary>
-        public Transform CollisionIgnoreRoot => transform.parent != null ? transform.parent : transform;
+        [Header("References")]
+        [SerializeField]
+        private SplineContainer _container;
+
+        [SerializeField]
+        private Transform _collisionIgnoreRootOverride;
+
+        public Transform CollisionIgnoreRoot => _collisionIgnoreRootOverride != null ? _collisionIgnoreRootOverride : transform;
+
+        private bool EnsureContainer()
+        {
+            if (Container != null)
+                return true;
+
+            if (_container == null)
+            {
+                _container = GetComponent<SplineContainer>();
+                if (_container == null)
+                {
+                    _container = GetComponentInChildren<SplineContainer>(includeInactive: true);
+                }
+            }
+
+            Container = _container;
+            return Container != null;
+        }
 
         private void Awake()
         {
-            Container = GetComponent<SplineContainer>();
-            Debug.Assert(Container != null, $"[SlimePipePath] 未找到 SplineContainer（请将其挂在同一 GameObject 上）: {name}", this);
-            if (Container == null)
+            bool ok = EnsureContainer();
+            Debug.Assert(ok, $"[SlimePipePath] 未找到 SplineContainer（请将其挂在同一 GameObject 或其子物体上，或在 Inspector 指定 _container）: {name}", this);
+            if (!ok)
                 enabled = false;
-
-            if (transform.parent == null)
-            {
-                Debug.LogWarning($"[SlimePipePath] {name} 没有父节点，CollisionIgnoreRoot 将只忽略自身。请确保它在管线根节点下。", this);
-            }
         }
 
         [Header("Spline")]
@@ -65,9 +82,7 @@ namespace Revive.Environment
         public bool TryGetSpline(out Spline spline)
         {
             spline = null;
-            if (Container == null)
-                Container = GetComponent<SplineContainer>();
-            if (Container == null)
+            if (!EnsureContainer())
                 return false;
 
             var splines = Container.Splines;
