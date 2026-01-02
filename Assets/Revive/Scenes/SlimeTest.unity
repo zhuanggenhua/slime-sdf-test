@@ -684,7 +684,7 @@ PrefabInstance:
         type: 3}
       propertyPath: BoundingVolume
       value: 
-      objectReference: {fileID: 457127627}
+      objectReference: {fileID: 0}
     - target: {fileID: 585609819383409790, guid: bb49c94f0e829f444897ea9235e27d6d,
         type: 3}
       propertyPath: m_LocalPosition.x
@@ -967,12 +967,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 288279426}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!65 &457127627 stripped
-BoxCollider:
-  m_CorrespondingSourceObject: {fileID: 1872100047079589179, guid: a3c305b375451a14d8dccc2ae8edba95,
-    type: 3}
-  m_PrefabInstance: {fileID: 5764341679735938050}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1 &493330644
 GameObject:
   m_ObjectHideFlags: 0

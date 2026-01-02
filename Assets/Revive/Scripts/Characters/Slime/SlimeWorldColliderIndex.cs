@@ -515,15 +515,21 @@ namespace Revive.Slime
             int maxCount,
             HashSet<int> appendedInstanceIds)
         {
-            if (outCount >= maxCount)
+            int capacity = math.min(maxCount, outBuffer.Length);
+            if (capacity <= 0)
+                return;
+
+            if (outCount < 0)
+                outCount = 0;
+            if (outCount >= capacity)
                 return;
 
             float r = math.max(0.001f, radiusWorld);
             float r2 = r * r;
 
-            if (_oversizedStaticIds.Count > 0 && outCount < maxCount)
+            if (_oversizedStaticIds.Count > 0 && outCount < capacity)
             {
-                for (int i = 0; i < _oversizedStaticIds.Count && outCount < maxCount; i++)
+                for (int i = 0; i < _oversizedStaticIds.Count && outCount < capacity; i++)
                 {
                     int id = _oversizedStaticIds[i];
                     if (appendedInstanceIds != null && !appendedInstanceIds.Add(id))
@@ -563,15 +569,17 @@ namespace Revive.Slime
                     if (dist2 > r2)
                         continue;
 
+                    if (outCount >= capacity)
+                        break;
                     outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b, worldToSimScale);
                     outCount++;
 
-                    if (outCount >= maxCount)
+                    if (outCount >= capacity)
                         break;
                 }
             }
 
-            if (outCount >= maxCount)
+            if (outCount >= capacity)
                 return;
 
             int minX = WorldToBucket(centerWorld.x - r);
@@ -627,10 +635,12 @@ namespace Revive.Slime
                         if (dist2 > r2)
                             continue;
 
+                        if (outCount >= capacity)
+                            break;
                         outBuffer[outCount] = BuildMyBoxCollider(col, in entry, in b, worldToSimScale);
                         outCount++;
 
-                        if (outCount >= maxCount)
+                        if (outCount >= capacity)
                             break;
                     }
                 }

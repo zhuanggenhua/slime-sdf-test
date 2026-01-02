@@ -31,6 +31,10 @@ namespace Revive.Environment.Watering
         [DefaultValue(0.2f)]
         [SerializeField] private float yScalePerStage = 0.2f;
 
+        [ChineseHeader("缩放过渡")]
+        [ChineseLabel("Q弹过渡")]
+        [SerializeField] private LocalScaleTransition scaleTransition = new LocalScaleTransition();
+
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
         private bool _activated;
@@ -60,7 +64,9 @@ namespace Revive.Environment.Watering
                 SetCarryablePickupEnabled(false);
                 EnsureJumpPad();
                 if (_jumpPad != null)
-                    _jumpPad.RefreshPlatformFeedbackBaseScale();
+                {
+                    RefreshJumpPadAfterScaleChange();
+                }
             }
         }
 
@@ -78,14 +84,17 @@ namespace Revive.Environment.Watering
             {
                 charge = 0f;
                 _activated = true;
-                ApplyActivatedScale();
                 SetCarryablePickupEnabled(false);
                 EnsureJumpPad();
-                if (_jumpPad != null)
+
+                Vector3 targetScale = GetActivatedLocalScale();
+                TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
                 {
-                    _jumpPad.RebuildTriggerZone();
-                    _jumpPad.RefreshPlatformFeedbackBaseScale();
-                }
+                    if (_jumpPad != null)
+                    {
+                        RefreshJumpPadAfterScaleChange();
+                    }
+                });
             }
         }
 
@@ -146,8 +155,7 @@ namespace Revive.Environment.Watering
         {
             yield return new WaitForSeconds(0.5f);
             EnsureBaseScale();
-            if (targetTransform != null)
-                targetTransform.localScale = _baseScale;
+            TweenLocalScale(targetTransform, _baseScale, scaleTransition);
             _scaleResetQueued = false;
         }
 
@@ -179,17 +187,29 @@ namespace Revive.Environment.Watering
             if (targetTransform == null)
                 return;
 
+            targetTransform.localScale = GetActivatedLocalScale();
+        }
+
+        private void RefreshJumpPadAfterScaleChange()
+        {
+            if (_jumpPad == null)
+                return;
+
+            _jumpPad.RebuildTriggerZone();
+            _jumpPad.RefreshPlatformFeedbackBaseScale();
+        }
+
+        private Vector3 GetActivatedLocalScale()
+        {
             EnsureBaseScale();
 
             float mul = 1f + yScalePerStage;
             if (uniformScale)
             {
-                targetTransform.localScale = _baseScale * mul;
+                return _baseScale * mul;
             }
-            else
-            {
-                targetTransform.localScale = new Vector3(_baseScale.x, _baseScale.y * mul, _baseScale.z);
-            }
+
+            return new Vector3(_baseScale.x, _baseScale.y * mul, _baseScale.z);
         }
 
         private void EnsureBaseScale()

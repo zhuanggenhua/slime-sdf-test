@@ -1,3 +1,5 @@
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using Revive.Slime;
 using UnityEngine;
@@ -79,6 +81,8 @@ namespace Revive.Environment.Watering
 
         public virtual bool WantsWater => true;
 
+        private Coroutine _localScaleTransitionRoutine;
+
         public bool ContainsPointWorld(Vector3 pointWorld)
         {
             if (triggerCollider == null || !triggerCollider.enabled)
@@ -118,6 +122,12 @@ namespace Revive.Environment.Watering
         protected virtual void OnDisable()
         {
             Unregister(this);
+
+            if (_localScaleTransitionRoutine != null)
+            {
+                StopCoroutine(_localScaleTransitionRoutine);
+                _localScaleTransitionRoutine = null;
+            }
         }
 
         protected virtual void OnValidate()
@@ -125,6 +135,64 @@ namespace Revive.Environment.Watering
             ValidateTriggerCollider();
 
             ResolveReferences();
+        }
+
+        protected void TweenLocalScale(Transform target, Vector3 targetLocalScale, LocalScaleTransition transition, Action onComplete = null)
+        {
+            if (target == null)
+                return;
+
+            float duration = transition != null ? transition.Duration : 0f;
+            if (duration <= 0f)
+            {
+                target.localScale = targetLocalScale;
+                onComplete?.Invoke();
+                return;
+            }
+
+            if (_localScaleTransitionRoutine != null)
+            {
+                StopCoroutine(_localScaleTransitionRoutine);
+                _localScaleTransitionRoutine = null;
+            }
+
+            _localScaleTransitionRoutine = StartCoroutine(TweenLocalScaleRoutine(target, targetLocalScale, transition, onComplete));
+        }
+
+        private IEnumerator TweenLocalScaleRoutine(Transform target, Vector3 targetLocalScale, LocalScaleTransition transition, Action onComplete)
+        {
+            if (target == null)
+            {
+                _localScaleTransitionRoutine = null;
+                yield break;
+            }
+
+            Vector3 from = target.localScale;
+            float duration = Mathf.Max(0.0001f, transition != null ? transition.Duration : 0.0001f);
+
+            float t = 0f;
+            while (t < duration)
+            {
+                if (target == null)
+                {
+                    _localScaleTransitionRoutine = null;
+                    yield break;
+                }
+
+                t += Time.deltaTime;
+                float u = Mathf.Clamp01(t / duration);
+                float cu = transition != null ? transition.Evaluate(u) : u;
+                target.localScale = Vector3.LerpUnclamped(from, targetLocalScale, cu);
+                yield return null;
+            }
+
+            if (target != null)
+            {
+                target.localScale = targetLocalScale;
+            }
+
+            _localScaleTransitionRoutine = null;
+            onComplete?.Invoke();
         }
 
         private void ResolveReferences()
@@ -178,6 +246,26 @@ namespace Revive.Environment.Watering
                 return;
             Gizmos.color = Color.cyan;
             Gizmos.DrawWireCube(b.center, b.size);
+        }
+    }
+
+    [Serializable]
+    public class LocalScaleTransition
+    {
+        [ChineseLabel("时长(秒)")]
+        [DefaultValue(0.25f)]
+        public float Duration = 0.25f;
+
+        [ChineseLabel("Q弹曲线")]
+        public AnimationCurve Curve = new AnimationCurve(
+            new Keyframe(0f, 0f),
+            new Keyframe(0.60f, 1.12f),
+            new Keyframe(0.82f, 0.98f),
+            new Keyframe(1f, 1f));
+
+        public float Evaluate(float t)
+        {
+            return Curve != null ? Curve.Evaluate(t) : t;
         }
     }
 }

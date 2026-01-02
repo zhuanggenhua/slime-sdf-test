@@ -18,6 +18,10 @@ namespace Revive.Environment.Watering
         [ChineseLabel("初始缩放倍率(xyz)"), Tooltip("开始时会把目标缩放设置为 原始缩放 * 该倍率（xyz独立）")]
         [SerializeField] private Vector3 initialScaleMultiplier = new Vector3(0.5f, 0.5f, 0.5f);
 
+        [ChineseHeader("缩放过渡")]
+        [ChineseLabel("Q弹过渡")]
+        [SerializeField] private LocalScaleTransition scaleTransition = new LocalScaleTransition();
+
         [ChineseHeader("浇水参数")]
         [ChineseLabel("当前蓄水量(运行时)")]
         [SerializeField] private float charge;
@@ -47,14 +51,20 @@ namespace Revive.Environment.Watering
                 ApplyActivatedScale();
                 EnsureJumpPad();
                 if (_jumpPad != null)
+                {
                     _jumpPad.enabled = true;
+                    RefreshJumpPadAfterScaleChange();
+                }
             }
             else
             {
                 ApplyInitialScale();
                 EnsureJumpPad();
                 if (_jumpPad != null)
+                {
                     _jumpPad.enabled = false;
+                    RefreshJumpPadAfterScaleChange();
+                }
             }
         }
 
@@ -73,16 +83,18 @@ namespace Revive.Environment.Watering
             {
                 charge = 0f;
                 _activated = true;
-                ApplyActivatedScale();
-
                 EnsureJumpPad();
-                if (_jumpPad != null)
+
+                Vector3 targetScale = GetActivatedLocalScale();
+                TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
                 {
-                    _jumpPad.OneShot = false;
-                    _jumpPad.enabled = true;
-                    _jumpPad.RebuildTriggerZone();
-                    _jumpPad.RefreshPlatformFeedbackBaseScale();
-                }
+                    if (_jumpPad != null)
+                    {
+                        _jumpPad.OneShot = false;
+                        _jumpPad.enabled = true;
+                        RefreshJumpPadAfterScaleChange();
+                    }
+                });
             }
         }
 
@@ -111,9 +123,22 @@ namespace Revive.Environment.Watering
         {
             if (targetTransform == null)
                 return;
+            targetTransform.localScale = GetActivatedLocalScale();
+        }
 
+        private Vector3 GetActivatedLocalScale()
+        {
             EnsureBaseScale();
-            targetTransform.localScale = _baseScale;
+            return _baseScale;
+        }
+
+        private void RefreshJumpPadAfterScaleChange()
+        {
+            if (_jumpPad == null)
+                return;
+
+            _jumpPad.RebuildTriggerZone();
+            _jumpPad.RefreshPlatformFeedbackBaseScale();
         }
 
         private void EnsureBaseScale()

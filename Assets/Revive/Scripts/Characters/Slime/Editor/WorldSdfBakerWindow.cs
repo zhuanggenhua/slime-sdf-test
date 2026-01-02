@@ -761,6 +761,13 @@ namespace Revive.Slime.Editor
                 return;
             }
 
+            long uncompressedBytesLong = totalLong * sizeof(float);
+            if (uncompressedBytesLong <= 0 || uncompressedBytesLong > int.MaxValue)
+            {
+                Debug.LogError($"[WorldSdfBaker] 烘焙数据过大（DenseFloat32）导致无法分配/压缩：voxels={totalLong:N0} uncompressedBytes={uncompressedBytesLong:N0}。请增大 voxelSize 或缩小 bounds。 ");
+                return;
+            }
+
             long estimatedBytes = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + totalLong * sizeof(float);
             double estimatedMb = estimatedBytes / (1024.0 * 1024.0);
 
@@ -1806,29 +1813,41 @@ namespace Revive.Slime.Editor
 
                     if (!cancelled)
                     {
-                        var raw = new byte[denseSim.Length * sizeof(float)];
-                        Buffer.BlockCopy(denseSim, 0, raw, 0, raw.Length);
+                        int uncompressedBytes = (int)uncompressedBytesLong;
 
                         byte[] compressed;
-                        using (var ms = new MemoryStream(raw.Length))
+                        using (var ms = new MemoryStream(Mathf.Min(uncompressedBytes, 16 * 1024 * 1024)))
                         {
                             using (var ds = new DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, true))
                             {
-                                ds.Write(raw, 0, raw.Length);
+                                const int chunkBytes = 4 * 1024 * 1024;
+                                int chunkFloats = chunkBytes / sizeof(float);
+                                if (chunkFloats < 1) chunkFloats = 1;
+                                var chunk = new byte[chunkFloats * sizeof(float)];
+
+                                int write = 0;
+                                while (write < denseSim.Length)
+                                {
+                                    int take = Mathf.Min(chunkFloats, denseSim.Length - write);
+                                    int bytesToCopy = take * sizeof(float);
+                                    Buffer.BlockCopy(denseSim, write * sizeof(float), chunk, 0, bytesToCopy);
+                                    ds.Write(chunk, 0, bytesToCopy);
+                                    write += take;
+                                }
                             }
                             compressed = ms.ToArray();
                         }
 
                         bw.Write(1);
-                        bw.Write(raw.Length);
+                        bw.Write(uncompressedBytes);
                         bw.Write(compressed.Length);
                         bw.Write(compressed);
 
-                        double ratio = raw.Length > 0 ? (double)compressed.Length / raw.Length : 0.0;
+                        double ratio = uncompressedBytes > 0 ? (double)compressed.Length / uncompressedBytes : 0.0;
                         estimatedDeflateRatio = Mathf.Clamp01((float)ratio);
                         EditorPrefs.SetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
                         long fileBytes = bw.BaseStream != null ? bw.BaseStream.Length : -1;
-                        Debug.Log($"[WorldSdfBaker] PayloadCompressed kind=DeflateDenseFloat32 rawBytes={raw.Length:N0} compressedBytes={compressed.Length:N0} ratio={ratio:P1} fileBytes={fileBytes:N0}");
+                        Debug.Log($"[WorldSdfBaker] PayloadCompressed kind=DeflateDenseFloat32 rawBytes={uncompressedBytes:N0} compressedBytes={compressed.Length:N0} ratio={ratio:P1} fileBytes={fileBytes:N0}");
                     }
 
                     bw.Flush();
@@ -1848,9 +1867,13 @@ namespace Revive.Slime.Editor
                     Debug.Log($"[WorldSdfBaker] BakeProfile time={sw.Elapsed.TotalSeconds:F2}s voxels={voxelsTotal:N0} seedMode={meshSeedMode} seedKeys={seedKeys.Count:N0} seedAddAttempts={seedAddAttempts:N0} seedAdded={seedAdded:N0} seedMeshColliders={seedMeshColliderCount:N0} seedMeshTris={seedTriCount:N0} jobDist={(ticksJobDistance * invFreq):F2}s patchDist={(ticksPatchDistance * invFreq):F2}s boundsPass={voxelsBoundsPass:N0} closestPointCalls={closestPointCalls:N0} closestPointErrors={closestPointErrors:N0} checkSphereCalls={checkSphereCalls:N0} updated={entryCount:N0} updatedNeg={insideNegCount:N0} updatedMin={updatedMin:F4} updatedMax={updatedMax:F4} allNeg={totalNeg:N0} allMin={allMin:F4} allMax={allMax:F4} candidates={candidates.Count}");
                 }
             }
-            finally
+            catch (Exception e)
             {
-                EditorUtility.ClearProgressBar();
+                if (File.Exists(absoluteBytesPath))
+                    File.Delete(absoluteBytesPath);
+                AssetDatabase.Refresh();
+                Debug.LogError($"[WorldSdfBaker] 烘焙失败：{e.GetType().Name} {e.Message}");
+                return;
             }
 
             if (cancelled)
