@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 3756349084013738464}
   - component: {fileID: 7590462092636357368}
   - component: {fileID: 1542740130541309197}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree009
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -96,7 +96,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4151208532973431911}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level00
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -130,7 +130,7 @@ GameObject:
   - component: {fileID: 4816891175105425107}
   - component: {fileID: 2626701216840385280}
   - component: {fileID: 738620104163935615}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree009_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -215,7 +215,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 8638760133994036870}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level01
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -247,7 +247,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6173473779541858209}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: _UMS_LODs_
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -283,7 +283,7 @@ GameObject:
   - component: {fileID: 8875817298732911606}
   - component: {fileID: 2915078461523094628}
   - component: {fileID: 7863394941407306720}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree009_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -368,7 +368,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3005153258009675267}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level02
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -458,6 +458,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: tree009
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 50b41ec3b6d12df4ca7fecf13a8e6b32,
+        type: 3}
+      propertyPath: m_Layer
+      value: 9
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

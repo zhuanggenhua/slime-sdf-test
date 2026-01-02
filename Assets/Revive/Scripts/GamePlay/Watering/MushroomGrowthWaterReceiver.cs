@@ -82,7 +82,10 @@ namespace Revive.Environment.Watering
                 SetCarryablePickupEnabled(false);
                 EnsureJumpPad();
                 if (_jumpPad != null)
+                {
+                    _jumpPad.RebuildTriggerZone();
                     _jumpPad.RefreshPlatformFeedbackBaseScale();
+                }
             }
         }
 

@@ -99,6 +99,16 @@ namespace Revive.Environment
                 _platformBaseScale = _platformFeedbackTarget.localScale;
             }
         }
+
+        private void OnEnable()
+        {
+            SetupColliders();
+        }
+
+        public void RebuildTriggerZone()
+        {
+            SetupColliders();
+        }
         
         private void Update()
         {
@@ -265,11 +275,21 @@ namespace Revive.Environment
         // 公开方法供子物体调用
         public void OnPlayerEnterTrigger(Collider other)
         {
+            if (!isActiveAndEnabled)
+            {
+                return;
+            }
+
             OnTriggerCheck(other);
         }
 
         public void OnPlayerExitTrigger(Collider other)
         {
+            if (!isActiveAndEnabled)
+            {
+                return;
+            }
+
             TopDownController3D controller = other.GetComponent<TopDownController3D>();
             if (controller == null)
             {

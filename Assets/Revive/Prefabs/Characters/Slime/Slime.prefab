@@ -23,6 +23,7 @@ GameObject:
   - component: {fileID: 4923431413906178474}
   - component: {fileID: 2917138552587269748}
   - component: {fileID: 2582397642529391104}
+  - component: {fileID: 7812721431200277029}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -64,13 +65,13 @@ CharacterController:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Height: 0.2
+  m_Height: 0.6
   m_Radius: 0.15
   m_SlopeLimit: 45
-  m_StepOffset: 0.3
-  m_SkinWidth: 0.08
+  m_StepOffset: 0.1
+  m_SkinWidth: 0.02
   m_MinMoveDistance: 0.001
-  m_Center: {x: 0, y: 0.2, z: 0}
+  m_Center: {x: 0, y: 0.3, z: 0}
 --- !u!54 &8435007094971076137
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -260,17 +261,18 @@ MonoBehaviour:
   JumpProportionalToPress: 0
   MinimumPressTime: 0.1
   JumpForce: 400
-  JumpHeight: 0.8
+  JumpHeight: 1
   CanJumpOnTooSteepSlopes: 1
-  ResetJumpsOnTooSteepSlopes: 0
+  ResetJumpsOnTooSteepSlopes: 1
   NumberOfJumps: 1
-  NumberOfJumpsLeft: 0
+  NumberOfJumpsLeft: 1
   JumpStartFeedback: {fileID: 0}
   JumpStopFeedback: {fileID: 0}
-  JumpImpulse: 4
+  JumpImpulse: 5
   _debugSceneLabel: 1
   _debugOnlyWhenPlaying: 1
   _debugWorldOffset: {x: 0, y: 2, z: 0}
+  _debugLogIntervalFrames: 15
 --- !u!114 &8512902080114408108
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -361,7 +363,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1dbb46c4fe7af244b5efa823decee93, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simToWorldScale: 0.1
+  simToWorldScale: 0.15
   viscosityStrength: 10
   concentration: 50
   baseSpeed: 1.5
@@ -383,6 +385,9 @@ MonoBehaviour:
   emitAngleThreshold: 0.7
   emitCooldown: 0.2
   emitBatchSize: 50
+  emitSpawnForwardRadiusFactor: 0.5
+  emitSpawnUpRadiusFactor: 0.5
+  emitPitchDegrees: 35
   coreRadius: 20
   maxParticles: 16384
   activeParticles: 2504
@@ -458,11 +463,6 @@ MonoBehaviour:
   useWorldStaticSdf: 1
   worldStaticSdfBytes: {fileID: 4900000, guid: dec04e336a0218b438b2816f0f5dbbc8, type: 3}
   disableStaticColliderFallbackWhenUsingSdf: 1
-  sdfValidationLogs: 1
-  sdfCollisionDebugLogs: 1
-  sdfValidationRayMaxDistWorld: 5
-  sdfValidationRayHeightOffsetWorld: 0.3
-  sdfValidationNormalEpsWorld: 0.02
   worldStaticSdfFriction: 0.2
   particleRadiusWorld: 0.05
   dropletColliderIndexQueryCacheCapacity: 128
@@ -566,6 +566,35 @@ MonoBehaviour:
   jumpAbility: {fileID: 0}
   controller3D: {fileID: 0}
   tintTransitionSeconds: 0.5
+--- !u!114 &7812721431200277029
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1d9d8a0786e75c14fbff5378d97938ae, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AbilityStartSfx: {fileID: 0}
+  AbilityInProgressSfx: {fileID: 0}
+  AbilityStopSfx: {fileID: 0}
+  AbilityStartFeedbacks: {fileID: 0}
+  AbilityStopFeedbacks: {fileID: 0}
+  AbilityPermitted: 1
+  BlockingMovementStates: 
+  BlockingConditionStates: 
+  BlockingWeaponStates: 
+  PurificationInterval: 3
+  ContributionValue: 10
+  IndicatorType: SlimePuri
+  EnablePurification: 1
+  RemoveIndicatorsOnDisable: 0
+  _timeSinceLastPurification: 0
+  _indicatorCounter: 0
+  _totalIndicatorsCreated: 0
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0

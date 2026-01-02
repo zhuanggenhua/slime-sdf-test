@@ -9,7 +9,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 5891051565002879890}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level01
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -43,7 +43,7 @@ GameObject:
   - component: {fileID: 3065682348643722197}
   - component: {fileID: 1678297173071849059}
   - component: {fileID: 9072976005732711800}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree005_trunk
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -129,7 +129,7 @@ GameObject:
   - component: {fileID: 7516580655338573693}
   - component: {fileID: 5399528025217359130}
   - component: {fileID: 7201410198957280207}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree005_trunk_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -213,7 +213,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1805498746532026527}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level02
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -247,7 +247,7 @@ GameObject:
   - component: {fileID: 6582153705978819825}
   - component: {fileID: 1745099666598210533}
   - component: {fileID: 213277153353469475}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree005_trunk_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -331,7 +331,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4836456299334203598}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: _UMS_LODs_
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -365,7 +365,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3759776257485218645}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level00
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -455,6 +455,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: tree005_trunk
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 5fe11fbf4ba3d984cbdd3dff2cc2bd66,
+        type: 3}
+      propertyPath: m_Layer
+      value: 9
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

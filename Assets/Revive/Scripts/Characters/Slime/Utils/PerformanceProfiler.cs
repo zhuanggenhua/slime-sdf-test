@@ -158,6 +158,7 @@ namespace Revive.Slime
                     CallCount = 0
                 };
                 _stages[stageName] = data;
+                _stageKeys.Add(stageName);
             }
 
             data.CurrentMs = elapsedMs;

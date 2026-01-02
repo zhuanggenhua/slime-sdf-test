@@ -9,7 +9,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 782671157738190351}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level00
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -41,7 +41,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 8623801756256058362}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: _UMS_LODs_
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -77,7 +77,7 @@ GameObject:
   - component: {fileID: 100106325750519500}
   - component: {fileID: 4740955859384898532}
   - component: {fileID: 6502933704537728317}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree007_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -162,7 +162,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2133085092561181053}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level02
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -196,7 +196,7 @@ GameObject:
   - component: {fileID: 3780111097089220877}
   - component: {fileID: 5051369192336836704}
   - component: {fileID: 8881721399530957666}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree007_combined_static
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -281,7 +281,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 7955973550019300307}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Level01
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -315,7 +315,7 @@ GameObject:
   - component: {fileID: 5412227679803966148}
   - component: {fileID: 896479828747586126}
   - component: {fileID: 2862438444328655880}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: 000_static_tree007
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -458,6 +458,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: tree007
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: fb7a8b4ba3cdff44ba2f08d3e7cc122a,
+        type: 3}
+      propertyPath: m_Layer
+      value: 9
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

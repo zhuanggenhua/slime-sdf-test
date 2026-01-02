@@ -289,48 +289,54 @@ namespace Revive.Slime
                 float step = PBF_Utils.CellSize * 0.5f; // 0.25，更细的步长
                 float maxDist = math.max(MaxRadius * 2f, 15f); // 至少搜索15单位或2倍半径
                 int maxSteps = (int)(maxDist / step) + 1;
-                
-                float oldValue = Threshold + 1f; // 初始假设在表面内（高密度）
+
+                bool hasOldValue = false;
+                float oldValue = 0f;
                 float3 oldPos = cur;
                 bool foundSurface = false;
-                
+
                 for (int i = 0; i < maxSteps; i++)
                 {
                     int3 coord = (int3)math.floor((cur - MinPos) / PBF_Utils.CellSize);
                     int3 key = coord >> 2;
-                    
-                    if (GridLut.ContainsKey(key))
+
+                    if (!GridLut.ContainsKey(key))
                     {
-                        int offset = GridLut[key];
-                        float curValue = Grid[offset + GetLocalIndex(coord & 3)];
-                        
-                        // 检测穿越等值面：从高密度（>=Threshold）到低密度（<Threshold）
-                        if (curValue < Threshold && oldValue >= Threshold)
-                        {
-                            // 线性插值找精确交点，clamp防止外插
-                            float denom = oldValue - curValue;
-                            float t = math.clamp((oldValue - Threshold) / denom, 0f, 1f);
-                            cur = math.lerp(oldPos, cur, t);
-                            foundSurface = true;
-                            break;
-                        }
-                        oldValue = curValue;
-                    }
-                    else
-                    {
-                        // 离开网格区域，如果之前在表面内则当前位置就是边界
-                        if (oldValue >= Threshold)
+                        if (hasOldValue && oldValue >= Threshold)
                         {
                             foundSurface = true;
+                            cur = oldPos;
                         }
                         break;
                     }
-                    
+
+                    int offset = GridLut[key];
+                    float curValue = Grid[offset + GetLocalIndex(coord & 3)];
+
+                    if (!hasOldValue)
+                    {
+                        hasOldValue = true;
+                        oldValue = curValue;
+                        oldPos = cur;
+                        cur += Dir * step;
+                        continue;
+                    }
+
+                    if (curValue < Threshold && oldValue >= Threshold)
+                    {
+                        float denom = oldValue - curValue;
+                        float t = math.abs(denom) > 1e-6f ? (oldValue - Threshold) / denom : 0f;
+                        t = math.clamp(t, 0f, 1f);
+                        cur = math.lerp(oldPos, cur, t);
+                        foundSurface = true;
+                        break;
+                    }
+
+                    oldValue = curValue;
                     oldPos = cur;
                     cur += Dir * step;
                 }
-                
-                // 如果没找到表面，返回 NaN 让调用方处理
+
                 Result[0] = foundSurface ? cur : new float3(float.NaN, float.NaN, float.NaN);
             }
 

@@ -6,7 +6,6 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling; 
-using UnityEngine.Rendering;
 using Revive.Environment;
 using Revive.Environment.Watering;
  
@@ -165,6 +164,18 @@ namespace Revive.Slime
         [ChineseLabel("发射批量"), Tooltip("单次发射的粒子数量")]
         [SerializeField, Range(1, 200), DefaultValue(50)]
         private int emitBatchSize = 50;
+
+        [ChineseLabel("发射中心前移(半径倍数)"), Tooltip("用于选择发射粒子区域的中心点：center + dir * (mainRadius * factor)")]
+        [SerializeField, Range(0f, 2f), DefaultValue(0.5f)]
+        private float emitSpawnForwardRadiusFactor = 0.5f;
+
+        [ChineseLabel("发射中心上移(半径倍数)"), Tooltip("用于选择发射粒子区域的中心点：y = center.y + mainRadius * factor")]
+        [SerializeField, Range(0f, 2f), DefaultValue(0.5f)]
+        private float emitSpawnUpRadiusFactor = 0.5f;
+
+        [ChineseLabel("发射仰角(度)"), Tooltip("控制发射速度方向的仰角（只影响最终速度方向，不影响水平瞄准）")]
+        [SerializeField, Range(0f, 80f), DefaultValue(35f)]
+        private float emitPitchDegrees = 35f;
         
         /// <summary>发射冷却时间（秒）</summary>
         public float EmitCooldown => emitCooldown;
@@ -592,6 +603,8 @@ namespace Revive.Slime
             }
 
             _bubblesBlock.SetFloat(_bubblesSizeId, _bubblesBaseSize * SlimeWorldScaleFactor * Mathf.Max(0f, sizeBoost));
+            if (bubblesMat.HasProperty(_bubblesSimToWorldScaleId))
+                _bubblesBlock.SetFloat(_bubblesSimToWorldScaleId, SimToWorldScale);
         }
         
         #region 【渲染设置】
@@ -1079,27 +1092,6 @@ namespace Revive.Slime
         [SerializeField]
         private bool disableStaticColliderFallbackWhenUsingSdf;
 
-        [ChineseHeader("SDF验证")]
-        [ChineseLabel("输出SDF验证日志"), Tooltip("输出 Raycast 命中点的 sdf@hit（期望接近0）以及法线一致性（dot 期望接近1）。")]
-        [SerializeField, DefaultValue(false)]
-        private bool sdfValidationLogs;
-
-        [ChineseLabel("输出SDF碰撞调试日志"), Tooltip("输出粒子与世界静态SDF的穿透/法线统计信息（较重，默认关闭）。")]
-        [SerializeField, DefaultValue(false)]
-        private bool sdfCollisionDebugLogs;
-
-        [ChineseLabel("SDF验证射线最大距离(世界)"), Tooltip("用于 Raycast 的最大距离（米）。")]
-        [SerializeField, Range(0.5f, 50f), DefaultValue(5f)]
-        private float sdfValidationRayMaxDistWorld = 5f;
-
-        [ChineseLabel("SDF验证射线高度偏移(世界)"), Tooltip("射线起点相对 transform.position 的高度偏移（米）。")]
-        [SerializeField, Range(0f, 2f), DefaultValue(0.3f)]
-        private float sdfValidationRayHeightOffsetWorld = 0.3f;
-
-        [ChineseLabel("SDF法线验证Eps(世界)"), Tooltip("用于采样 d(hit±eps) 的 eps（米）。")]
-        [SerializeField, Range(0.001f, 0.2f), DefaultValue(0.02f)]
-        private float sdfValidationNormalEpsWorld = 0.02f;
-
         [ChineseLabel("世界静态SDF摩擦"), Tooltip("SDF 碰撞的摩擦系数（0=无摩擦，1=强摩擦）。")]
         [SerializeField, Range(0f, 1f)]
         private float worldStaticSdfFriction = 0.2f;
@@ -1292,13 +1284,13 @@ namespace Revive.Slime
 		private Vector3 _renderVelocity = Vector3.zero;
 		private Vector3 _prevRenderTransPosition;
 		private bool _renderVelocityInitialized;
+		private bool _deferredPostSimPending;
+		private int _lastPerformanceProfilerFrame = -999999;
 		private bool _runtimeInitialized;
 		private float _lastMainRadius; // 用于 mainRadius 防抖
 		private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
 		private int _lastDropletMarchingCubesFrame = -999999;
 		private int _lastSurfaceSpikeLogFrame = -999999;
-		private int _lastSdfCollisionDbgLogFrame = -999999;
-		private int _lastSdfValidationLogFrame = -999999;
 		private int _lastGroundFallbackHitLogFrame = -999999;
 		private int _lastMergeScanMainRangeLogFrame = -999999;
 		private int _lastMergeScanDropletPartitionLogFrame = -999999;
@@ -1774,7 +1766,6 @@ namespace Revive.Slime
                 _bubblesPoolBuffer.Add(i);
             }
 
-            
             _componentsBuffer = new NativeList<Effects.Component>(16, Allocator.Persistent);
             _gridIDBuffer = new NativeArray<int>(_gridBuffer.Length, Allocator.Persistent);
             _dropletGridIDBuffer = new NativeArray<int>(_dropletGridBuffer.Length, Allocator.Persistent);
@@ -1806,16 +1797,16 @@ namespace Revive.Slime
             _controllerBuffer.Add(initialController);
 
             _marchingCubes = new LMarchingCubes();
-            			_marchingCubesDroplet = new LMarchingCubes();
+            _marchingCubesDroplet = new LMarchingCubes();
 
 
-			_particleRenderer = new SlimeParticleRenderer(particleMat, particleMesh, maxParticles);
-			_bubblesDataBuffer = new ComputeBuffer(PBF_Utils.BubblesCount, sizeof(float) * 8);
-			_particleRenderer.SetSimToWorldScale(SimToWorldScale);
+            _particleRenderer = new SlimeParticleRenderer(particleMat, particleMesh, maxParticles);
+            _bubblesDataBuffer = new ComputeBuffer(PBF_Utils.BubblesCount, sizeof(float) * 8);
+            _particleRenderer.SetSimToWorldScale(SimToWorldScale);
 
-			_slimeInstances = new NativeList<SlimeInstance>(16,  Allocator.Persistent);
-			float3 initialInstanceCenter = trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero;
-			float3 initialDir = trans != null ? (float3)trans.forward : new float3(0, 0, 1);
+            _slimeInstances = new NativeList<SlimeInstance>(16,  Allocator.Persistent);
+            float3 initialInstanceCenter = trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero;
+            float3 initialDir = trans != null ? (float3)trans.forward : new float3(0, 0, 1);
             _slimeInstances.Add(new SlimeInstance()
             {
                 Active = true,
@@ -2054,24 +2045,15 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
 
-            if (trans == null)
-                return;
+            // 渲染预测使用 FixedUpdate 中的稳定速度，避免 transform 仅在 FixedUpdate 跳变时
+            // 用 Time.deltaTime 计算速度导致的脉冲/过冲。
+            _renderVelocity = _velocity;
 
-            if (!_renderVelocityInitialized)
+            if (trans != null)
             {
-                _renderVelocityInitialized = true;
                 _prevRenderTransPosition = trans.position;
-                _renderVelocity = Vector3.zero;
-                return;
+                _renderVelocityInitialized = true;
             }
-
-            float dt = Time.deltaTime;
-            if (dt <= 1e-6f)
-                return;
-
-            Vector3 cur = trans.position;
-            _renderVelocity = (cur - _prevRenderTransPosition) / dt;
-            _prevRenderTransPosition = cur;
         }
 
         private void UpdateCombinedBoundsForParticlesRender()
@@ -2147,6 +2129,12 @@ namespace Revive.Slime
             if (!isActiveAndEnabled)
                 return;
 
+            if (_deferredPostSimPending)
+            {
+                _deferredPostSimPending = false;
+                RunDeferredPostSim();
+            }
+
             if (renderMode == RenderMode.Surface)
                 RenderSurfaceMeshes();
             else if (renderMode == RenderMode.Particles)
@@ -2155,6 +2143,93 @@ namespace Revive.Slime
             RenderBubbles();
 
             RenderFaces();
+
+            if (_lastPerformanceProfilerFrame == Time.frameCount)
+                PerformanceProfiler.EndFrame();
+        }
+
+        private void RunDeferredPostSim()
+        {
+            if (renderMode == RenderMode.Surface)
+            {
+                PerformanceProfiler.Begin("Surface");
+                Surface();
+                PerformanceProfiler.End("Surface");
+            }
+            
+            PerformanceProfiler.Begin("Unshuffle");
+            NativeArray<Particle>.Copy(_particles, _particlesTemp, activeParticles);
+            NativeArray<float3>.Copy(_velocityBuffer, _velocityTempBuffer, activeParticles);
+            var hashesActive = _pbfSystem.Hashes.GetSubArray(0, activeParticles);
+            var psUpdatedActive = _particlesTemp.GetSubArray(0, activeParticles);
+            var velSortedActive = _velocityTempBuffer.GetSubArray(0, activeParticles);
+            new Simulation_PBF.UnshuffleJob
+            {
+                Hashes = hashesActive,
+                PsUpdated = psUpdatedActive,
+                VelocitySorted = velSortedActive,
+                PsOriginal = _particles,
+                VelocityOriginal = _velocityBuffer,
+            }.Schedule().Complete();
+            PerformanceProfiler.End("Unshuffle");
+            
+            PerformanceProfiler.Begin("Control");
+            PerformanceProfiler.Begin("Control_Watering");
+            ApplyWateringInteraction();
+            PerformanceProfiler.End("Control_Watering");
+
+            PerformanceProfiler.Begin("Control_BeforeControl");
+            BeforeControl?.Invoke(this);
+            PerformanceProfiler.End("Control_BeforeControl");
+
+            Control();
+            PerformanceProfiler.End("Control");
+            
+            UpdateBubblesEffects();
+            
+            bubblesNum = PBF_Utils.BubblesCount - _bubblesPoolBuffer.Length;
+            
+            if (_bubblesDataBuffer != null)
+            {
+                _bubblesDataBuffer.SetData(_bubblesBuffer);
+            }
+
+            if (renderMode == RenderMode.Particles)
+            {
+                UpdateCombinedBoundsForParticlesRender();
+            }
+            else
+            {
+                _bounds = new Bounds()
+                {
+                    min = minPos * SimToWorldScale,
+                    max = maxPos * SimToWorldScale
+                };
+
+                if (_dropletSubsystem.ActiveCount > 0)
+                {
+                    _bounds.Encapsulate(_dropletBounds.min);
+                    _bounds.Encapsulate(_dropletBounds.max);
+                }
+            }
+
+            if (_slimeVolume != null)
+            {
+                PerformanceProfiler.Begin("Volume_UpdateFromParticles");
+                _slimeVolume.UpdateFromParticles(_particles);
+                PerformanceProfiler.End("Volume_UpdateFromParticles");
+            }
+        }
+
+        private Vector3 GetRenderPredictOffsetWorld()
+        {
+            if (!_runtimeInitialized)
+                return Vector3.zero;
+            float predictDt = Time.time - Time.fixedTime;
+            if (predictDt < 0f) predictDt = 0f;
+            float fixedDt = Time.fixedDeltaTime;
+            if (predictDt > fixedDt) predictDt = fixedDt;
+            return _renderVelocity * predictDt;
         }
 
         private void RenderBubbles()
@@ -2173,13 +2248,26 @@ namespace Revive.Slime
             if (_bubblesBlock == null)
                 _bubblesBlock = new MaterialPropertyBlock();
 
+            if (!_bubblesBaseSizeCached && bubblesMat.HasProperty(_bubblesSizeId))
+            {
+                _bubblesBaseSize = bubblesMat.GetFloat(_bubblesSizeId);
+                _bubblesBaseSizeCached = true;
+            }
+
+            float sizeBoost = 1f;
+            if (_bubbleBoostEndTime > 0f && Time.time <= _bubbleBoostEndTime)
+                sizeBoost = Mathf.Max(0f, _bubbleBoostSizeMultiplier);
+
+            _bubblesBlock.SetFloat(_bubblesSizeId, _bubblesBaseSize * SlimeWorldScaleFactor * sizeBoost);
             if (bubblesMat.HasProperty(_bubblesSimToWorldScaleId))
                 _bubblesBlock.SetFloat(_bubblesSimToWorldScaleId, SimToWorldScale);
             _bubblesBlock.SetBuffer(_bubblesBufferId, _bubblesDataBuffer);
 
+            Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
             Bounds drawBounds = _bounds.size.sqrMagnitude > 1e-6f
                 ? _bounds
                 : new Bounds(trans != null ? trans.position : Vector3.zero, Vector3.one * 10000f);
+            drawBounds.center += predictOffsetWorld;
 
             Graphics.DrawMeshInstancedProcedural(
                 particleMesh,
@@ -2188,7 +2276,7 @@ namespace Revive.Slime
                 drawBounds,
                 PBF_Utils.BubblesCount,
                 _bubblesBlock,
-                ShadowCastingMode.Off,
+                UnityEngine.Rendering.ShadowCastingMode.Off,
                 false,
                 gameObject.layer);
         }
@@ -2202,6 +2290,7 @@ namespace Revive.Slime
             if (!_slimeInstances.IsCreated)
                 return;
 
+            Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
             int layer = gameObject.layer;
             for (int i = 0; i < _slimeInstances.Length; i++)
             {
@@ -2242,7 +2331,7 @@ namespace Revive.Slime
                 }
 
                 float faceWorldScale = faceScale * countFactor * math.sqrt(slime.Radius * SimToWorldScale);
-                Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * SimToWorldScale,
+                Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * SimToWorldScale + predictOffsetWorld,
                     Quaternion.LookRotation(-renderDir),
                     faceWorldScale * Vector3.one), faceMat, layer);
             }
@@ -2255,14 +2344,15 @@ namespace Revive.Slime
 
             MaterialPropertyBlock block = _surfaceTintEnabled ? _surfaceTintBlock : null;
             int layer = gameObject.layer;
+            Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
 
             if (_mesh != null)
-                Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_meshOriginWorld, Quaternion.identity, Vector3.one), mat, layer, null, 0, block);
+                Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_meshOriginWorld + predictOffsetWorld, Quaternion.identity, Vector3.one), mat, layer, null, 0, block);
 
             if (_dropletMesh != null)
             {
                 Material dropletMatToUse = dropletSurfaceMat != null ? dropletSurfaceMat : mat;
-                Graphics.DrawMesh(_dropletMesh, Matrix4x4.TRS(_dropletMeshOriginWorld, Quaternion.identity, Vector3.one), dropletMatToUse, layer, null, 0, null);
+                Graphics.DrawMesh(_dropletMesh, Matrix4x4.TRS(_dropletMeshOriginWorld + predictOffsetWorld, Quaternion.identity, Vector3.one), dropletMatToUse, layer, null, 0, null);
             }
         }
 
@@ -2312,7 +2402,11 @@ namespace Revive.Slime
                 return;
             if (!_runtimeInitialized)
                 return;
-            PerformanceProfiler.BeginFrame();
+            if (_lastPerformanceProfilerFrame != Time.frameCount)
+            {
+                _lastPerformanceProfilerFrame = Time.frameCount;
+                PerformanceProfiler.BeginFrame();
+            }
 
             PerformanceProfiler.Begin("UpdateSceneDropletSources");
             UpdateSceneDropletSources();
@@ -2338,6 +2432,10 @@ namespace Revive.Slime
             {
                 _velocity = (trans.position - _prevTransPosition) / Time.fixedDeltaTime;
                 _prevTransPosition = trans.position;
+
+                _renderVelocity = _velocity;
+                _prevRenderTransPosition = trans.position;
+                _renderVelocityInitialized = true;
             }
             
             // 原版时序：不在 Simulate() 前更新 Center，让 ApplyForceJob 使用上一帧的 Center 和 Radius
@@ -2464,79 +2562,83 @@ namespace Revive.Slime
             PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
 
-            if (renderMode == RenderMode.Surface)
+            PerformanceProfiler.Begin("Control_MainController_Fixed");
+            UpdateMainControllerAfterSimulate();
+            PerformanceProfiler.End("Control_MainController_Fixed");
+
+            _deferredPostSimPending = true;
+        }
+
+        private void UpdateMainControllerAfterSimulate()
+        {
+            // 只更新主体控制器（0号），用于追帧时多次 Simulate 之间的 Center/Radius 同步。
+            if (_controllerBuffer.Length == 0)
             {
-                PerformanceProfiler.Begin("Surface");
-                Surface();
-                PerformanceProfiler.End("Surface");
+                _controllerBuffer.Add(default);
+            }
+
+            float3 mainCenter = trans != null ?
+                (float3)(trans.position * WorldToSimScale) : float3.zero;
+            
+            // 计算主体半径 - 基于 MainBody 粒子的最大距离
+            float mainMaxDist = 0f;
+            int count = math.min(activeParticles, _particles.Length);
+            for (int i = 0; i < count; i++)
+            {
+                var p = _particles[i];
+                if (p.Type != ParticleType.MainBody) continue;
+                float dist = math.length(p.Position - mainCenter);
+                if (dist < coreRadius)
+                {
+                    mainMaxDist = math.max(mainMaxDist, dist);
+                }
             }
             
-            // Unshuffle 必须在 Surface() 之后执行，因为 Surface() 使用 Lut（基于排序后索引）
-            // 关键修复：只处理 activeParticles 范围，避免越界读取垃圾数据覆盖有效粒子
-            PerformanceProfiler.Begin("Unshuffle");
-            NativeArray<Particle>.Copy(_particles, _particlesTemp, activeParticles);
-            NativeArray<float3>.Copy(_velocityBuffer, _velocityTempBuffer, activeParticles);
-            var hashesActive = _pbfSystem.Hashes.GetSubArray(0, activeParticles);
-            var psUpdatedActive = _particlesTemp.GetSubArray(0, activeParticles);
-            var velSortedActive = _velocityTempBuffer.GetSubArray(0, activeParticles);
-            new Simulation_PBF.UnshuffleJob
+            float rawMainRadius = math.max(coreRadius, mainMaxDist * mainRadiusScale);
+            float mainRadius;
+            if (_lastMainRadius <= 0)
             {
-                Hashes = hashesActive,
-                PsUpdated = psUpdatedActive,
-                VelocitySorted = velSortedActive,
-                PsOriginal = _particles,
-                VelocityOriginal = _velocityBuffer,
-            }.Schedule().Complete();
-            PerformanceProfiler.End("Unshuffle");
-            
-            PerformanceProfiler.Begin("Control");
-            PerformanceProfiler.Begin("Control_Watering");
-            ApplyWateringInteraction();
-            PerformanceProfiler.End("Control_Watering");
-
-            PerformanceProfiler.Begin("Control_BeforeControl");
-            BeforeControl?.Invoke(this);
-            PerformanceProfiler.End("Control_BeforeControl");
-
-            Control();
-            PerformanceProfiler.End("Control");
-            
-            UpdateBubblesEffects();
-            
-            bubblesNum = PBF_Utils.BubblesCount - _bubblesPoolBuffer.Length;
-
-            if (_bubblesDataBuffer != null)
-            {
-                _bubblesDataBuffer.SetData(_bubblesBuffer);
-            }
-            
-            if (renderMode == RenderMode.Particles)
-            {
-                UpdateCombinedBoundsForParticlesRender();
+                mainRadius = rawMainRadius;
             }
             else
             {
-                _bounds = new Bounds()
+                float shrinkRate = mainRadiusShrinkRate;
+                if (_lastMainRadius > rawMainRadius * 1.5f)
                 {
-                    min = minPos * SimToWorldScale,
-                    max = maxPos * SimToWorldScale
-                };
-
-                if (_dropletSubsystem.ActiveCount > 0)
-                {
-                    _bounds.Encapsulate(_dropletBounds.min);
-                    _bounds.Encapsulate(_dropletBounds.max);
+                    shrinkRate = math.min(shrinkRate, 0.90f);
                 }
+                float minAllowed = _lastMainRadius * shrinkRate;
+                mainRadius = math.max(rawMainRadius, minAllowed);
+            }
+            _lastMainRadius = mainRadius;
+            
+            float3 mainVelocity = float3.zero;
+            float dynamicConcentration = concentration;
+            
+            float prevGroundY0 = 0f;
+            float3 prevGroundPoint0 = float3.zero;
+            float3 prevGroundNormal0 = new float3(0, 1, 0);
+            if (_controllerBuffer.Length > 0)
+            {
+                var prev0 = _controllerBuffer[0];
+                prevGroundY0 = prev0.GroundY;
+                prevGroundPoint0 = prev0.GroundPoint;
+                prevGroundNormal0 = prev0.GroundNormal;
             }
 
-            if (_slimeVolume != null)
+            _controllerBuffer[0] = new ParticleController()
             {
-                PerformanceProfiler.Begin("Volume_UpdateFromParticles");
-                _slimeVolume.UpdateFromParticles(_particles);
-                PerformanceProfiler.End("Volume_UpdateFromParticles");
-            }
-            
-            PerformanceProfiler.EndFrame();
+                Center = mainCenter,
+                Radius = mainRadius,
+                Velocity = mainVelocity,
+                Concentration = dynamicConcentration,
+                ParticleCount = 0,
+                FramesWithoutParticles = 0,
+                IsValid = true,
+                GroundY = prevGroundY0,
+                GroundPoint = prevGroundPoint0,
+                GroundNormal = prevGroundNormal0,
+            };
         }
 
         private void Surface()
@@ -3238,208 +3340,8 @@ namespace Revive.Slime
                 MainVelocity = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Velocity : float3.zero,
                 EnableCollisionDeformLimit = enableCollisionDeformLimit,
                 EnableP4VelocityConsistency = enableVelocityConsistency, // 【P4开关】
-			}.Schedule(activeParticles, batchCount).Complete();
+            			}.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("Update_Job");
-
-            if (useSdf != 0 && _worldStaticSdf.IsCreated)
-            {
-                const int logIntervalFrames = 30;
-                if (sdfCollisionDebugLogs && Time.frameCount - _lastSdfCollisionDbgLogFrame >= logIntervalFrames)
-                {
-                    _lastSdfCollisionDbgLogFrame = Time.frameCount;
-
-                    var v = _worldStaticSdf.Data;
-                    float radiusSim = ParticleRadiusWorldScaled * WorldToSimScale;
-                    float voxel = math.max(v.VoxelSizeSim, 1e-3f);
-                    float contactSkin = math.min(voxel * 0.25f, radiusSim * 0.25f);
-                    float contactRadius = radiusSim + contactSkin;
-                    int step = math.max(1, activeParticles / 256);
-
-                    int sample = 0;
-                    int hit = 0;
-                    int clipped = 0;
-                    int nearZero = 0;
-                    int neg = 0;
-                    float penSum = 0f;
-                    float penMax = 0f;
-                    float dMin = float.MaxValue;
-                    float dMax = float.MinValue;
-                    float dotMin = 2f;
-                    float dotSum = 0f;
-                    int dotBad = 0;
-                    int closestIdx = -1;
-                    float closestD = float.MaxValue;
-                    float closestPen = 0f;
-                    float closestDot = 0f;
-                    float3 closestPosSim = float3.zero;
-                    float3 closestNCell = float3.zero;
-                    float3 closestNFwd = float3.zero;
-                    int worstIdx = -1;
-                    float worstD = 0f;
-                    float worstPen = 0f;
-                    float worstDot = 0f;
-                    float3 worstPosSim = float3.zero;
-                    float3 worstNCell = float3.zero;
-                    float3 worstNFwd = float3.zero;
-
-                    for (int pi = 0; pi < activeParticles; pi += step)
-                    {
-                        Particle p = _particles[pi];
-                        if (p.Type == ParticleType.Dormant || p.Type == ParticleType.FadingOut)
-                            continue;
-
-                        float3 simPos = p.Position;
-                        float d = v.SampleDistanceDenseWithLocalAndIndices(simPos, out float3 local0, out int3 i0, out int3 i1, out float3 f);
-                        if (d >= v.MaxDistanceSim - 1e-5f) clipped++;
-                        if (math.abs(d) <= voxel * 0.5f) nearZero++;
-                        if (d < 0f) neg++;
-                        dMin = math.min(dMin, d);
-                        dMax = math.max(dMax, d);
-
-                        float3 nCell = v.SampleNormalForwardDenseLocalFromIndices(local0, i0, i1, f, d);
-                        float3 nFwd = v.SampleNormalForward(simPos, d);
-                        float dot = math.dot(nCell, nFwd);
-                        dotMin = math.min(dotMin, dot);
-                        dotSum += dot;
-                        if (dot < 0.5f) dotBad++;
-
-                        if (d < closestD)
-                        {
-                            closestD = d;
-                            closestIdx = pi;
-                            closestDot = dot;
-                            closestPosSim = simPos;
-                            closestNCell = nCell;
-                            closestNFwd = nFwd;
-                            closestPen = math.max(0f, contactRadius - d);
-                        }
-
-                        if (d < contactRadius)
-                        {
-                            hit++;
-                            float pen = contactRadius - d;
-                            penSum += pen;
-                            if (pen > penMax)
-                                penMax = pen;
-
-                            if (pen > worstPen)
-                            {
-                                worstPen = pen;
-                                worstIdx = pi;
-                                worstD = d;
-                                worstDot = dot;
-                                worstPosSim = simPos;
-                                worstNCell = nCell;
-                                worstNFwd = nFwd;
-                            }
-                        }
-
-                        sample++;
-                    }
-
-                    if (worstIdx < 0 && closestIdx >= 0)
-                    {
-                        worstIdx = closestIdx;
-                        worstD = closestD;
-                        worstPen = closestPen;
-                        worstDot = closestDot;
-                        worstPosSim = closestPosSim;
-                        worstNCell = closestNCell;
-                        worstNFwd = closestNFwd;
-                    }
-
-                    float hitPct = sample > 0 ? (float)hit / sample : 0f;
-                    float penAvg = hit > 0 ? penSum / hit : 0f;
-                    float dotAvg = sample > 0 ? dotSum / sample : 0f;
-                    float clippedPct = sample > 0 ? (float)clipped / sample : 0f;
-                    float nearZeroPct = sample > 0 ? (float)nearZero / sample : 0f;
-                    float negPct = sample > 0 ? (float)neg / sample : 0f;
-
-                    float3 worstPosWorld = worstPosSim * SimToWorldScale;
-                    int disableFallback = disableStaticColliderFallbackWhenUsingSdf ? 1 : 0;
-
-                    int colCount = _currentColliderCount;
-                    int staticCount = 0;
-                    float nearStaticDistSim = float.PositiveInfinity;
-
-                    for (int ci = 0; ci < _currentColliderCount; ci++)
-                    {
-                        var c = _colliderBuffer[ci];
-                        if (c.IsDynamic != 0)
-                            continue;
-                        staticCount++;
-                    }
-
-                    if (worstIdx >= 0)
-                    {
-                        for (int ci = 0; ci < _currentColliderCount; ci++)
-                        {
-                            var c = _colliderBuffer[ci];
-                            if (c.IsDynamic != 0)
-                                continue;
-
-                            quaternion invRot = math.conjugate(c.Rotation);
-                            float3 local = math.mul(invRot, (worstPosSim - c.Center));
-                            float3 q = math.abs(local) - c.Extent;
-                            float3 outside = math.max(q, 0f);
-                            float dist = math.length(outside);
-                            if (dist < nearStaticDistSim)
-                                nearStaticDistSim = dist;
-                        }
-                    }
-                    float nearStaticDistW = float.IsFinite(nearStaticDistSim) ? (nearStaticDistSim * SimToWorldScale) : -1f;
-
-                    Debug.Log(
-                        $"[SdfCollDbg] frame={Time.frameCount} active={activeParticles} sample={sample} " +
-                        $"voxelSim={v.VoxelSizeSim:F3} radiusSim={radiusSim:F3} contactRadiusSim={contactRadius:F3} " +
-                        $"hit={hit} hitPct={hitPct:P1} penAvg={penAvg:F4} penMax={penMax:F4} " +
-                        $"dMin={dMin:F4} dMax={dMax:F4} clippedPct={clippedPct:P1} near0Pct={nearZeroPct:P1} negPct={negPct:P1} " +
-                        $"nDotMin={dotMin:F3} nDotAvg={dotAvg:F3} nDotBad(lt0.5)={dotBad} " +
-                        $"disableFallback={disableFallback} " +
-                        $"colliders={colCount} static={staticCount} nearStaticDistW={nearStaticDistW:F3} " +
-                        $"worstIdx={worstIdx} worstD={worstD:F4} worstPen={worstPen:F4} worstDot={worstDot:F3} " +
-                        $"worstPosW=({worstPosWorld.x:F2},{worstPosWorld.y:F2},{worstPosWorld.z:F2}) " +
-                        $"worstNCell=({worstNCell.x:F2},{worstNCell.y:F2},{worstNCell.z:F2}) worstNFwd=({worstNFwd.x:F2},{worstNFwd.y:F2},{worstNFwd.z:F2})");
-                }
-
-                if (sdfValidationLogs && Time.frameCount - _lastSdfValidationLogFrame >= logIntervalFrames)
-                {
-                    _lastSdfValidationLogFrame = Time.frameCount;
-                    var v = _worldStaticSdf.Data;
-                    int bitMask = worldStaticColliderLayers.value != 0 ? worldStaticColliderLayers.value : ~0;
-                    float epsSim = sdfValidationNormalEpsWorld * WorldToSimScale;
-
-                    void Validate(string tag, Vector3 originW, Vector3 dirW)
-                    {
-                        if (!TryRaycastFiltered(originW, dirW, sdfValidationRayMaxDistWorld, bitMask, out RaycastHit hit))
-                        {
-                            Debug.Log($"[SdfValidate] frame={Time.frameCount} {tag} noHit maxDistW={sdfValidationRayMaxDistWorld:F2}");
-                            return;
-                        }
-
-                        float3 hitSim = (float3)(hit.point * WorldToSimScale);
-                        float dHit = v.SampleDistance(hitSim);
-                        float3 nSdf = math.normalizesafe(v.SampleNormalForward(hitSim, dHit), new float3(0, 1, 0));
-                        float3 nHit = math.normalizesafe((float3)hit.normal, new float3(0, 1, 0));
-                        float dot = math.dot(nSdf, nHit);
-
-                        float dPlus = v.SampleDistance(hitSim + nHit * epsSim);
-                        float dMinus = v.SampleDistance(hitSim - nHit * epsSim);
-                        Debug.Log($"[SdfValidate] frame={Time.frameCount} {tag} hit={hit.collider.name} layer={LayerMask.LayerToName(hit.collider.gameObject.layer)} distW={hit.distance:F3} dHit={dHit:F4} d+={dPlus:F4} d-={dMinus:F4} dot={dot:F3} hitP={hit.point}");
-                    }
-
-                    Vector3 pW = trans != null ? trans.position : Vector3.zero;
-                    Vector3 originW = pW + Vector3.up * sdfValidationRayHeightOffsetWorld;
-                    Validate("D", originW, Vector3.down);
-                    if (trans != null)
-                    {
-                        Validate("F", originW, trans.forward);
-                        Validate("B", originW, -trans.forward);
-                        Validate("R", originW, trans.right);
-                        Validate("L", originW, -trans.right);
-                    }
-                }
-            }
             
             PerformanceProfiler.Begin("ApplyViscosity");
             // 使用PBFSystem的缓冲区
@@ -3484,7 +3386,7 @@ namespace Revive.Slime
             Vector3 rayOrigin = sourceWorldPos + Vector3.up * 2f; // 抬高起点
             if (UnityEngine.Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 30f, GroundQueryMask))
             {
-                sourceGroundY = (hit.point.y) * WorldToSimScale; // 加上粒子半径，转为模拟坐标
+                sourceGroundY = (hit.point.y ) * WorldToSimScale; // 加上粒子半径，转为模拟坐标
             }
             else
             {
@@ -5330,7 +5232,9 @@ namespace Revive.Slime
             
             
             // 2. 发射方向：主要向前（瞄准方向）+ 向上形成抛物线
-            float3 finalEmitDir = math.normalizesafe(emitDirection * 0.7f + new float3(0, 0.5f, 0));
+            float pitchRad = math.radians(emitPitchDegrees);
+            float3 finalEmitDir = math.normalizesafe(
+                emitDirection * math.cos(pitchRad) + new float3(0f, 1f, 0f) * math.sin(pitchRad));
             
             // 3. 限制发射数量
             int maxEmit = Mathf.Min(emitBatchSize, _slimeVolume.GetMaxEmitAmount());
@@ -5344,8 +5248,8 @@ namespace Revive.Slime
             float maxSelectDistSq = maxSelectDist * maxSelectDist;
             float3 emitDirXZForSelect = emitDirection;
             emitDirXZForSelect.y = 0;
-            float3 spawnCenter = center + emitDirection * (mainRadius * 0.5f);
-            spawnCenter.y = center.y + mainRadius * 0.5f;
+            float3 spawnCenter = center + emitDirection * (mainRadius * emitSpawnForwardRadiusFactor);
+            spawnCenter.y = center.y + mainRadius * emitSpawnUpRadiusFactor;
             
             var candidateIndices = new System.Collections.Generic.List<int>(maxEmit * 3);
             var candidateMask = new NativeArray<byte>(activeParticles, Allocator.Temp);
@@ -5861,7 +5765,7 @@ namespace Revive.Slime
             
             // 直接从粒子质心发射射线（质心已经反映真实垂直分布，不需要额外偏移）
             float3 newPos = eyeCenter + rayDir * (controller.Radius * 0.7f);
-            bool doRaycast = isControlled || (Time.frameCount % nonControlledRaycastIntervalFrames) == 0;
+            bool doRaycast = renderMode == RenderMode.Surface && blockNum > 0 && (isControlled || (Time.frameCount % nonControlledRaycastIntervalFrames) == 0);
             if (doRaycast)
             {
                 new Effects.RayInsectJob
@@ -6747,7 +6651,7 @@ namespace Revive.Slime
             float3 steering = float3.zero;
 
             float dt = math.max(1e-4f, deltaTime);
-            float maxUpSim = math.max(0.01f, recallStepMaxUpSpeed) * PBF_Utils.InvScale;
+            float maxUpSim = math.max(0.01f, recallStepMaxUpSpeed) * WorldToSimScale;
             bool hasStepJumpTarget = controllerId > 0 &&
                                     _controllerStepJumpTargetCenterY != null &&
                                     controllerId < _controllerStepJumpTargetCenterY.Length &&
@@ -6768,9 +6672,9 @@ namespace Revive.Slime
                 }
             }
 
-            float recallObstacleCheckDistSim = recallObstacleCheckDist * PBF_Utils.InvScale;
-            float recallObstacleKeepDistanceMarginSim = recallObstacleKeepDistanceMargin * PBF_Utils.InvScale;
-            float recallStepMaxHeightSim = recallStepMaxHeight * PBF_Utils.InvScale;
+            float recallObstacleCheckDistSim = recallObstacleCheckDist * WorldToSimScale;
+            float recallObstacleKeepDistanceMarginSim = recallObstacleKeepDistanceMargin * WorldToSimScale;
+            float recallStepMaxHeightSim = recallStepMaxHeight * WorldToSimScale;
 
             bool dbgSphereHitRaw = false;
             bool dbgSphereHitFinal = false;
@@ -6785,11 +6689,11 @@ namespace Revive.Slime
             }
 
             float projectionCheckDist = recallObstacleCheckDistSim + radiusXZ;
-            Vector3 originW = (Vector3)(center * PBF_Utils.Scale);
+            Vector3 originW = (Vector3)(center * SimToWorldScale);
             Vector3 dirW = new Vector3(dirXZ.x, 0f, dirXZ.y);
-            float sphereRadiusW = math.max(0.001f, radiusXZ * PBF_Utils.Scale);
-            float castDistW = math.max(0.001f, projectionCheckDist * PBF_Utils.Scale);
-            float keepDistW = math.max(0f, (radiusXZ + recallObstacleKeepDistanceMarginSim) * PBF_Utils.Scale);
+            float sphereRadiusW = math.max(0.001f, radiusXZ * SimToWorldScale);
+            float castDistW = math.max(0.001f, projectionCheckDist * SimToWorldScale);
+            float keepDistW = math.max(0f, (radiusXZ + recallObstacleKeepDistanceMarginSim) * SimToWorldScale);
 
             long tQuery0 = System.Diagnostics.Stopwatch.GetTimestamp();
             bool obstacleHit = TryQueryRecallObstacle(center, radiusXZ, halfHeight, dirXZ, projectionCheckDist, recallObstacleKeepDistanceMarginSim,
@@ -6816,7 +6720,7 @@ namespace Revive.Slime
 
                 if (obstacleHit)
                 {
-                    float hitDistW = obstacleDistSim * PBF_Utils.Scale;
+                    float hitDistW = obstacleDistSim * SimToWorldScale;
                     _dbgRecallSphereHitPointW = originW + dirW * hitDistW;
                     _dbgRecallSphereHitNormalW = (Vector3)obstacleNormalSim;
                 }
@@ -6849,7 +6753,7 @@ namespace Revive.Slime
                 if (intoWall < 0f)
                     vXZ -= intoWall * nSimFlat;
 
-                float hitDistW = closestBlockDist * PBF_Utils.Scale;
+                float hitDistW = closestBlockDist * SimToWorldScale;
                 float distRemainW = math.max(0f, hitDistW - keepDistW);
                 float denomW = math.max(0.001f, castDistW - keepDistW);
                 float slow01Hit = math.saturate(distRemainW / denomW);
@@ -6888,7 +6792,7 @@ namespace Revive.Slime
             if (closestBlockIdx >= 0 && recallStepMaxHeightSim > 0f)
             {
                 float maxStepWDbg = recallStepMaxHeight;
-                float closestBlockDistWDbg = closestBlockDist * PBF_Utils.Scale;
+                float closestBlockDistWDbg = closestBlockDist * SimToWorldScale;
                 dbgProbeFwdW = closestBlockDistWDbg + sphereRadiusW + 0.02f;
                 // 下台阶时如果 closestBlockDist 很小，probe 点可能仍在上台阶平台上，导致 groundDeltaW=0。
                 // 这里强制一个最小前移距离，尽量采样到边缘之后的地面。
@@ -6942,11 +6846,11 @@ namespace Revive.Slime
                         }
                     }
 
-                    float triggerAdvanceSimDbg = recallStepTriggerAdvance * PBF_Utils.InvScale;
-                    float triggerDistWDbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSimDbg) * PBF_Utils.Scale;
+                    float triggerAdvanceSimDbg = recallStepTriggerAdvance * WorldToSimScale;
+                    float triggerDistWDbg = (radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSimDbg) * SimToWorldScale;
                     if (dbgIsDropByGround && closestBlockDistWDbg <= triggerDistWDbg)
                     {
-                        float blockTopYW = closestBlockTopY * PBF_Utils.Scale;
+                        float blockTopYW = closestBlockTopY * SimToWorldScale;
                         bool blockTopNotHigherThanGround = blockTopYW <= (dbgCurGroundYW + 0.02f);
                         if (blockTopNotHigherThanGround)
                         {
@@ -6965,7 +6869,7 @@ namespace Revive.Slime
                 {
                     float targetY = _controllerStepJumpTargetCenterY[controllerId];
                     float dy = targetY - center.y;
-                    if (dy <= 0.01f * PBF_Utils.InvScale)
+                    if (dy <= 0.01f * WorldToSimScale)
                     {
                         _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
                         if (hasExpireFrame)
@@ -6991,7 +6895,7 @@ namespace Revive.Slime
             float groupBottomY = center.y - halfHeight;
             float stepHeight = closestBlockTopY - groupBottomY;
             // 只要障碍物顶部低于主体，就尝试向上
-            float stepHeightW = stepHeight * PBF_Utils.Scale;
+            float stepHeightW = stepHeight * SimToWorldScale;
             bool canStepUp = stepHeight > 0 && stepHeight <= recallStepMaxHeightSim && stepHeightW > 0.03f;
             if (dbgHasCurGround && dbgHasAheadGround)
             {
@@ -7008,7 +6912,7 @@ namespace Revive.Slime
                 {
                     float targetY = _controllerStepJumpTargetCenterY[controllerId];
                     float dy = targetY - center.y;
-                    if (dy <= 0.01f * PBF_Utils.InvScale)
+                    if (dy <= 0.01f * WorldToSimScale)
                     {
                         _controllerStepJumpTargetCenterY[controllerId] = float.NaN;
                         if (hasExpireFrame)
@@ -7022,7 +6926,7 @@ namespace Revive.Slime
                     }
                 }
 
-                float triggerAdvanceSim = recallStepTriggerAdvance * PBF_Utils.InvScale;
+                float triggerAdvanceSim = recallStepTriggerAdvance * WorldToSimScale;
                 float triggerDist = radiusXZ + recallObstacleKeepDistanceMarginSim + triggerAdvanceSim;
                 if (closestBlockDist <= triggerDist)
                 {
@@ -7032,14 +6936,14 @@ namespace Revive.Slime
                     float targetRiseW = stepHeightW * (1f + recallHeightCompPercent) + clearanceW;
                     float g = math.abs(UnityEngine.Physics.gravity.y);
                     float jumpVelW = math.sqrt(math.max(0f, 2f * g * targetRiseW)) * math.max(0.2f, recallStepJumpSpeedScale);
-                    float jumpVelSim = jumpVelW * PBF_Utils.InvScale;
+                    float jumpVelSim = jumpVelW * WorldToSimScale;
                     baseVel.y = math.max(baseVel.y, math.min(maxUpSim, jumpVelSim));
 
                     if (controllerId > 0)
                     {
                         if (_controllerStepJumpTargetCenterY != null && controllerId < _controllerStepJumpTargetCenterY.Length)
                         {
-                            float clearanceSim = clearanceW * PBF_Utils.InvScale;
+                            float clearanceSim = clearanceW * WorldToSimScale;
                             float extraUpSim = math.max(0f, stepHeight * recallHeightCompPercent);
                             float targetCenterYSim = closestBlockTopY + clearanceSim + halfHeight + extraUpSim;
                             float curTarget = _controllerStepJumpTargetCenterY[controllerId];
@@ -7180,12 +7084,12 @@ namespace Revive.Slime
             EnsureRecallGlobalFlowBuffers(gridSize);
 
             _recallGlobalFlowCenterSim = mainCenterSim;
-            _recallGlobalFlowCellSizeSim = cellW * PBF_Utils.InvScale;
-            _recallGlobalFlowHalfExtentSim = rangeW * PBF_Utils.InvScale;
+            _recallGlobalFlowCellSizeSim = cellW * WorldToSimScale;
+            _recallGlobalFlowHalfExtentSim = rangeW * WorldToSimScale;
 
             var v = _worldStaticSdf.Data;
-            float blockedDistSim = recallGlobalFlowBlockedDistance * PBF_Utils.InvScale;
-            float yOffSim = recallGlobalFlowSampleHalfHeight * PBF_Utils.InvScale;
+            float blockedDistSim = recallGlobalFlowBlockedDistance * WorldToSimScale;
+            float yOffSim = recallGlobalFlowSampleHalfHeight * WorldToSimScale;
             int half = gridSize >> 1;
 
             bool IsBlockedAt(float3 sp)

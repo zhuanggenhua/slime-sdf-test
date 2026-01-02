@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 436731560528306057}
   - component: {fileID: 7564784362179354958}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Spline (2)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -162,7 +162,7 @@ GameObject:
   m_Component:
   - component: {fileID: 6200555879295749605}
   - component: {fileID: 7683709061076314172}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: GameObject
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -215,7 +215,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8051822750172897634}
   - component: {fileID: 1469531233660317995}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: GameObject (1)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -320,6 +320,11 @@ PrefabInstance:
         type: 3}
       propertyPath: m_Name
       value: stump_hollow_001
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 35eae2a3274b0ef4392342d008100eea,
+        type: 3}
+      propertyPath: m_Layer
+      value: 9
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

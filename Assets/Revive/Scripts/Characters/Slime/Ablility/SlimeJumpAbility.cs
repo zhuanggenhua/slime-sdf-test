@@ -78,6 +78,19 @@ namespace Revive.Slime
                 $"[SlimeJumpDbg] phase={phase} frame={Time.frameCount} grounded={grounded} justGrounded={justGrounded} tooSteep={tooSteep} exitedTooSteep={exitedTooSteep} " +
                 $"jumpsLeft={NumberOfJumpsLeft}/{NumberOfJumps} vy={vy:F2} lastVy={lastVy:F2} grav={grav} mode={mode} cond={cond} move={move}");
         }
+
+        protected override void HandleInput()
+        {
+            if (_controller3D != null
+                && _controller3D.Grounded
+                && (ResetJumpsOnTooSteepSlopes || !_controller3D.TooSteep())
+                && NumberOfJumpsLeft < NumberOfJumps)
+            {
+                ResetNumberOfJumps();
+            }
+
+            base.HandleInput();
+        }
         
         /// <summary>
         /// 重写跳跃开始 - 使用瞬时冲量而非持续施力
@@ -106,12 +119,14 @@ namespace Revive.Slime
             _controller.Grounded = false;
             _buttonReleased = false;
 
-            // 【关键】瞬时冲量：直接设置y速度
-            _controller.Velocity = new Vector3(
-                _controller.Velocity.x,
-                JumpImpulse,
-                _controller.Velocity.z
-            );
+            if (_controller3D != null)
+            {
+                _controller3D.DetachFromGround();
+                _controller3D.Grounded = false;
+            }
+
+            _controller.GravityActive = true;
+            _controller.AddedForce = new Vector3(0f, JumpImpulse, 0f);
 
             PlayAbilityStartSfx();
             PlayAbilityUsedSfx();
@@ -268,6 +283,7 @@ namespace Revive.Slime
                 if (_controller.Velocity.y <= 0 && !_jumpStopped)
                 {
                     JumpStop();
+                    _movement.ChangeState(CharacterStates.MovementStates.Falling);
                 }
                 
                 // 按比例跳跃：提前松开按钮

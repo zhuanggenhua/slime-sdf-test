@@ -1,5 +1,58 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &5999719992873118255
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7784478649175075259}
+  - component: {fileID: 7109021831896699110}
+  m_Layer: 24
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7784478649175075259
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5999719992873118255}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -7.5, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4799213824985100127}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!135 &7109021831896699110
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5999719992873118255}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 8
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1001 &4976621583899297972
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -63,9 +116,18 @@ PrefabInstance:
       propertyPath: m_Name
       value: mushroom003
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      propertyPath: m_Layer
+      value: 24
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7784478649175075259}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
         type: 3}
@@ -75,7 +137,25 @@ PrefabInstance:
         type: 3}
       insertIndex: -1
       addedObject: {fileID: 6528410540116474244}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2726525008471760231}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 3312662276050562645}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 947289096016183549}
   m_SourcePrefab: {fileID: 100100000, guid: 8caaf22be2ecbac48b55c686b2d4a699, type: 3}
+--- !u!4 &4799213824985100127 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+    type: 3}
+  m_PrefabInstance: {fileID: 4976621583899297972}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &5319291189748381157 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
@@ -99,7 +179,7 @@ MeshCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 1
+  m_Enabled: 0
   serializedVersion: 5
   m_Convex: 1
   m_CookingOptions: 30
@@ -111,7 +191,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5319291189748381157}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: daf7779e25dd2aa4ba219b704c134db7, type: 3}
   m_Name: 
@@ -150,8 +230,73 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   _cooldown: 0.5
-  _platformCollider: {fileID: 6253142608606358732}
+  _platformCollider: {fileID: 947289096016183549}
   _triggerHeightAbove: 0.6
   _triggerOverlapDown: 0.1
   _debugLogs: 1
   _debugSceneLabel: 1
+--- !u!114 &2726525008471760231
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5319291189748381157}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91bb6b0d91028fb45b3b9fe521089748, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  triggerCollider: {fileID: 7109021831896699110}
+  waterPerParticle: 1
+  maxConsumePerUpdate: 0
+  consumeEmitted: 1
+  consumeSeparated: 1
+  consumeDroplets: 1
+  targetTransform: {fileID: 4799213824985100127}
+  jumpPadHost: {fileID: 4799213824985100127}
+  initialScaleMultiplier: {x: 1, y: 0.5, z: 1}
+  charge: 0
+  chargeRequired: 25
+--- !u!65 &3312662276050562645
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5319291189748381157}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 3.4572725, y: 15.560075, z: 3.49832}
+  m_Center: {x: -0.026664292, y: -2.242409, z: -0.22296433}
+--- !u!65 &947289096016183549
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5319291189748381157}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 11.7, y: 3.2, z: 12.21}
+  m_Center: {x: 0.0000004768372, y: 7.9, z: -0.41}

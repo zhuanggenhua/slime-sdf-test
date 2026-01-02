@@ -2756,7 +2756,7 @@ MonoBehaviour:
     FieldOfView: 15
     OrthographicSize: 10
     NearClipPlane: 0.1
-    FarClipPlane: 1000
+    FarClipPlane: 5000
     Dutch: 0
     ModeOverride: 0
     PhysicalProperties:
@@ -2771,7 +2771,7 @@ MonoBehaviour:
       Curvature: {x: 2, y: 11}
       BarrelClipping: 0.25
       Anamorphism: 0
-  BlendHint: 3
+  BlendHint: 0
 --- !u!114 &8688454835566444325
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2784,10 +2784,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 886251e9a18ece04ea8e61686c173e1b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  CameraDistance: 100
+  CameraDistance: 20
   DeadZoneDepth: 0
   Composition:
-    ScreenPosition: {x: 0, y: 0.05}
+    ScreenPosition: {x: 0, y: 0}
     DeadZone:
       Enabled: 1
       Size: {x: 0.02, y: 0.02}
@@ -4098,7 +4098,7 @@ Transform:
   m_GameObject: {fileID: 5280694827435606395}
   serializedVersion: 2
   m_LocalRotation: {x: 0.30070576, y: 0, z: 0, w: 0.953717}
-  m_LocalPosition: {x: -19.77, y: 4.1299996, z: -34.510002}
+  m_LocalPosition: {x: -10, y: 8.41, z: -23.01}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -4136,7 +4136,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.1
-  far clip plane: 1000
+  far clip plane: 5000
   field of view: 15
   orthographic: 0
   orthographic size: 10
