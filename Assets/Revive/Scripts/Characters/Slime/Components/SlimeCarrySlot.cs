@@ -63,7 +63,6 @@ namespace Revive.Slime
         private Slime_PBF _slimePbf;
 
         private SlimeConsumeBuffController _consumeBuffController;
-        private SlimeCarryBuffController _carryBuffController;
 
         private Collider[] _playerColliders;
         private Coroutine _restoreCollisionCoroutine;
@@ -74,10 +73,12 @@ namespace Revive.Slime
         private Vector3 _pickupTransitionStart;
         private bool _heldMoveBlockedThisFrame;
         private float _heldMoveBlockedSeconds;
+        private readonly Collider[] _releaseOverlapBuffer = new Collider[64];
 
         private void Awake()
         {
             CachePlayerColliders();
+            ResolveConsumeBuffControllerIfNeeded();
         }
 
         private void CachePlayerColliders()
@@ -98,50 +99,85 @@ namespace Revive.Slime
             ResolveCenterAnchorIfNeeded();
             ResolveSlimePbfIfNeeded();
             ResolveConsumeBuffControllerIfNeeded();
-            ResolveCarryBuffControllerIfNeeded();
             ApplyCarrySpecIfNeeded();
         }
 
-        private void ResolveCarryBuffControllerIfNeeded()
+        private Vector3 ResolveReleasePositionByPenetration(
+            Vector3 originalRootWorldPos,
+            Vector3 desiredRootWorldPos,
+            Collider[] objectColliders
+        )
         {
-            if (_carryBuffController != null)
+            if (objectColliders == null || objectColliders.Length == 0)
+                return desiredRootWorldPos;
+
+            Vector3 rootPos = desiredRootWorldPos;
+
+            for (int iter = 0; iter < 3; iter++)
             {
-                return;
+                bool moved = false;
+                Vector3 delta = rootPos - originalRootWorldPos;
+
+                for (int i = 0; i < objectColliders.Length; i++)
+                {
+                    var colA = objectColliders[i];
+                    if (colA == null)
+                        continue;
+
+                    Bounds b = colA.bounds;
+                    Vector3 center = b.center + delta;
+                    Vector3 halfExtents = b.extents;
+                    Quaternion rot = colA.transform.rotation;
+
+                    int count = Physics.OverlapBoxNonAlloc(center, halfExtents, _releaseOverlapBuffer, rot, ~0, QueryTriggerInteraction.Ignore);
+                    for (int j = 0; j < count; j++)
+                    {
+                        var colB = _releaseOverlapBuffer[j];
+                        if (colB == null)
+                            continue;
+                        if (IsIgnoredHeldSweepCollider(colB))
+                            continue;
+
+                        if (Physics.ComputePenetration(
+                                colA,
+                                colA.transform.position + delta,
+                                colA.transform.rotation,
+                                colB,
+                                colB.transform.position,
+                                colB.transform.rotation,
+                                out Vector3 dir,
+                                out float dist
+                            ))
+                        {
+                            float skin = 0.001f;
+                            rootPos += dir * (dist + skin);
+                            moved = true;
+                            delta = rootPos - originalRootWorldPos;
+                        }
+                    }
+                }
+
+                if (!moved)
+                    break;
             }
 
-            var root = transform.root;
-            if (root != null)
-            {
-                _carryBuffController = root.GetComponentInChildren<SlimeCarryBuffController>(true);
-                if (_carryBuffController == null)
-                {
-                    _carryBuffController = root.gameObject.AddComponent<SlimeCarryBuffController>();
-                }
-            }
-            else
-            {
-                _carryBuffController = GetComponentInChildren<SlimeCarryBuffController>(true);
-                if (_carryBuffController == null)
-                {
-                    _carryBuffController = gameObject.AddComponent<SlimeCarryBuffController>();
-                }
-            }
+            return rootPos;
         }
 
         private void ApplyCarrySpecIfNeeded()
         {
-            ResolveCarryBuffControllerIfNeeded();
-            if (_carryBuffController == null)
+            SlimeCarryableBuffSpec spec = null;
+            if (_held != null)
+            {
+                spec = _held.GetComponent<SlimeCarryableBuffSpec>();
+            }
+
+            ResolveConsumeBuffControllerIfNeeded();
+            if (_consumeBuffController == null)
             {
                 return;
             }
-
-            SlimeCarryableCarrySpec spec = null;
-            if (_held != null)
-            {
-                spec = _held.GetComponent<SlimeCarryableCarrySpec>();
-            }
-            _carryBuffController.Apply(spec);
+            _consumeBuffController.SetCarrySpec(spec);
         }
 
         private void ResolveConsumeBuffControllerIfNeeded()
@@ -155,10 +191,18 @@ namespace Revive.Slime
             if (root != null)
             {
                 _consumeBuffController = root.GetComponentInChildren<SlimeConsumeBuffController>(true);
+                if (_consumeBuffController == null)
+                {
+                    _consumeBuffController = root.gameObject.AddComponent<SlimeConsumeBuffController>();
+                }
             }
             else
             {
                 _consumeBuffController = GetComponentInChildren<SlimeConsumeBuffController>(true);
+                if (_consumeBuffController == null)
+                {
+                    _consumeBuffController = gameObject.AddComponent<SlimeConsumeBuffController>();
+                }
             }
         }
 
@@ -595,62 +639,10 @@ namespace Revive.Slime
             carryable.IsHeld = false;
 
             Vector3 releasePos = rb != null ? rb.position : carryable.transform.position;
-            ResolveSlimePbfIfNeeded();
-            if (_slimePbf != null)
+            if (objectColliders != null)
             {
-                Bounds b = _slimePbf.MainBodyBoundsWorld;
-                float margin = Mathf.Max(0.01f, StuckAutoDetachOutsideSlimeMarginWorld);
-                Vector3 min = b.min;
-                Vector3 max = b.max;
-                bool inside = releasePos.x >= min.x && releasePos.x <= max.x &&
-                              releasePos.y >= min.y && releasePos.y <= max.y &&
-                              releasePos.z >= min.z && releasePos.z <= max.z;
-                if (inside && b.size.sqrMagnitude > 1e-6f)
-                {
-                    float dxMin = releasePos.x - min.x;
-                    float dxMax = max.x - releasePos.x;
-                    float dzMin = releasePos.z - min.z;
-                    float dzMax = max.z - releasePos.z;
-
-                    float best = dxMin;
-                    int axis = 0;
-                    int sign = -1;
-                    if (dxMax < best)
-                    {
-                        best = dxMax;
-                        axis = 0;
-                        sign = 1;
-                    }
-                    if (dzMin < best)
-                    {
-                        best = dzMin;
-                        axis = 2;
-                        sign = -1;
-                    }
-                    if (dzMax < best)
-                    {
-                        best = dzMax;
-                        axis = 2;
-                        sign = 1;
-                    }
-
-                    if (axis == 0)
-                        releasePos.x = sign < 0 ? (min.x - margin) : (max.x + margin);
-                    else
-                        releasePos.z = sign < 0 ? (min.z - margin) : (max.z + margin);
-                }
-                else
-                {
-                    Vector3 center = b.center;
-                    Vector3 dir = releasePos - center;
-                    if (dir.sqrMagnitude < 1e-6f)
-                        dir = transform.forward;
-                    float radius = Mathf.Max(0.01f, _slimePbf.MainBodyRadiusWorld);
-                    releasePos = center + dir.normalized * (radius + margin);
-                }
+                releasePos = ResolveReleasePositionByPenetration(carryable.transform.position, releasePos, objectColliders);
             }
-
-            TryProjectPointToGround(ref releasePos);
 
             if (rb != null)
             {
@@ -924,9 +916,9 @@ namespace Revive.Slime
 
         private void OnDisable()
         {
-            if (_carryBuffController != null)
+            if (_consumeBuffController != null)
             {
-                _carryBuffController.Clear();
+                _consumeBuffController.SetCarrySpec(null);
             }
 
             RestoreHeldShadowState();

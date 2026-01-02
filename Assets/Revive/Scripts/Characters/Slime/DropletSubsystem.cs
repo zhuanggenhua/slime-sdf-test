@@ -99,34 +99,10 @@ namespace Revive.Slime
         }
         private NativeArray<SourceInfo> sources;
         
-        // 当前使用的物理参数（取第一个激活源的参数，在 Initialize 中初始化）
-        private float _cohesionStrength;
-        private float _cohesionRadius;
-        private float _velocityDamping;
-        private float _verticalCohesionScale;
-        private bool _enableViscosity;
-        private float _viscosityStrength;
         private InteractionSettings _interactionSettings;
         
         public int ActiveCount => activeCount;
         
-        /// <summary>
-        /// 实时更新物理参数（用于 Inspector 调整时生效）
-        /// </summary>
-        public void UpdatePhysicsParams(float cohesionStrength, float cohesionRadius, 
-            float velocityDamping, float verticalCohesionScale,
-            bool enableViscosity = true, float viscosityStrength = 10f)
-        {
-            // [DropletSubsystem] 物理参数更新日志已禁用
-            
-            _cohesionStrength = cohesionStrength;
-            _cohesionRadius = cohesionRadius;
-            _velocityDamping = velocityDamping;
-            _verticalCohesionScale = verticalCohesionScale;
-            _enableViscosity = enableViscosity;
-            _viscosityStrength = viscosityStrength;
-        }
-
         public void UpdateInteractionSettings(InteractionSettings settings)
         {
             _interactionSettings = settings;
@@ -193,13 +169,6 @@ namespace Revive.Slime
             activeCount = 0;
             maxSources = maxSourceCount;
             
-            // 初始化默认物理参数（struct 字段初始化器可能不生效）
-            _cohesionStrength = 30f;
-            _cohesionRadius = 10f;
-            _velocityDamping = 0.99f;
-            _verticalCohesionScale = 0.5f;
-            _enableViscosity = true;
-            _viscosityStrength = 10f;
             _interactionSettings = new InteractionSettings
             {
                 DynamicDragStrength = 35f,
@@ -467,15 +436,7 @@ namespace Revive.Slime
                     _activeSourceIds.Add(sourceId);
             }
             
-            // 更新当前使用的物理参数（取第一个激活源）
-            _cohesionStrength = cohesionStrength;
-            _cohesionRadius = cohesionRadius;
-            _velocityDamping = velocityDamping;
-            _verticalCohesionScale = verticalCohesionScale;
-            
             activeCount += allocatedCount;
-            
-            // [DropletSubsystem] 激活源日志已禁用
             
             return allocatedCount;
         }
@@ -555,7 +516,6 @@ namespace Revive.Slime
             }
             activeCount -= deactivatedCount;
             
-            // Debug.Log($"[DropletSubsystem] 休眠源{sourceId}: {deactivatedCount}个水珠, 剩余活跃={activeCount}");
             return deactivatedCount;
         }
         
@@ -634,8 +594,6 @@ namespace Revive.Slime
         {
             if (activeCount == 0)
                 return;
-            
-            // [水珠诊断] 调试日志已禁用
             
             // 内部坐标重力：与主体史莱姆一致（默认 -5f，不需要乘以 InvScale）
             const float defaultGravityY = -5f;
@@ -990,17 +948,11 @@ namespace Revive.Slime
                     {
                         float3 toCenter = targetCenter - pos;
                         float dist = math.length(toCenter);
-                        if (dist > 0.1f)
+                        if (dist > 0.1f && dist < radius)
                         {
                             float3 dir = toCenter / dist;
-                            float t = dist / radius;
-                            float falloff = 1f / (1f + t * t);
-                            float strength = cohesionStrength * deltaTime * math.min(1f, dist) * falloff;
+                            float strength = cohesionStrength * deltaTime * math.min(1f, dist);
                             float3 dv = dir * strength;
-                            if (dv.y < 0f)
-                            {
-                                dv.y *= info.verticalCohesionScale;
-                            }
                             if (dv.y > 0f)
                             {
                                 float upDVMax = math.abs(gravity.y) * deltaTime * 0.5f;
@@ -1071,7 +1023,6 @@ namespace Revive.Slime
                 long tLoopStart = Stopwatch.GetTimestamp();
                 var p = particles[i];
                 float3 newPos = p.Position;
-                float3 posBeforeCollision = newPos;
                 bool hadCollision = false;
                 bool hadSdfCollision = false;
                 float3 lastNormal = float3.zero;
@@ -1535,39 +1486,70 @@ namespace Revive.Slime
                             }
                         }
                     }
-
                     ticksCollColliderTotal += Stopwatch.GetTimestamp() - tColliderTotal0;
+                }
+
+                {
+                    long tGround0 = Stopwatch.GetTimestamp();
+                    bool allowGroundClamp = PBF_Utils.AllowGroundClamp(useStaticSdf, disableStaticColliderFallback);
+                    if (allowGroundClamp)
+                    {
+                        float groundY = fallbackGroundY;
+                        if (sourceId >= 0 && sourceId < maxSources && sources.IsCreated && sources[sourceId].active)
+                            groundY = sources[sourceId].groundY;
+
+                        float3 groundPoint = new float3(newPos.x, groundY, newPos.z);
+                        float3 groundNormal = new float3(0, 1, 0);
+                        if (PBF_Utils.ClampToGroundPlane(ref newPos, groundY, groundPoint, groundNormal))
+                        {
+                            hadCollision = true;
+                            lastNormal = groundNormal;
+                            lastColliderVelocity = float3.zero;
+                            lastFriction = math.max(lastFriction, staticFriction);
+                        }
+                    }
+                    ticksCollGroundClamp += Stopwatch.GetTimestamp() - tGround0;
                 }
 
                 if (hadCollision)
                 {
                     long tFriction0 = Stopwatch.GetTimestamp();
-                    float invDt = 1f / math.max(1e-5f, deltaTime);
-
-                    if (!liquidMode)
+                    float3 n = lastNormal;
+                    float n2 = math.lengthsq(n);
+                    if (n2 > 1e-10f)
                     {
-                        const float beta = 0.2f;
-                        v += (newPos - posBeforeCollision) * invDt * beta;
+                        n *= math.rsqrt(n2);
 
                         float friction = math.saturate(lastFriction);
                         const float normalCollisionDamping = 0.1f;
-                        float vnRaw = math.dot(v, lastNormal);
-                        float vn = vnRaw;
-                        if (vn < 0f) vn = 0f;
-                        vn *= normalCollisionDamping;
-                        float3 vt = v - vnRaw * lastNormal;
-                        vt *= (1f - friction);
-                        v = vt + vn * lastNormal;
-                    }
-                    else
-                    {
-                        // 液体：不产生法线反弹（避免持续接触时不断注入向上速度导致“起飞”）
-                        float friction = math.saturate(lastFriction);
-                        float3 vRel = v - lastColliderVelocity;
-                        float vnRel = math.dot(vRel, lastNormal);
-                        float3 vtRel = vRel - vnRel * lastNormal;
-                        vtRel *= (1f - friction);
-                        v = lastColliderVelocity + vtRel;
+
+                        if (!liquidMode)
+                        {
+                            float vnInto = math.dot(v, n);
+                            if (vnInto < 0f)
+                                v -= n * vnInto;
+
+                            float vn = math.dot(v, n);
+                            float3 vN = n * vn;
+                            float3 vT = v - vN;
+                            vN *= normalCollisionDamping;
+                            vT *= math.max(0f, 1f - friction);
+                            v = vN + vT;
+                        }
+                        else
+                        {
+                            float3 vRel = v - lastColliderVelocity;
+                            float vnInto = math.dot(vRel, n);
+                            if (vnInto < 0f)
+                                vRel -= n * vnInto;
+
+                            float vn = math.dot(vRel, n);
+                            float3 vN = n * vn;
+                            float3 vT = vRel - vN;
+                            vN *= normalCollisionDamping;
+                            vT *= math.max(0f, 1f - friction);
+                            v = lastColliderVelocity + (vN + vT);
+                        }
                     }
 
                     ticksCollFriction += Stopwatch.GetTimestamp() - tFriction0;
@@ -1619,22 +1601,6 @@ namespace Revive.Slime
             PerformanceProfiler.Add("Droplets_Liquid_CopyToTemp", ticksLiquidCopyToTemp * invFreqMs);
             PerformanceProfiler.Add("Droplets_Liquid_PbfStep", ticksLiquidPbfStep * invFreqMs);
             PerformanceProfiler.Add("Droplets_Liquid_WriteBack", ticksLiquidWriteBack * invFreqMs);
-
-            float collLoopMs = (float)(ticksCollLoopTotal * invFreqMs);
-            float sdfMs = (float)(ticksCollSdf * invFreqMs);
-            float colliderMs = (float)(ticksCollColliderTotal * invFreqMs);
-
-            bool slowFrame = collLoopMs > 3.0f || sdfMs > 1.5f || colliderMs > 0.8f;
-            bool heartbeat = activeCount > 0 && (Time.frameCount - _dbgPerfLogFrame) > 300;
-            if ((slowFrame && (Time.frameCount - _dbgPerfLogFrame) > 30) || heartbeat)
-            {
-                _dbgPerfLogFrame = Time.frameCount;
-                UnityEngine.Debug.Log($"[DropletPerfDbg] frame={Time.frameCount} active={activeCount} activeSources={activeSourceCount} colliderCount={colliderCount} useSdf={useStaticSdf} disableStaticFallback={disableStaticColliderFallback} " +
-                          $"collLoopMs={collLoopMs:F2} sdfMs={sdfMs:F2} sdfDistMs={(float)(ticksCollSdfDistance * invFreqMs):F2} sdfNormalMs={(float)(ticksCollSdfNormal * invFreqMs):F2} colliderMs={colliderMs:F2} " +
-                          $"sdfDistSamples={dbgSdfDistanceSamples} sdfPenetrations={dbgSdfPenetrations} sdfNormalSamples={dbgSdfNormalSamples} " +
-                          $"useCandidates={(canUseSourceColliderCandidates ? 1 : 0)} candTotal={dbgCandidatesTotal} candCap={_sourceColliderIndicesCapacity} candOverflow={(dbgCandidatesOverflow ? 1 : 0)} " +
-                          $"pCand={dbgParticlesUsedCandidates} pCandEmpty={dbgParticlesCandidateEmpty} pFull={dbgParticlesFullScan} checks={dbgColliderChecks} checksCand={dbgCandidateColliderChecks} checksFull={dbgFullScanColliderChecks}");
-            }
         }
         
         /// <summary>

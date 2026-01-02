@@ -125,8 +125,8 @@ namespace Revive.Slime
                 if (CarrySlot != null && CarrySlot.HasHeldObject)
                 {
                     var held = CarrySlot.HeldObject;
-                    var consumeSpec = held != null ? held.GetComponent<SlimeCarryableConsumeSpec>() : null;
-                    if (consumeSpec != null)
+                    var buffSpec = held != null ? held.GetComponent<SlimeCarryableBuffSpec>() : null;
+                    if (buffSpec != null && buffSpec.EnableConsume)
                     {
                         if (_consumeCoroutine != null)
                         {
@@ -134,7 +134,7 @@ namespace Revive.Slime
                             _consumeCoroutine = null;
                         }
 
-                        _consumeCoroutine = StartCoroutine(ConsumeHeldRoutine(held, consumeSpec));
+                        _consumeCoroutine = StartCoroutine(ConsumeHeldRoutine(held, buffSpec));
                         return;
                     }
                 }
@@ -143,7 +143,7 @@ namespace Revive.Slime
             }
         }
 
-        private IEnumerator ConsumeHeldRoutine(SlimeCarryableObject held, SlimeCarryableConsumeSpec consumeSpec)
+        private IEnumerator ConsumeHeldRoutine(SlimeCarryableObject held, SlimeCarryableBuffSpec consumeSpec)
         {
             _isConsuming = true;
 

@@ -17,6 +17,12 @@ namespace Revive.Environment
     {
         public SplineContainer Container { get; private set; }
 
+        [Header("Debug")]
+        [SerializeField, Min(1)]
+        private int debugAutoEnterLogIntervalFrames = 30;
+
+        private int _dbgAutoEnterLogFrame = -999999;
+
         [Header("References")]
         [SerializeField]
         private SplineContainer _container;
@@ -50,6 +56,65 @@ namespace Revive.Environment
             Debug.Assert(ok, $"[SlimePipePath] 未找到 SplineContainer（请将其挂在同一 GameObject 或其子物体上，或在 Inspector 指定 _container）: {name}", this);
             if (!ok)
                 enabled = false;
+        }
+
+        private void OnEnable()
+        {
+            if (Application.isPlaying)
+            {
+                EnsureTriggerRelaysRuntime();
+            }
+        }
+
+        private void OnValidate()
+        {
+            if (!gameObject.scene.IsValid())
+                return;
+
+            var relays = GetComponentsInChildren<SlimePipeTriggerRelay>(includeInactive: true);
+            for (int i = 0; i < relays.Length; i++)
+            {
+                var r = relays[i];
+                if (r == null)
+                    continue;
+                r.Path = this;
+            }
+        }
+
+        private void EnsureTriggerRelaysRuntime()
+        {
+            if (!gameObject.scene.IsValid())
+                return;
+
+            var colliders = GetComponentsInChildren<Collider>(includeInactive: true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                var c = colliders[i];
+                if (c == null || !c.isTrigger)
+                    continue;
+
+                var go = c.gameObject;
+                if (go == null)
+                    continue;
+
+                var relay = go.GetComponent<SlimePipeTriggerRelay>();
+                if (relay == null)
+                {
+                    relay = go.AddComponent<SlimePipeTriggerRelay>();
+                }
+                relay.Path = this;
+            }
+        }
+
+        private void DebugLogAutoEnter(string msg)
+        {
+            if (!Debug.isDebugBuild)
+                return;
+            int interval = Mathf.Max(1, debugAutoEnterLogIntervalFrames);
+            if (Time.frameCount - _dbgAutoEnterLogFrame < interval)
+                return;
+            _dbgAutoEnterLogFrame = Time.frameCount;
+            Debug.Log(msg, this);
         }
 
         [Header("Spline")]
@@ -92,6 +157,70 @@ namespace Revive.Environment
             var idx = Mathf.Clamp(_splineIndex, 0, splines.Count - 1);
             spline = splines[idx];
             return spline != null;
+        }
+
+        internal void HandleAutoEnter(Collider other)
+        {
+            if (!isActiveAndEnabled)
+                return;
+
+            var character = other.GetComponentInParent<MoreMountains.TopDownEngine.Character>();
+            if (character == null)
+                return;
+
+            var ability = character.FindAbility<Revive.Slime.SlimePipeTravelAbility>();
+            if (ability == null)
+            {
+                DebugLogAutoEnter($"[SlimePipePath] AutoEnter aborted: ability=null entranceCollider={other.name} character={character.name} path={name}");
+                return;
+            }
+
+            if (ability.IsTravelling)
+                return;
+
+            if (!ability.CanStartTravelFromPath(this))
+                return;
+
+            float length = GetLength();
+            if (length <= 0f)
+            {
+                DebugLogAutoEnter($"[SlimePipePath] AutoEnter aborted: length<=0 entranceCollider={other.name} character={character.name} path={name}");
+                return;
+            }
+
+            Vector3 enterPos = other.transform.position;
+            Vector3 p0 = EvaluatePosition(0f);
+            Vector3 p1 = EvaluatePosition(1f);
+            float d0 = (enterPos - p0).sqrMagnitude;
+            float d1 = (enterPos - p1).sqrMagnitude;
+
+            bool reverse = d1 < d0;
+            float startT = reverse ? 1f : 0f;
+            var rotationMode = RotationModeDefault;
+
+            DebugLogAutoEnter(
+                $"[SlimePipePath] AutoEnter start frame={Time.frameCount} character={character.name} path={name} " +
+                $"startT={startT:F2} reverse={(reverse ? 1 : 0)} len={length:F2} enter=({enterPos.x:F2},{enterPos.y:F2},{enterPos.z:F2})");
+
+            ability.StartTravel(this, startT, reverse, rotationMode);
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            HandleAutoEnter(other);
+        }
+
+        [DisallowMultipleComponent]
+        private class SlimePipeTriggerRelay : MonoBehaviour
+        {
+            public SlimePipePath Path;
+
+            private void OnTriggerEnter(Collider other)
+            {
+                if (Path == null)
+                    return;
+                Path.HandleAutoEnter(other);
+            }
         }
 
         private void OnDrawGizmosSelected()

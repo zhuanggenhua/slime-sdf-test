@@ -21,8 +21,8 @@ GameObject:
   - component: {fileID: 8866674475157012359}
   - component: {fileID: 2494007224200162004}
   - component: {fileID: 4923431413906178474}
-  - component: {fileID: 1020764093948391069}
   - component: {fileID: 2917138552587269748}
+  - component: {fileID: 2582397642529391104}
   m_Layer: 10
   m_Name: Slime
   m_TagString: Player
@@ -361,6 +361,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1dbb46c4fe7af244b5efa823decee93, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  simToWorldScale: 0.1
   viscosityStrength: 10
   concentration: 50
   baseSpeed: 1.5
@@ -475,6 +476,8 @@ MonoBehaviour:
   colliderCollectDebug: 0
   ccaDebug: 0
   recallAvoidanceGizmos: 1
+  dropletCenterDebugLog: 0
+  dropletCenterDebugLogIntervalFrames: 60
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -522,22 +525,7 @@ MonoBehaviour:
   BlockingMovementStates: 
   BlockingConditionStates: 
   BlockingWeaponStates: 
---- !u!114 &1020764093948391069
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2164855269287153525}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c53f94f05bddf7d4b9c8d2415c082aa2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  slimePbf: {fileID: 0}
-  movementAbility: {fileID: 0}
-  jumpAbility: {fileID: 0}
-  tintTransitionSeconds: 1
+  debugTravelLogIntervalFrames: 30
 --- !u!114 &2917138552587269748
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -561,6 +549,23 @@ MonoBehaviour:
   BlockingWeaponStates: 
   enableTailwindBoost: 0
   consumeBuffController: {fileID: 0}
+--- !u!114 &2582397642529391104
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164855269287153525}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c53f94f05bddf7d4b9c8d2415c082aa2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  slimePbf: {fileID: 0}
+  movementAbility: {fileID: 0}
+  jumpAbility: {fileID: 0}
+  controller3D: {fileID: 0}
+  tintTransitionSeconds: 0.5
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0

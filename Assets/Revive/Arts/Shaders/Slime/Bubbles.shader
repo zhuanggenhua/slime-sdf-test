@@ -2,6 +2,7 @@
     Properties {
         _Color ("Color", Color) = (1, 1, 1, 1)
         _Size ("Size", float) = 0.035
+        _SimToWorldScale ("SimToWorldScale", float) = 0.1
     }
 
     SubShader {
@@ -48,6 +49,7 @@
 
             float _Size;
             float4 _Color;
+            float _SimToWorldScale;
 
             StructuredBuffer<Bubble> _BubblesBuffer;
 
@@ -55,7 +57,7 @@
             {
                 v2f o;
                 Bubble b = _BubblesBuffer[id];
-                float3 worldPosition = (b.Pos * 0.1) + (v.vertex.xyz - float3(0, 0.2, 0)) * (_Size * b.Radius);
+                float3 worldPosition = (b.Pos * _SimToWorldScale) + (v.vertex.xyz - float3(0, 0.2, 0)) * (_Size * b.Radius);
                 o.worldPos = worldPosition;
                 // project into camera space
                 o.pos = TransformWorldToHClip(worldPosition);

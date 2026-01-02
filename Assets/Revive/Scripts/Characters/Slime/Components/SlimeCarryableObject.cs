@@ -2,8 +2,7 @@ using UnityEngine;
 
 namespace Revive.Slime
 {
-    [DisallowMultipleComponent]
-    [RequireComponent(typeof(Rigidbody))]
+    [DisallowMultipleComponent] 
     [RequireComponent(typeof(SlimeCarryableWindFieldAffect))]
     public class SlimeCarryableObject : MonoBehaviour
     {
@@ -43,7 +42,7 @@ namespace Revive.Slime
 
         private void Awake()
         {
-            Rigidbody = GetComponent<Rigidbody>();
+            Rigidbody = GetComponentInChildren<Rigidbody>();
             Colliders = GetComponentsInChildren<Collider>(true);
 
             if (Colliders == null || Colliders.Length == 0)

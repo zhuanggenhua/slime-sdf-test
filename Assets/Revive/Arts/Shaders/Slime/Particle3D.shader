@@ -25,14 +25,15 @@
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-            // matches the structure of our data on the CPU side (32 bytes)
+            // matches the structure of our data on the CPU side (40 bytes)
             struct Particle {
-                float3 x;       // Position
+                float4 x;       // Position (xyz) + padding
                 int Type;       // ParticleType
                 int ControllerSlot; // ControllerSlot
                 int SourceId;   // SourceId
                 int ClusterId;  // ClusterId
                 int FreeFrames; // FreeFrames
+                int Padding0;
             };
 
             struct a2v {
@@ -59,11 +60,11 @@
                 v2f o;
                 float3x3 covMatrix = _Aniso > 0 ? (float3x3)_CovarianceBuffer[id] : float3x3(1,0,0,0,1,0,0,0,1);
                 float3 anisoPos = mul(covMatrix, v.vertex.xyz);
-                float3 worldPosition = (_ParticleBuffer[id].x * _SimToWorldScale) + anisoPos * _Size;
+                float3 worldPosition = (_ParticleBuffer[id].x.xyz * _SimToWorldScale) + anisoPos * _Size;
                 // project into camera space
                 o.pos = TransformWorldToHClip(worldPosition);
                 o.normal = TransformObjectToWorldNormal(v.normal);
-                o.uv = float4(_ParticleBuffer[id].x, _ParticleBuffer[id].ControllerSlot);
+                o.uv = float4(_ParticleBuffer[id].x.xyz, _ParticleBuffer[id].ControllerSlot);
                 
                 return o;
             }

@@ -1,3 +1,4 @@
+using MoreMountains.TopDownEngine;
 using UnityEngine;
 
 namespace Revive.Slime
@@ -15,6 +16,9 @@ namespace Revive.Slime
         [ChineseLabel("跳跃能力")]
         [SerializeField] private SlimeJumpAbility jumpAbility;
 
+        [ChineseLabel("移动控制器")]
+        [SerializeField] private TopDownController3D controller3D;
+
         [ChineseHeader("表现")]
         [ChineseLabel("变色过渡时长(秒)")]
         [SerializeField, Min(0f), DefaultValue(0.5f)]
@@ -25,12 +29,25 @@ namespace Revive.Slime
         public bool WindFieldImmuneActive { get; private set; }
         public float DeformLimitMultiplierActive { get; private set; } = 1f;
 
+        private SlimeCarryableBuffSpec _carrySpec;
+        private float _carryMoveSpeedMultiplier = 1f;
+        private float _carryJumpImpulseMultiplier = 1f;
+        private int _carryExtraJumps;
+        private float _carryThrowRangeMultiplier = 1f;
+        private bool _carryWindFieldImmune;
+        private float _carryDeformLimitMultiplier = 1f;
+        private float _carryMaximumFallSpeedMultiplier = 1f;
+
         private float _buffEndTime = -1f;
         private bool _tintEnabled;
         private Color _tint = Color.white;
-        private float _moveSpeedMultiplier = 1f;
-        private float _jumpImpulseMultiplier = 1f;
-        private int _extraJumps;
+        private float _consumeMoveSpeedMultiplier = 1f;
+        private float _consumeJumpImpulseMultiplier = 1f;
+        private int _consumeExtraJumps;
+        private float _consumeThrowRangeMultiplier = 1f;
+        private bool _consumeWindFieldImmune;
+        private float _consumeDeformLimitMultiplier = 1f;
+        private float _consumeMaximumFallSpeedMultiplier = 1f;
 
         private Color _baseSurfaceTint = Color.white;
         private bool _hasBaseSurfaceTint;
@@ -46,6 +63,9 @@ namespace Revive.Slime
         private float _baseMovementSpeedMultiplier = 1f;
         private float _baseJumpImpulse = 4f;
         private int _baseNumberOfJumps = 1;
+
+        private float _baseMaximumFallSpeed;
+        private bool _baseMaximumFallSpeedCached;
 
         private bool _initialized;
 
@@ -97,6 +117,11 @@ namespace Revive.Slime
             {
                 jumpAbility = GetComponentInChildren<SlimeJumpAbility>();
             }
+
+            if (controller3D == null)
+            {
+                controller3D = GetComponentInChildren<TopDownController3D>(true);
+            }
         }
 
         private void CacheBaseValuesIfNeeded()
@@ -115,6 +140,17 @@ namespace Revive.Slime
             {
                 _baseJumpImpulse = jumpAbility.JumpImpulse;
                 _baseNumberOfJumps = jumpAbility.NumberOfJumps;
+            }
+
+            if (controller3D != null)
+            {
+                _baseMaximumFallSpeed = controller3D.MaximumFallSpeed;
+                _baseMaximumFallSpeedCached = true;
+            }
+            else
+            {
+                _baseMaximumFallSpeed = 0f;
+                _baseMaximumFallSpeedCached = false;
             }
 
             if (slimePbf != null && slimePbf.TryGetSurfaceBaseColor(out var baseTint))
@@ -136,9 +172,14 @@ namespace Revive.Slime
             _initialized = true;
         }
 
-        public void Apply(SlimeCarryableConsumeSpec spec)
+        public void Apply(SlimeCarryableBuffSpec spec)
         {
             if (spec == null)
+            {
+                return;
+            }
+
+            if (!spec.EnableConsume)
             {
                 return;
             }
@@ -149,13 +190,15 @@ namespace Revive.Slime
 
             _tintEnabled = spec.OverrideTint;
             _tint = spec.Tint;
-            _moveSpeedMultiplier = Mathf.Max(0f, spec.MoveSpeedMultiplier);
-            _jumpImpulseMultiplier = Mathf.Max(0f, spec.JumpImpulseMultiplier);
-            _extraJumps = spec.ExtraJumps;
-            CurrentThrowRangeMultiplier = Mathf.Max(0f, spec.ThrowRangeMultiplier);
 
-            WindFieldImmuneActive = spec.WindFieldImmune;
-            DeformLimitMultiplierActive = Mathf.Max(0.01f, spec.DeformLimitMultiplier);
+            var m = spec.Consume;
+            _consumeMoveSpeedMultiplier = Mathf.Max(0f, m.MoveSpeedMultiplier);
+            _consumeJumpImpulseMultiplier = Mathf.Max(0f, m.JumpImpulseMultiplier);
+            _consumeExtraJumps = m.ExtraJumps;
+            _consumeThrowRangeMultiplier = Mathf.Max(0f, m.ThrowRangeMultiplier);
+            _consumeWindFieldImmune = m.WindFieldImmune;
+            _consumeDeformLimitMultiplier = Mathf.Max(0.01f, m.DeformLimitMultiplier);
+            _consumeMaximumFallSpeedMultiplier = Mathf.Max(0f, m.MaximumFallSpeedMultiplier);
 
             ApplyRuntimeValues();
         }
@@ -168,14 +211,49 @@ namespace Revive.Slime
 
             _tintEnabled = false;
             _tint = Color.white;
-            _moveSpeedMultiplier = 1f;
-            _jumpImpulseMultiplier = 1f;
-            _extraJumps = 0;
-            CurrentThrowRangeMultiplier = 1f;
+            _consumeMoveSpeedMultiplier = 1f;
+            _consumeJumpImpulseMultiplier = 1f;
+            _consumeExtraJumps = 0;
+            _consumeThrowRangeMultiplier = 1f;
+            _consumeWindFieldImmune = false;
+            _consumeDeformLimitMultiplier = 1f;
+            _consumeMaximumFallSpeedMultiplier = 1f;
 
-            WindFieldImmuneActive = false;
-            DeformLimitMultiplierActive = 1f;
+            ApplyRuntimeValues();
+        }
 
+        public void SetCarrySpec(SlimeCarryableBuffSpec spec)
+        {
+            if (_carrySpec == spec)
+            {
+                return;
+            }
+
+            _carrySpec = spec;
+
+            if (spec == null || !spec.EnableCarry)
+            {
+                _carryMoveSpeedMultiplier = 1f;
+                _carryJumpImpulseMultiplier = 1f;
+                _carryExtraJumps = 0;
+                _carryThrowRangeMultiplier = 1f;
+                _carryWindFieldImmune = false;
+                _carryDeformLimitMultiplier = 1f;
+                _carryMaximumFallSpeedMultiplier = 1f;
+            }
+            else
+            {
+                var m = spec.Carry;
+                _carryMoveSpeedMultiplier = Mathf.Max(0f, m.MoveSpeedMultiplier);
+                _carryJumpImpulseMultiplier = Mathf.Max(0f, m.JumpImpulseMultiplier);
+                _carryExtraJumps = m.ExtraJumps;
+                _carryThrowRangeMultiplier = Mathf.Max(0f, m.ThrowRangeMultiplier);
+                _carryWindFieldImmune = m.WindFieldImmune;
+                _carryDeformLimitMultiplier = Mathf.Max(0.01f, m.DeformLimitMultiplier);
+                _carryMaximumFallSpeedMultiplier = Mathf.Max(0f, m.MaximumFallSpeedMultiplier);
+            }
+
+            CacheBaseValuesIfNeeded();
             ApplyRuntimeValues();
         }
 
@@ -183,17 +261,17 @@ namespace Revive.Slime
         {
             if (movementAbility != null)
             {
-                movementAbility.MovementSpeedMultiplier = _baseMovementSpeedMultiplier * _moveSpeedMultiplier;
+                movementAbility.MovementSpeedMultiplier = _baseMovementSpeedMultiplier * _consumeMoveSpeedMultiplier * _carryMoveSpeedMultiplier;
             }
 
             if (jumpAbility != null)
             {
-                jumpAbility.JumpImpulse = _baseJumpImpulse * _jumpImpulseMultiplier;
+                jumpAbility.JumpImpulse = _baseJumpImpulse * _consumeJumpImpulseMultiplier * _carryJumpImpulseMultiplier;
 
                 int oldMax = jumpAbility.NumberOfJumps;
                 int oldLeft = jumpAbility.NumberOfJumpsLeft;
 
-                jumpAbility.NumberOfJumps = Mathf.Max(0, _baseNumberOfJumps + _extraJumps);
+                jumpAbility.NumberOfJumps = Mathf.Max(0, _baseNumberOfJumps + _consumeExtraJumps + _carryExtraJumps);
 
                 int delta = jumpAbility.NumberOfJumps - oldMax;
                 int newLeft = oldLeft + delta;
@@ -201,6 +279,32 @@ namespace Revive.Slime
             }
 
             ApplyTintTargetWithTransition();
+
+            CurrentThrowRangeMultiplier = _consumeThrowRangeMultiplier * _carryThrowRangeMultiplier;
+            WindFieldImmuneActive = _consumeWindFieldImmune || _carryWindFieldImmune;
+            DeformLimitMultiplierActive = Mathf.Max(0.01f, Mathf.Min(_consumeDeformLimitMultiplier, _carryDeformLimitMultiplier));
+
+            float maxFallSpeedMul = Mathf.Max(0f, Mathf.Min(_consumeMaximumFallSpeedMultiplier, _carryMaximumFallSpeedMultiplier));
+
+            if (controller3D != null)
+            {
+                if (!_baseMaximumFallSpeedCached)
+                {
+                    _baseMaximumFallSpeed = controller3D.MaximumFallSpeed;
+                    _baseMaximumFallSpeedCached = true;
+                }
+
+                float mul = maxFallSpeedMul;
+                if (mul <= 0f)
+                {
+                    controller3D.MaximumFallSpeed = _baseMaximumFallSpeed;
+                }
+                else
+                {
+                    float target = Mathf.Max(0.01f, _baseMaximumFallSpeed * mul);
+                    controller3D.MaximumFallSpeed = Mathf.Min(_baseMaximumFallSpeed, target);
+                }
+            }
 
             if (slimePbf != null)
             {

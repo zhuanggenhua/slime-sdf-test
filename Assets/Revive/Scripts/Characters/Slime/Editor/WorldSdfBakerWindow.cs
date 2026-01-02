@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEditor;
@@ -19,6 +20,7 @@ namespace Revive.Slime.Editor
         [SerializeField] private bool includeTriggers;
         [SerializeField] private MeshSeedMode meshSeedMode = MeshSeedMode.Triangles;
         [SerializeField] private bool onlyBakeSelection;
+        [SerializeField] private float estimatedDeflateRatio = 0.25f;
         [SerializeField] private bool autoEnableUnreadableMeshReadWrite;
         [SerializeField] private string outputDirectoryAssetPath = "Assets/MMData/SDFData";
 
@@ -372,8 +374,13 @@ namespace Revive.Slime.Editor
 
             includeTriggers = EditorGUILayout.Toggle("包含 Trigger", includeTriggers);
             meshSeedMode = (MeshSeedMode)EditorGUILayout.EnumPopup("Mesh Seed 模式", meshSeedMode);
-            onlyBakeSelection = EditorGUILayout.Toggle("仅烘焙选中对象", onlyBakeSelection);
+            onlyBakeSelection = EditorGUILayout.Toggle("仅烘焙选中对象(可选加速)", onlyBakeSelection);
             autoEnableUnreadableMeshReadWrite = EditorGUILayout.Toggle("烘焙时临时开启Mesh可读写(仅不可读)", autoEnableUnreadableMeshReadWrite);
+
+            EditorGUILayout.HelpBox(
+                "默认行为：自动扫描全场景 Collider；固定排除 TerrainCollider；默认不包含 Trigger（除非勾选‘包含 Trigger’）。\n" +
+                "如果关卡较大，建议勾选‘仅烘焙选中对象(可选加速)’并在 Hierarchy 选中关卡根对象。",
+                MessageType.Info);
 
             if (onlyBakeSelection)
             {
@@ -432,15 +439,27 @@ namespace Revive.Slime.Editor
                 int dimY = Mathf.Max(1, Mathf.CeilToInt(bounds.size.y / voxel));
                 int dimZ = Mathf.Max(1, Mathf.CeilToInt(bounds.size.z / voxel));
                 long total = (long)dimX * dimY * dimZ;
-                long bytes = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + total * sizeof(float);
-                double mb = bytes / (1024.0 * 1024.0);
+                long rawBytes = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + total * sizeof(float);
+                double rawMb = rawBytes / (1024.0 * 1024.0);
+
+                double ratio = Mathf.Clamp01(estimatedDeflateRatio);
+                long payloadHeaderBytes = sizeof(int) * 3;
+                long estimatedBytesV2 = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + payloadHeaderBytes + (long)(total * sizeof(float) * ratio);
+                double estimatedMbV2 = estimatedBytesV2 / (1024.0 * 1024.0);
                 EditorGUILayout.LabelField("预计体素维度", $"{dimX} x {dimY} x {dimZ}");
                 EditorGUILayout.LabelField("预计体素数量", total.ToString("N0"));
-                EditorGUILayout.LabelField("预计资源大小", $"{mb:F1} MB (float32)");
 
-                if (mb > 64.0)
+                estimatedDeflateRatio = EditorGUILayout.Slider("预计 Deflate 压缩比(估算)", estimatedDeflateRatio, 0.05f, 1.0f);
+                EditorGUILayout.LabelField("预计资源大小(未压缩)", $"{rawMb:F1} MB (float32)");
+                EditorGUILayout.LabelField("预计资源大小(v2压缩估算)", $"{estimatedMbV2:F1} MB (Deflate)");
+
+                if (rawMb > 64.0)
                 {
                     EditorGUILayout.HelpBox("预计资源较大（>64MB）。请确认 bounds/voxel 是否合理；建议先用“从场景碰撞体自动计算范围”。", MessageType.Warning);
+                }
+                else if (estimatedMbV2 > 64.0)
+                {
+                    EditorGUILayout.HelpBox("压缩后预计资源仍较大（>64MB）。请确认 bounds/voxel 是否合理；或考虑后续 Phase 2 chunked。", MessageType.Warning);
                 }
             }
 
@@ -479,6 +498,7 @@ namespace Revive.Slime.Editor
         private const string PrefKey_IncludeTriggers = "WorldSdfBaker_IncludeTriggers";
         private const string PrefKey_MeshSeedMode = "WorldSdfBaker_MeshSeedMode";
         private const string PrefKey_OnlyBakeSelection = "WorldSdfBaker_OnlyBakeSelection";
+        private const string PrefKey_EstimatedDeflateRatio = "WorldSdfBaker_EstimatedDeflateRatio";
         private const string PrefKey_AutoEnableUnreadableMeshReadWrite = "WorldSdfBaker_AutoEnableUnreadableMeshReadWrite";
         private const string PrefKey_OutputDirectoryAssetPath = "WorldSdfBaker_OutputDirectoryAssetPath";
 
@@ -500,6 +520,7 @@ namespace Revive.Slime.Editor
             includeTriggers = EditorPrefs.GetBool(PrefKey_IncludeTriggers, includeTriggers);
             meshSeedMode = (MeshSeedMode)EditorPrefs.GetInt(PrefKey_MeshSeedMode, (int)meshSeedMode);
             onlyBakeSelection = EditorPrefs.GetBool(PrefKey_OnlyBakeSelection, onlyBakeSelection);
+            estimatedDeflateRatio = EditorPrefs.GetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
             autoEnableUnreadableMeshReadWrite = EditorPrefs.GetBool(PrefKey_AutoEnableUnreadableMeshReadWrite, autoEnableUnreadableMeshReadWrite);
             outputDirectoryAssetPath = EditorPrefs.GetString(PrefKey_OutputDirectoryAssetPath, outputDirectoryAssetPath);
         }
@@ -518,6 +539,7 @@ namespace Revive.Slime.Editor
             EditorPrefs.SetBool(PrefKey_IncludeTriggers, includeTriggers);
             EditorPrefs.SetInt(PrefKey_MeshSeedMode, (int)meshSeedMode);
             EditorPrefs.SetBool(PrefKey_OnlyBakeSelection, onlyBakeSelection);
+            EditorPrefs.SetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
             EditorPrefs.SetBool(PrefKey_AutoEnableUnreadableMeshReadWrite, autoEnableUnreadableMeshReadWrite);
             EditorPrefs.SetString(PrefKey_OutputDirectoryAssetPath, outputDirectoryAssetPath ?? string.Empty);
         }
@@ -815,6 +837,7 @@ namespace Revive.Slime.Editor
             var candidateBounds = new List<Bounds>(colliders.Length);
             var candidateKinds = new List<byte>(colliders.Length);
             var candidateScales = new List<float>(colliders.Length);
+            int skippedByTerrain = 0;
             int skippedByTrigger = 0;
             int skippedByLayer = 0;
             int skippedByBounds = 0;
@@ -823,7 +846,11 @@ namespace Revive.Slime.Editor
             {
                 var c = colliders[i];
                 if (c == null) continue;
-                if (c is TerrainCollider) continue;
+                if (c is TerrainCollider)
+                {
+                    skippedByTerrain++;
+                    continue;
+                }
 
                 if (!includeTriggers && c.isTrigger)
                 {
@@ -863,6 +890,8 @@ namespace Revive.Slime.Editor
                 candidateKinds.Add(kind);
                 candidateScales.Add(uniformScale);
             }
+
+            Debug.Log($"[WorldSdfBaker] ColliderScan total={colliders.Length} candidates={candidates.Count} skippedTerrain={skippedByTerrain} skippedTrigger={skippedByTrigger} skippedLayer={skippedByLayer} skippedBounds={skippedByBounds} onlyBakeSelection={onlyBakeSelection} includeTriggers={includeTriggers} staticLayers=0x{staticLayers.value:X8}");
 
             if (candidates.Count == 0)
             {
@@ -1777,9 +1806,29 @@ namespace Revive.Slime.Editor
 
                     if (!cancelled)
                     {
-                        var bytes = new byte[denseSim.Length * sizeof(float)];
-                        Buffer.BlockCopy(denseSim, 0, bytes, 0, bytes.Length);
-                        bw.Write(bytes);
+                        var raw = new byte[denseSim.Length * sizeof(float)];
+                        Buffer.BlockCopy(denseSim, 0, raw, 0, raw.Length);
+
+                        byte[] compressed;
+                        using (var ms = new MemoryStream(raw.Length))
+                        {
+                            using (var ds = new DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, true))
+                            {
+                                ds.Write(raw, 0, raw.Length);
+                            }
+                            compressed = ms.ToArray();
+                        }
+
+                        bw.Write(1);
+                        bw.Write(raw.Length);
+                        bw.Write(compressed.Length);
+                        bw.Write(compressed);
+
+                        double ratio = raw.Length > 0 ? (double)compressed.Length / raw.Length : 0.0;
+                        estimatedDeflateRatio = Mathf.Clamp01((float)ratio);
+                        EditorPrefs.SetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
+                        long fileBytes = bw.BaseStream != null ? bw.BaseStream.Length : -1;
+                        Debug.Log($"[WorldSdfBaker] PayloadCompressed kind=DeflateDenseFloat32 rawBytes={raw.Length:N0} compressedBytes={compressed.Length:N0} ratio={ratio:P1} fileBytes={fileBytes:N0}");
                     }
 
                     bw.Flush();

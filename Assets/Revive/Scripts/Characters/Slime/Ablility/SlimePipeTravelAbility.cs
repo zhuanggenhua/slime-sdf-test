@@ -20,6 +20,29 @@ namespace Revive.Slime
         private Vector3 _lastForward = Vector3.forward;
         private Vector3 _lastTravelVelocity;
 
+        [Header("Debug")]
+        [SerializeField, Min(1)]
+        private int debugTravelLogIntervalFrames = 30;
+
+        private int _dbgTravelLogFrame = -999999;
+
+        private void DebugLogState(string phase, float dt, float effectiveSpeed, Vector3 targetPos)
+        {
+            if (!Debug.isDebugBuild)
+                return;
+            if (Time.frameCount - _dbgTravelLogFrame < debugTravelLogIntervalFrames)
+                return;
+            _dbgTravelLogFrame = Time.frameCount;
+
+            float len = _path != null ? _path.GetLength() : 0f;
+            Vector3 pos = transform.position;
+            Debug.Log(
+                $"[SlimePipeTravelDbg] phase={phase} frame={Time.frameCount} dt={dt:F3} effSpeed={effectiveSpeed:F2} " +
+                $"t={_t:F3} reverse={_reverse} aligned={_alignedToPath} exitPush={_isExitPushing} exitEase={_isExitEasingOut} " +
+                $"len={len:F2} pos=({pos.x:F2},{pos.y:F2},{pos.z:F2}) target=({targetPos.x:F2},{targetPos.y:F2},{targetPos.z:F2}) flags={_lastMoveFlags}",
+                this);
+        }
+
         private bool _isExitPushing;
         private bool _isExitEasingOut;
         private Vector3 _exitPushDir;
@@ -109,6 +132,12 @@ namespace Revive.Slime
             ramp01 = ramp01 * ramp01 * (3f - 2f * ramp01);
             float effectiveSpeed = _speed * ramp01;
 
+            if (_path != null)
+            {
+                Vector3 dbgTarget = _path.EvaluatePosition(_t);
+                DebugLogState("tick_begin", dt, effectiveSpeed, dbgTarget);
+            }
+
             if (_isExitPushing)
             {
                 float pushSpeed = _exitPushSpeed;
@@ -132,6 +161,8 @@ namespace Revive.Slime
                     _isExitEasingOut = true;
                     _exitEaseTimeRemaining = ExitEaseOutSeconds;
                 }
+
+                DebugLogState("exit_push", dt, effectiveSpeed, transform.position);
 
                 return;
             }
@@ -168,6 +199,8 @@ namespace Revive.Slime
                     }
                     _pendingStopTravel = true;
                 }
+
+                DebugLogState("exit_ease", dt, effectiveSpeed, transform.position);
                 return;
             }
 
@@ -189,6 +222,8 @@ namespace Revive.Slime
                     UpdateMovement(dt, effectiveSpeed, out var alignTargetPos);
                     if ((alignTargetPos - transform.position).sqrMagnitude <= 0.0001f)
                         _alignedToPath = true;
+
+                    DebugLogState("aligning", dt, effectiveSpeed, alignTargetPos);
                     return;
                 }
             }
@@ -264,6 +299,8 @@ namespace Revive.Slime
             }
 
             UpdateMovement(dt, effectiveSpeed, out var travelTargetPos);
+
+            DebugLogState("travelling", dt, effectiveSpeed, travelTargetPos);
         }
 
         private bool UpdateMovement(float dt, float speed, out Vector3 targetPos)
@@ -354,10 +391,18 @@ namespace Revive.Slime
             }
 
             if (_isTravelling)
+            {
+                if (Debug.isDebugBuild)
+                    Debug.LogWarning($"[SlimePipeTravelAbility] StartTravel aborted: already travelling character={_character?.name} path={path.name}", this);
                 return;
+            }
 
             if (Time.time < _cooldownUntilTime)
+            {
+                if (Debug.isDebugBuild)
+                    Debug.LogWarning($"[SlimePipeTravelAbility] StartTravel aborted: cooldown character={_character?.name} path={path.name} cooldownRemain={( _cooldownUntilTime - Time.time):F2}s", this);
                 return;
+            }
 
             _path = path;
             _t = Mathf.Clamp01(startT);
@@ -407,12 +452,27 @@ namespace Revive.Slime
             }
 
             _isTravelling = true;
+
+            if (Debug.isDebugBuild)
+            {
+                Debug.Log(
+                    $"[SlimePipeTravel] Start frame={Time.frameCount} character={_character?.name} path={path.name} " +
+                    $"t0={_t:F3} reverse={_reverse} speed={_speed:F2} ramp={_speedRampSeconds:F2} rot={_rotationMode} closed={path.ClosedLoop} len={path.GetLength():F2}",
+                    this);
+            }
         }
 
         private void StopTravel()
         {
             if (!_isTravelling)
                 return;
+
+            if (Debug.isDebugBuild && _path != null)
+            {
+                Debug.Log(
+                    $"[SlimePipeTravel] Stop frame={Time.frameCount} character={_character?.name} path={_path.name} t={_t:F3} pos=({transform.position.x:F2},{transform.position.y:F2},{transform.position.z:F2})",
+                    this);
+            }
 
             _isTravelling = false;
             _alignedToPath = false;
@@ -495,6 +555,13 @@ namespace Revive.Slime
             {
                 StopTravel();
                 return;
+            }
+
+            if (Debug.isDebugBuild)
+            {
+                Debug.Log(
+                    $"[SlimePipeTravel] ExitPush frame={Time.frameCount} character={_character?.name} path={_path.name} t={_t:F3} pushDist={pushDist:F3} preAdvance={_exitPreAdvanceDistance:F3}",
+                    this);
             }
 
             float baseSpeed = Mathf.Max(_speed, 0.5f);

@@ -71,6 +71,10 @@ PrefabInstance:
         type: 3}
       insertIndex: -1
       addedObject: {fileID: 6253142608606358732}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8caaf22be2ecbac48b55c686b2d4a699,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6528410540116474244}
   m_SourcePrefab: {fileID: 100100000, guid: 8caaf22be2ecbac48b55c686b2d4a699, type: 3}
 --- !u!1 &5319291189748381157 stripped
 GameObject:
@@ -100,3 +104,54 @@ MeshCollider:
   m_Convex: 1
   m_CookingOptions: 30
   m_Mesh: {fileID: -1008002919449090465, guid: 8caaf22be2ecbac48b55c686b2d4a699, type: 3}
+--- !u!114 &6528410540116474244
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5319291189748381157}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: daf7779e25dd2aa4ba219b704c134db7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _jumpSpeed: 4
+  _sustainDuration: 1
+  _rampUpDuration: 1
+  _startJumpSpeed: 0.5
+  _bounceFeedback: {fileID: 0}
+  _platformFeedbackTarget: {fileID: 0}
+  _platformPressYScale: 0.85
+  _platformPressDuration: 0.06
+  _platformReleaseDuration: 0.1
+  _platformScaleCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  _cooldown: 0.5
+  _platformCollider: {fileID: 6253142608606358732}
+  _triggerHeightAbove: 0.6
+  _triggerOverlapDown: 0.1
+  _debugLogs: 1
+  _debugSceneLabel: 1

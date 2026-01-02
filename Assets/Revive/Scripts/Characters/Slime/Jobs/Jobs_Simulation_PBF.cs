@@ -1064,6 +1064,33 @@ namespace Revive.Slime
             public bool EnableCollisionDeformLimit; // 是否在碰撞后应用形变上限
             public bool EnableP4VelocityConsistency; // 【P4开关】是否启用速度一致化（排除钳制位移）
 
+            private int GetControllerIndex(in Particle p)
+            {
+                if (p.Type == ParticleType.MainBody)
+                    return 0;
+
+                int blobId = p.BlobId;
+                if (blobId >= 0 && blobId < BlobIdToControllerSlot.Length)
+                    return BlobIdToControllerSlot[blobId];
+
+                return -1;
+            }
+
+            private void GetGroundFallback(int controllerIndex, in float3 simPos, out float groundY, out float3 groundPoint, out float3 groundNormal)
+            {
+                groundY = FallbackGroundY;
+                groundPoint = new float3(simPos.x, groundY, simPos.z);
+                groundNormal = new float3(0, 1, 0);
+
+                if (controllerIndex < 0 || controllerIndex >= Controllers.Length)
+                    return;
+
+                var ctrl = Controllers[controllerIndex];
+                groundY = ctrl.GroundY;
+                groundPoint = ctrl.GroundPoint;
+                groundNormal = ctrl.GroundNormal;
+            }
+
             private bool TrySampleTerrain(float2 xzSim, out float heightSim, out float3 normal)
             {
                 heightSim = 0f;
@@ -1292,6 +1319,7 @@ namespace Revive.Slime
                 float3 terrainNormal = new float3(0, 1, 0);
                 float terrainYSimFinal = 0f;
                 float planeDistFinal = 0f;
+                float terrainPenetration = 0f;
 
                 for (int it = 0; it < 3; it++)
                 {
@@ -1309,6 +1337,9 @@ namespace Revive.Slime
                     if (pd >= 0f)
                         break;
 
+                    float pen = -pd;
+                    if (pen > terrainPenetration)
+                        terrainPenetration = pen;
                     simPos -= terrainNormal * pd;
                     collisionAxes.y = true;
                     hadTerrainCollision = true;
@@ -1319,6 +1350,9 @@ namespace Revive.Slime
                     float minY = terrainYSimFinal + ParticleRadiusSim;
                     if (simPos.y < minY)
                     {
+                        float penY = minY - simPos.y;
+                        if (penY > terrainPenetration)
+                            terrainPenetration = penY;
                         simPos.y = minY;
                         collisionAxes.y = true;
                         hadTerrainCollision = true;
@@ -1326,20 +1360,12 @@ namespace Revive.Slime
                 }
                 
                 bool allowGroundClamp = PBF_Utils.AllowGroundClamp(UseStaticSdf, DisableStaticColliderFallback);
-                if (!terrainCovers && allowGroundClamp && p.Type == ParticleType.MainBody)
+                bool allowGroundClampForType = p.Type == ParticleType.MainBody || p.Type == ParticleType.Separated || p.Type == ParticleType.Emitted;
+                if (!terrainCovers && allowGroundClamp && allowGroundClampForType)
                 {
-                    float groundY = FallbackGroundY;
-                    float3 fallbackGroundPoint = new float3(simPos.x, groundY, simPos.z);
-                    float3 groundNormal = new float3(0, 1, 0);
-                    if (Controllers.Length > 0)
-                    {
-                        var ctrl0 = Controllers[0];
-                        groundY = ctrl0.GroundY;
-                        fallbackGroundPoint = ctrl0.GroundPoint;
-                        groundNormal = ctrl0.GroundNormal;
-                    }
-
-                    if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, fallbackGroundPoint, groundNormal))
+                    int controllerIndex = GetControllerIndex(p);
+                    GetGroundFallback(controllerIndex, simPos, out float groundY, out float3 groundPoint, out float3 groundNormal);
+                    if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, groundPoint, groundNormal))
                         collisionAxes.y = true;
                 }
                 
@@ -1376,9 +1402,12 @@ namespace Revive.Slime
                 
                 // 【关键修复】碰撞时衰减碰撞轴方向的速度，防止落地炸开
                 const float normalCollisionDamping = 0.1f;
-                if (collisionAxes.x) velCalc.x *= normalCollisionDamping;
-                if (collisionAxes.y) velCalc.y *= normalCollisionDamping;
-                if (collisionAxes.z) velCalc.z *= normalCollisionDamping;
+                bool3 dampAxes = collisionAxes;
+                if (hadTerrainCollision)
+                    dampAxes.y = false;
+                if (dampAxes.x) velCalc.x *= normalCollisionDamping;
+                if (dampAxes.y) velCalc.y *= normalCollisionDamping;
+                if (dampAxes.z) velCalc.z *= normalCollisionDamping;
 
                 if (hadSdfCollision)
                 {
@@ -1404,7 +1433,10 @@ namespace Revive.Slime
                     float3 vN = terrainNormal * vn;
                     float3 vT = velCalc - vN;
                     vN *= normalCollisionDamping;
-                    vT *= math.max(0f, 1f - StaticFriction);
+                    float pen01 = math.saturate(terrainPenetration / math.max(1e-5f, ParticleRadiusSim * 0.25f));
+                    float frictionRate = 8f;
+                    float frictionFactor = math.exp(-StaticFriction * pen01 * DeltaTime * frictionRate);
+                    vT *= frictionFactor;
                     velCalc = vN + vT;
                 }
 

@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.IO.Compression;
 using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Collections.LowLevel.Unsafe;
@@ -9,8 +11,16 @@ namespace Revive.Slime
     public struct WorldSdfRuntime : IDisposable
     {
         public const uint Magic = 0x46445357;
-        public const int Version = 1;
+        public const int Version = 2;
         public const int HeaderSizeBytes = 40;
+
+        private const int PayloadKind_DeflateDenseFloat32 = 1;
+
+        private static void LogLoadError(TextAsset bytesAsset, string reason, int bytesLen)
+        {
+            string name = bytesAsset != null ? bytesAsset.name : "<null>";
+            Debug.LogError($"[WorldSdf] LoadFromBytes failed: {reason} asset={name} bytes={bytesLen}");
+        }
 
         public struct Volume
         {
@@ -380,13 +390,20 @@ namespace Revive.Slime
 
             if (bytesAsset == null) return;
             byte[] bytes = bytesAsset.bytes;
-            if (bytes == null || bytes.Length < HeaderSizeBytes) return;
+            if (bytes == null || bytes.Length < HeaderSizeBytes)
+            {
+                LogLoadError(bytesAsset, "bytes null or too small", bytes != null ? bytes.Length : 0);
+                return;
+            }
 
             uint magic = BitConverter.ToUInt32(bytes, 0);
-            if (magic != Magic) return;
+            if (magic != Magic)
+            {
+                LogLoadError(bytesAsset, $"magic mismatch (0x{magic:X8})", bytes.Length);
+                return;
+            }
 
             int version = BitConverter.ToInt32(bytes, 4);
-            if (version != Version) return;
 
             float ox1 = BitConverter.ToSingle(bytes, 8);
             float oy1 = BitConverter.ToSingle(bytes, 12);
@@ -397,17 +414,115 @@ namespace Revive.Slime
             float voxelSizeSim1 = BitConverter.ToSingle(bytes, 32);
             float maxDistanceSim1 = BitConverter.ToSingle(bytes, 36);
 
-            if (dimX1 <= 0 || dimY1 <= 0 || dimZ1 <= 0 || voxelSizeSim1 <= 0f) return;
-            if (maxDistanceSim1 <= 0f) return;
+            if (dimX1 <= 0 || dimY1 <= 0 || dimZ1 <= 0 || voxelSizeSim1 <= 0f)
+            {
+                LogLoadError(bytesAsset, $"invalid dims/voxel dims=({dimX1},{dimY1},{dimZ1}) voxelSim={voxelSizeSim1}", bytes.Length);
+                return;
+            }
+            if (maxDistanceSim1 <= 0f)
+            {
+                LogLoadError(bytesAsset, $"invalid maxDistanceSim={maxDistanceSim1}", bytes.Length);
+                return;
+            }
             int total1 = dimX1 * dimY1 * dimZ1;
-            int expectedBytes1 = HeaderSizeBytes + total1 * sizeof(float);
-            if (total1 <= 0 || bytes.Length != expectedBytes1) return;
+            if (total1 <= 0)
+            {
+                LogLoadError(bytesAsset, $"invalid total voxels={total1}", bytes.Length);
+                return;
+            }
 
-            var tmp = new float[total1];
-            Buffer.BlockCopy(bytes, HeaderSizeBytes, tmp, 0, total1 * sizeof(float));
+            if (version == 1)
+            {
+                int expectedBytes1 = HeaderSizeBytes + total1 * sizeof(float);
+                if (bytes.Length != expectedBytes1)
+                {
+                    LogLoadError(bytesAsset, $"v1 length mismatch expected={expectedBytes1} actual={bytes.Length}", bytes.Length);
+                    return;
+                }
 
-            _distances = new NativeArray<float>(total1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-            _distances.CopyFrom(tmp);
+                var tmp = new float[total1];
+                Buffer.BlockCopy(bytes, HeaderSizeBytes, tmp, 0, total1 * sizeof(float));
+
+                _distances = new NativeArray<float>(total1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _distances.CopyFrom(tmp);
+            }
+            else if (version == 2)
+            {
+                int payloadHeaderOffset = HeaderSizeBytes;
+                int payloadHeaderSize = sizeof(int) * 3;
+                if (bytes.Length < payloadHeaderOffset + payloadHeaderSize)
+                {
+                    LogLoadError(bytesAsset, $"v2 payload header too small", bytes.Length);
+                    return;
+                }
+
+                int payloadKind = BitConverter.ToInt32(bytes, payloadHeaderOffset + 0);
+                int uncompressedBytes = BitConverter.ToInt32(bytes, payloadHeaderOffset + 4);
+                int compressedBytes = BitConverter.ToInt32(bytes, payloadHeaderOffset + 8);
+
+                if (payloadKind != PayloadKind_DeflateDenseFloat32)
+                {
+                    LogLoadError(bytesAsset, $"v2 payloadKind unsupported kind={payloadKind}", bytes.Length);
+                    return;
+                }
+
+                int expectedUncompressedBytes = total1 * sizeof(float);
+                if (uncompressedBytes != expectedUncompressedBytes)
+                {
+                    LogLoadError(bytesAsset, $"v2 uncompressedBytes mismatch expected={expectedUncompressedBytes} actual={uncompressedBytes}", bytes.Length);
+                    return;
+                }
+                if (compressedBytes <= 0)
+                {
+                    LogLoadError(bytesAsset, $"v2 invalid compressedBytes={compressedBytes}", bytes.Length);
+                    return;
+                }
+
+                int payloadOffset = payloadHeaderOffset + payloadHeaderSize;
+                if (bytes.Length != payloadOffset + compressedBytes)
+                {
+                    LogLoadError(bytesAsset, $"v2 length mismatch expected={payloadOffset + compressedBytes} actual={bytes.Length}", bytes.Length);
+                    return;
+                }
+
+                byte[] raw;
+                try
+                {
+                    raw = new byte[uncompressedBytes];
+                    using (var src = new MemoryStream(bytes, payloadOffset, compressedBytes))
+                    using (var ds = new DeflateStream(src, CompressionMode.Decompress))
+                    {
+                        int readTotal = 0;
+                        while (readTotal < raw.Length)
+                        {
+                            int n = ds.Read(raw, readTotal, raw.Length - readTotal);
+                            if (n <= 0) break;
+                            readTotal += n;
+                        }
+                        if (readTotal != raw.Length)
+                        {
+                            LogLoadError(bytesAsset, $"v2 deflate read incomplete read={readTotal} expected={raw.Length}", bytes.Length);
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                    LogLoadError(bytesAsset, "v2 deflate exception", bytes.Length);
+                    return;
+                }
+
+                var tmp = new float[total1];
+                Buffer.BlockCopy(raw, 0, tmp, 0, uncompressedBytes);
+
+                _distances = new NativeArray<float>(total1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _distances.CopyFrom(tmp);
+            }
+            else
+            {
+                LogLoadError(bytesAsset, $"unsupported version={version}", bytes.Length);
+                return;
+            }
 
             _volume = new Volume
             {
