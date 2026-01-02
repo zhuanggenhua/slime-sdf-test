@@ -54,6 +54,7 @@ namespace Revive.GamePlay.Purification
         
         private bool _isRegistered = false;
         private Vector3 _initialScale;
+        private Vector3 _initialPosition;
         
         /// <summary>
         /// 鲜花状态枚举
@@ -89,6 +90,9 @@ namespace Revive.GamePlay.Purification
             
             // 保存初始缩放
             _initialScale = FlowerRoot.transform.localScale;
+            
+            // static purification listener, record initial position
+            _initialPosition = FlowerRoot.transform.position;
             
             // 初始状态设置为凋谢
             FlowerRoot.transform.localScale = _initialScale * WitheredScale;
@@ -152,7 +156,7 @@ namespace Revive.GamePlay.Purification
         
         public Vector3 GetListenerPosition()
         {
-            return transform.position;
+            return _initialPosition;
         }
         
         public string GetListenerName()
