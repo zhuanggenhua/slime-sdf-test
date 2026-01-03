@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using UnityEngine;
 
 namespace Revive.Slime
@@ -31,6 +32,29 @@ namespace Revive.Slime
         [Min(0.01f)]
         public float MaxThrowRange = 10f;
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("投掷后落地反馈")]
+        [SerializeField] private MMFeedbacks thrownImpactGroundFeedbacks;
+
+        [ChineseLabel("投掷后撞击反馈")]
+        [SerializeField] private MMFeedbacks thrownImpactOtherFeedbacks;
+
+        [ChineseLabel("投掷碰撞节流(秒)")]
+        [SerializeField, Min(0f), DefaultValue(0.08f)]
+        private float thrownImpactCooldownSeconds = 0.08f;
+
+        [ChineseLabel("投掷碰撞最小相对速度")]
+        [SerializeField, Min(0f), DefaultValue(1.5f)]
+        private float thrownImpactMinRelativeSpeed = 1.5f;
+
+        [ChineseLabel("落地法线阈值(Y)")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.6f)]
+        private float thrownImpactGroundNormalYThreshold = 0.6f;
+
+        [ChineseLabel("投掷碰撞有效窗口(秒)")]
+        [SerializeField, Min(0f), DefaultValue(6f)]
+        private float thrownImpactWindowSeconds = 6f;
+
         public Rigidbody Rigidbody { get; private set; }
         public Collider[] Colliders { get; private set; }
 
@@ -39,6 +63,8 @@ namespace Revive.Slime
         public Transform LastThrowerTransform { get; private set; }
         public Vector3 LastThrowerPositionWorld { get; private set; }
         public float LastThrowTime { get; private set; }
+
+        private float _nextAllowedThrownImpactTime;
 
         private void Awake()
         {
@@ -56,6 +82,7 @@ namespace Revive.Slime
             LastThrowerTransform = thrower;
             LastThrowerPositionWorld = thrower != null ? thrower.position : Vector3.zero;
             LastThrowTime = Time.time;
+            _nextAllowedThrownImpactTime = Time.time;
         }
 
         private void OnEnable()
@@ -83,6 +110,11 @@ namespace Revive.Slime
             if (collision == null)
                 return;
 
+            if (!IsHeld)
+            {
+                TryPlayThrownImpactFeedbacks(collision);
+            }
+
             if (!PickupEnabled || IsHeld)
                 return;
 
@@ -93,6 +125,55 @@ namespace Revive.Slime
                 slot = collision.gameObject.GetComponentInParent<SlimeCarrySlot>();
             }
             slot?.TryPickup(this);
+        }
+
+        private void TryPlayThrownImpactFeedbacks(Collision collision)
+        {
+            if (collision == null)
+                return;
+
+            if (IsHeld)
+                return;
+
+            if (LastThrowTime <= 0f)
+                return;
+
+            float window = Mathf.Max(0f, thrownImpactWindowSeconds);
+            if (window > 0f && Time.time > LastThrowTime + window)
+                return;
+
+            if (Time.time < _nextAllowedThrownImpactTime)
+                return;
+
+            float minSpeed = Mathf.Max(0f, thrownImpactMinRelativeSpeed);
+            if (minSpeed > 0f && collision.relativeVelocity.sqrMagnitude < (minSpeed * minSpeed))
+                return;
+
+            float bestNy = float.NegativeInfinity;
+            var contacts = collision.contacts;
+            if (contacts != null && contacts.Length > 0)
+            {
+                for (int i = 0; i < contacts.Length; i++)
+                {
+                    float ny = contacts[i].normal.y;
+                    if (ny > bestNy)
+                        bestNy = ny;
+                }
+            }
+
+            bool isGroundLike = bestNy >= Mathf.Clamp01(thrownImpactGroundNormalYThreshold);
+            Vector3 pos = collision.contactCount > 0 ? collision.GetContact(0).point : transform.position;
+
+            if (isGroundLike)
+            {
+                thrownImpactGroundFeedbacks?.PlayFeedbacks(pos);
+            }
+            else
+            {
+                thrownImpactOtherFeedbacks?.PlayFeedbacks(pos);
+            }
+
+            _nextAllowedThrownImpactTime = Time.time + Mathf.Max(0f, thrownImpactCooldownSeconds);
         }
     }
 }

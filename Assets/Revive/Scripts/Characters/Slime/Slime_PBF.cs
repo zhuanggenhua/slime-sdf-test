@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using MoreMountains.TopDownEngine;
 using Unity.Collections;
 using Unity.Jobs;
@@ -778,10 +779,13 @@ namespace Revive.Slime
             if (!enableWatering)
                 return;
 
+            double invFreqMs = 1000.0 / Stopwatch.Frequency;
+
             var instances = PbfWaterReceiver.Instances;
             if (instances == null || instances.Count == 0)
                 return;
 
+            PerformanceProfiler.Begin("Watering_BuildReceiverList");
             _wateringReceivers.Clear();
             for (int i = 0; i < instances.Count; i++)
             {
@@ -792,10 +796,14 @@ namespace Revive.Slime
                 _wateringReceivers.Add(r);
             }
 
+            PerformanceProfiler.End("Watering_BuildReceiverList");
+
             if (_wateringReceivers.Count == 0)
                 return;
 
+            PerformanceProfiler.Begin("Watering_SortReceivers");
             _wateringReceivers.Sort(CompareWaterReceiver);
+            PerformanceProfiler.End("Watering_SortReceivers");
 
             int mainCount = MainActiveParticles;
             int dropletCount = DropletActiveParticles;
@@ -812,6 +820,17 @@ namespace Revive.Slime
             _wateringReservedMain.Clear();
             _wateringReservedDroplets.Clear();
 
+            int receiversProcessed = 0;
+            int receiversWithBounds = 0;
+            int receiversWithTarget = 0;
+            int candidatesMain = 0;
+            int candidatesDroplets = 0;
+            int containsCalls = 0;
+            long containsTicks = 0;
+            long queryMainTicks = 0;
+            long queryDropletsTicks = 0;
+            long consumeSortApplyTicks = 0;
+
             for (int r = 0; r < _wateringReceivers.Count; r++)
             {
                 var receiver = _wateringReceivers[r];
@@ -821,17 +840,23 @@ namespace Revive.Slime
                 if (!receiver.WantsWater)
                     continue;
 
+                receiversProcessed++;
+
                 bool hasBounds = receiver.TryGetVolumeBoundsWorld(out Bounds boundsWorld);
                 if (!hasBounds)
                 {
                     continue;
                 }
 
+                receiversWithBounds++;
+
                 var target = receiver.Target;
                 if (target == null)
                 {
                     continue;
                 }
+
+                receiversWithTarget++;
 
                 int maxConsume = receiver.MaxConsumePerUpdate;
                 float3 minSim = (float3)boundsWorld.min * WorldToSimScale;
@@ -841,6 +866,7 @@ namespace Revive.Slime
 
                 if (mainCount > 0)
                 {
+                    long t0 = Stopwatch.GetTimestamp();
                     WaterQueryMainPartition(
                         receiver,
                         boundsWorld,
@@ -851,11 +877,16 @@ namespace Revive.Slime
                         minSim,
                         maxSim,
                         maxConsume,
-                        ref consumedByThis);
+                        ref consumedByThis,
+                        ref candidatesMain,
+                        ref containsCalls,
+                        ref containsTicks);
+                    queryMainTicks += (Stopwatch.GetTimestamp() - t0);
                 }
 
                 if (receiver.ConsumeDroplets && dropletCount > 0 && (maxConsume <= 0 || consumedByThis < maxConsume))
                 {
+                    long t0 = Stopwatch.GetTimestamp();
                     WaterQueryDropletPartition(
                         receiver,
                         boundsWorld,
@@ -864,7 +895,11 @@ namespace Revive.Slime
                         minSim,
                         maxSim,
                         maxConsume,
-                        ref consumedByThis);
+                        ref consumedByThis,
+                        ref candidatesDroplets,
+                        ref containsCalls,
+                        ref containsTicks);
+                    queryDropletsTicks += (Stopwatch.GetTimestamp() - t0);
                 }
 
                 if (consumedByThis > 0)
@@ -878,23 +913,44 @@ namespace Revive.Slime
                 }
             }
 
+            PerformanceProfiler.Add("Watering_QueryMain", queryMainTicks * invFreqMs);
+            PerformanceProfiler.Add("Watering_QueryDroplets", queryDropletsTicks * invFreqMs);
+            PerformanceProfiler.Add("Watering_ContainsPointWorld", containsTicks * invFreqMs);
+
             if (_wateringConsumeDroplets.Count > 0)
             {
+                long t0 = Stopwatch.GetTimestamp();
                 _wateringConsumeDroplets.Sort();
                 for (int i = _wateringConsumeDroplets.Count - 1; i >= 0; i--)
                 {
                     TryConsumeDropletParticle(_wateringConsumeDroplets[i]);
                 }
+                consumeSortApplyTicks += (Stopwatch.GetTimestamp() - t0);
             }
 
             if (_wateringConsumeMain.Count > 0)
             {
+                long t0 = Stopwatch.GetTimestamp();
                 _wateringConsumeMain.Sort();
                 for (int i = _wateringConsumeMain.Count - 1; i >= 0; i--)
                 {
                     TryConsumeMainParticle(_wateringConsumeMain[i]);
                 }
+                consumeSortApplyTicks += (Stopwatch.GetTimestamp() - t0);
             }
+
+            PerformanceProfiler.Add("Watering_ConsumeSortAndApply", consumeSortApplyTicks * invFreqMs);
+
+            PerformanceProfiler.CounterSet("Watering_Receivers", _wateringReceivers.Count);
+            PerformanceProfiler.CounterSet("Watering_ReceiversProcessed", receiversProcessed);
+            PerformanceProfiler.CounterSet("Watering_ReceiversWithBounds", receiversWithBounds);
+            PerformanceProfiler.CounterSet("Watering_ReceiversWithTarget", receiversWithTarget);
+            PerformanceProfiler.CounterSet("Watering_CandidatesMain", candidatesMain);
+            PerformanceProfiler.CounterSet("Watering_CandidatesDroplets", candidatesDroplets);
+            PerformanceProfiler.CounterSet("Watering_ContainsCalls", containsCalls);
+            PerformanceProfiler.CounterSet("Watering_ConsumeMain", _wateringConsumeMain.Count);
+            PerformanceProfiler.CounterSet("Watering_ConsumeDroplets", _wateringConsumeDroplets.Count);
+            PerformanceProfiler.CounterSet("Watering_ConsumeTotal", _wateringConsumeMain.Count + _wateringConsumeDroplets.Count);
         }
 
         private static int CompareWaterReceiver(PbfWaterReceiver a, PbfWaterReceiver b)
@@ -921,7 +977,10 @@ namespace Revive.Slime
             float3 minSim,
             float3 maxSim,
             int maxConsume,
-            ref int consumedByThis)
+            ref int consumedByThis,
+            ref int candidatesMain,
+            ref int containsCalls,
+            ref long containsTicks)
         {
             int3 minCoord = PBF_Utils.GetCoord(minSim);
             int3 maxCoord = PBF_Utils.GetCoord(maxSim);
@@ -989,7 +1048,13 @@ namespace Revive.Slime
                     }
 
                     Vector3 posWorld = (Vector3)(pos * SimToWorldScale);
-                    if (!receiver.ContainsPointWorld(posWorld))
+
+                    candidatesMain++;
+                    containsCalls++;
+                    long t0 = Stopwatch.GetTimestamp();
+                    bool inside = receiver.ContainsPointWorld(posWorld);
+                    containsTicks += (Stopwatch.GetTimestamp() - t0);
+                    if (!inside)
                     {
                         continue;
                     }
@@ -1012,7 +1077,10 @@ namespace Revive.Slime
             float3 minSim,
             float3 maxSim,
             int maxConsume,
-            ref int consumedByThis)
+            ref int consumedByThis,
+            ref int candidatesDroplets,
+            ref int containsCalls,
+            ref long containsTicks)
         {
             for (int localIndex = 0; localIndex < dropletCount; localIndex++)
             {
@@ -1036,7 +1104,12 @@ namespace Revive.Slime
                 if (!boundsWorld.Contains(posWorld))
                     continue;
 
-                if (!receiver.ContainsPointWorld(posWorld))
+                candidatesDroplets++;
+                containsCalls++;
+                long t0 = Stopwatch.GetTimestamp();
+                bool inside = receiver.ContainsPointWorld(posWorld);
+                containsTicks += (Stopwatch.GetTimestamp() - t0);
+                if (!inside)
                     continue;
 
                 _wateringReservedDroplets.Add(globalIndex);
@@ -1118,6 +1191,10 @@ namespace Revive.Slime
         [SerializeField, Range(0f, 5f)]
         private float dropletDynamicDragRadiusWorld = 1.5f;
 
+        [ChineseLabel("动态碰撞转液体态"), Tooltip("开启后：水珠碰到动态碰撞体会切换为液体态（锁定）。默认关闭：碰撞不会改变水珠形态。")]
+        [SerializeField, DefaultValue(false)]
+        private bool dropletEnableLiquidModeOnDynamicCollision;
+
         [ChineseLabel("液体态PBF迭代数"), Tooltip("水珠进入液体态后的PBF迭代数（更省性能但体积约束更弱）")]
         [SerializeField, Range(1, 4)]
         private int dropletLiquidSolverIterations = 3;
@@ -1197,6 +1274,19 @@ namespace Revive.Slime
         private Vector3 _dbgRecallSphereHitNormalW;
 
         private int _dbgDropletCenterLogFrame = -999999;
+
+        private int _dbgEyeJitterLastLogFrame = -999999;
+        private Vector3 _dbgEyeJitterPrevSampleEyeWorld;
+        private bool _dbgEyeJitterPrevSampleEyeWorldValid;
+        private Vector3 _dbgEyeJitterPrevFrameEyeWorld;
+        private bool _dbgEyeJitterPrevFrameEyeWorldValid;
+        private Vector3 _dbgEyeJitterPrevFrameTargetWorld;
+        private bool _dbgEyeJitterPrevFrameTargetWorldValid;
+        private Vector3 _dbgEyeJitterPrevRayDir;
+        private bool _dbgEyeJitterPrevRayDirValid;
+        private int _dbgEyeJitterBurstFramesLeft;
+        private int _dbgEyeJitterLastBurstStartFrame = -999999;
+        private bool _dbgEyeJitterCallFromRearrange;
 
         private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
 
@@ -1280,6 +1370,8 @@ namespace Revive.Slime
         		private Bounds _bounds;
 		private Vector3 _velocity = Vector3.zero;
 		private Vector3 _prevTransPosition; // 上一帧 trans.position，用于计算速度
+		private Vector3 _lastFixedTransPosWorld;
+		private bool _lastFixedTransPosWorldInitialized;
 
 		private Vector3 _renderVelocity = Vector3.zero;
 		private Vector3 _prevRenderTransPosition;
@@ -1299,6 +1391,8 @@ namespace Revive.Slime
 
 		private WorldSdfRuntime _worldStaticSdf;
 		private NativeArray<float> _dummyWorldSdfDistances;
+		private NativeArray<int> _dummyWorldSdfBrickOffsets;
+		private NativeArray<float> _dummyWorldSdfBrickDistances;
 		private WorldSdfRuntime.Volume _dummyWorldSdfVolume;
 		private NativeArray<float> _dummyTerrainHeights01;
 		private NativeArray<float> _terrainHeights01;
@@ -1339,6 +1433,17 @@ namespace Revive.Slime
                 _dummyWorldSdfDistances[0] = 1000000f;
             }
 
+			if (!_dummyWorldSdfBrickOffsets.IsCreated)
+			{
+				_dummyWorldSdfBrickOffsets = new NativeArray<int>(1, Allocator.Persistent);
+				_dummyWorldSdfBrickOffsets[0] = -1;
+			}
+			if (!_dummyWorldSdfBrickDistances.IsCreated)
+			{
+				_dummyWorldSdfBrickDistances = new NativeArray<float>(1, Allocator.Persistent);
+				_dummyWorldSdfBrickDistances[0] = 1000000f;
+			}
+
 			if (!_dummyTerrainHeights01.IsCreated)
 			{
 				_dummyTerrainHeights01 = new NativeArray<float>(1, Allocator.Persistent);
@@ -1357,6 +1462,12 @@ namespace Revive.Slime
                 VoxelSizeSim = 1f,
                 MaxDistanceSim = 1000000f,
                 DenseDistancesSim = _dummyWorldSdfDistances,
+				BrickSize = 1,
+				BrickDims = new int3(1, 1, 1),
+				BrickStrideY = 1,
+				BrickStrideX = 1,
+				BrickOffsets = _dummyWorldSdfBrickOffsets,
+				BrickDistances = _dummyWorldSdfBrickDistances,
             };
         }
         
@@ -1641,6 +1752,8 @@ namespace Revive.Slime
             float3 spawnCenter = trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero;
             // 初始化 _prevTransPosition，避免第一帧速度计算错误
             _prevTransPosition = trans != null ? trans.position : Vector3.zero;
+            _lastFixedTransPosWorld = _prevTransPosition;
+            _lastFixedTransPosWorldInitialized = trans != null;
             
             // 计算立方体边长，确保能容纳 initialMainCount 个粒子
             int cubeSize = Mathf.CeilToInt(Mathf.Pow(initialMainCount, 1f / 3f));
@@ -2010,6 +2123,8 @@ namespace Revive.Slime
 
             _worldStaticSdf.Dispose();
             if (_dummyWorldSdfDistances.IsCreated) _dummyWorldSdfDistances.Dispose();
+			if (_dummyWorldSdfBrickOffsets.IsCreated) _dummyWorldSdfBrickOffsets.Dispose();
+			if (_dummyWorldSdfBrickDistances.IsCreated) _dummyWorldSdfBrickDistances.Dispose();
 			if (_dummyTerrainHeights01.IsCreated) _dummyTerrainHeights01.Dispose();
             
             // 释放场景水珠子系统
@@ -2225,11 +2340,17 @@ namespace Revive.Slime
         {
             if (!_runtimeInitialized)
                 return Vector3.zero;
-            float predictDt = Time.time - Time.fixedTime;
-            if (predictDt < 0f) predictDt = 0f;
-            float fixedDt = Time.fixedDeltaTime;
-            if (predictDt > fixedDt) predictDt = fixedDt;
-            return _renderVelocity * predictDt;
+
+            if (trans == null)
+                return Vector3.zero;
+
+            if (!_lastFixedTransPosWorldInitialized)
+                return Vector3.zero;
+
+            Vector3 offset = trans.position - _lastFixedTransPosWorld;
+            if (offset.sqrMagnitude > 2500f)
+                return Vector3.zero;
+            return offset;
         }
 
         private void RenderBubbles()
@@ -2436,6 +2557,9 @@ namespace Revive.Slime
                 _renderVelocity = _velocity;
                 _prevRenderTransPosition = trans.position;
                 _renderVelocityInitialized = true;
+
+                _lastFixedTransPosWorld = trans.position;
+                _lastFixedTransPosWorldInitialized = true;
             }
             
             // 原版时序：不在 Simulate() 前更新 Center，让 ApplyForceJob 使用上一帧的 Center 和 Radius
@@ -2484,7 +2608,8 @@ namespace Revive.Slime
                 DynamicDragRadius = dropletDynamicDragRadiusWorld * WorldToSimScale,
                 LiquidSolverIterations = dropletLiquidSolverIterations,
                 LiquidGravityY = dropletLiquidGravityY,
-                DropletVerticalOffset = dropletVerticalOffset
+                DropletVerticalOffset = dropletVerticalOffset,
+                EnableLiquidModeOnDynamicCollision = dropletEnableLiquidModeOnDynamicCollision
             });
             
             // 地面高度：使用场景实际地面（世界Y=0）转为内部坐标
@@ -5512,7 +5637,10 @@ namespace Revive.Slime
                     }
                     
                     used[instanceID] = true;
+                    bool prevDbgFromRearrange = _dbgEyeJitterCallFromRearrange;
+                    _dbgEyeJitterCallFromRearrange = true;
                     UpdateInstanceController(instanceID, controllerID);
+                    _dbgEyeJitterCallFromRearrange = prevDbgFromRearrange;
                 }
 
                 for (int i = 0; i < _slimeInstances.Length; i++)
@@ -5543,7 +5671,10 @@ namespace Revive.Slime
                     }
 
                     int controllerID = _slimeInstances[_controlledInstance].ControllerSlot;
+                    bool prevDbgFromRearrange = _dbgEyeJitterCallFromRearrange;
+                    _dbgEyeJitterCallFromRearrange = true;
                     UpdateInstanceController(_controlledInstance, controllerID);
+                    _dbgEyeJitterCallFromRearrange = prevDbgFromRearrange;
                 }
             }
             else
@@ -5559,7 +5690,10 @@ namespace Revive.Slime
                     if (instanceID == _controlledInstance)
                     {
                         used[0] = true;
+                        bool prevDbgFromRearrangeControlled = _dbgEyeJitterCallFromRearrange;
+                        _dbgEyeJitterCallFromRearrange = true;
                         UpdateInstanceController(instanceID, 0);
+                        _dbgEyeJitterCallFromRearrange = prevDbgFromRearrangeControlled;
                         continue;
                     }
                     
@@ -5601,7 +5735,10 @@ namespace Revive.Slime
                     }
                     
                     used[controllerID] = true;
+                    bool prevDbgFromRearrange = _dbgEyeJitterCallFromRearrange;
+                    _dbgEyeJitterCallFromRearrange = true;
                     UpdateInstanceController(instanceID, controllerID);
+                    _dbgEyeJitterCallFromRearrange = prevDbgFromRearrange;
                 }
                 
                 for (int i = 0; i < _controllerBuffer.Length; i++)
@@ -5764,7 +5901,10 @@ namespace Revive.Slime
             float3 rayDir = math.normalizesafe(horizDir, new float3(0, 0, 1));
             
             // 直接从粒子质心发射射线（质心已经反映真实垂直分布，不需要额外偏移）
-            float3 newPos = eyeCenter + rayDir * (controller.Radius * 0.7f);
+            float3 basePos = eyeCenter + rayDir * (controller.Radius * 0.7f);
+            float3 newPos = basePos;
+            float3 surfacePos = new float3(float.NaN);
+            bool surfOk = false;
             bool doRaycast = renderMode == RenderMode.Surface && blockNum > 0 && (isControlled || (Time.frameCount % nonControlledRaycastIntervalFrames) == 0);
             if (doRaycast)
             {
@@ -5780,8 +5920,9 @@ namespace Revive.Slime
                     MaxRadius = controller.Radius,
                 }.Schedule().Complete();
 
-                float3 surfacePos = _boundsBuffer[0];
-                if (math.all(math.isfinite(surfacePos)))
+                surfacePos = _boundsBuffer[0];
+                surfOk = math.all(math.isfinite(surfacePos));
+                if (surfOk)
                 {
                     float actualSurfaceDist = math.length(surfacePos - eyeCenter);
                     float insetDepth = actualSurfaceDist * 0.2f;
@@ -5790,13 +5931,108 @@ namespace Revive.Slime
             }
             
             // 平滑过渡眼睛位置
-            float posLerpSpeed = isControlled ? 0.3f : 0.15f;
+            float posLerpK = isControlled ? 21.4005f : 9.7511f;
+            float posLerpSpeed = 1f - Mathf.Exp(-posLerpK * Time.deltaTime);
             slime.Pos = Vector3.Lerp(slime.Pos, newPos, posLerpSpeed);
             
             _slimeInstances[instanceID] = slime;
             
             if (isControlled)
             {
+                int frame = Time.frameCount;
+                float dt = Time.deltaTime;
+                float t = Time.time;
+                float ft = Time.fixedTime;
+
+                Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
+                Vector3 rawOffsetWorld = Vector3.zero;
+                if (trans != null && _lastFixedTransPosWorldInitialized)
+                    rawOffsetWorld = trans.position - _lastFixedTransPosWorld;
+
+                Vector3 eyeWorld = ((Vector3)slime.Pos) * SimToWorldScale + predictOffsetWorld;
+                Vector3 targetWorld = ((Vector3)newPos) * SimToWorldScale + predictOffsetWorld;
+                Vector3 eyeCenterWorld = ((Vector3)eyeCenter) * SimToWorldScale + predictOffsetWorld;
+                Vector3 baseTargetWorld = ((Vector3)basePos) * SimToWorldScale + predictOffsetWorld;
+                Vector3 prevTargetWorld = _dbgEyeJitterPrevFrameTargetWorld;
+                Vector3 fdTargetW = _dbgEyeJitterPrevFrameTargetWorldValid ? (targetWorld - prevTargetWorld) : Vector3.zero;
+                float fdTargetM = fdTargetW.magnitude;
+                Vector3 prevEyeWorld = _dbgEyeJitterPrevFrameEyeWorld;
+                Vector3 fdW = _dbgEyeJitterPrevFrameEyeWorldValid ? (eyeWorld - prevEyeWorld) : Vector3.zero;
+                float fdM = fdW.magnitude;
+                Vector3 dW = _dbgEyeJitterPrevSampleEyeWorldValid ? (eyeWorld - _dbgEyeJitterPrevSampleEyeWorld) : Vector3.zero;
+
+                Vector3 rayDirV3 = (Vector3)rayDir;
+                bool dirFlip = _dbgEyeJitterPrevRayDirValid && Vector3.Dot(_dbgEyeJitterPrevRayDir, rayDirV3) < 0f;
+
+                const int dbgIntervalFrames = 15;
+                const int burstLen = 20;
+                const int burstCooldownFrames = 60;
+                const float burstThresholdWorld = 0.03f;
+
+                if ((fdM > burstThresholdWorld || dirFlip) && (frame - _dbgEyeJitterLastBurstStartFrame) > burstCooldownFrames)
+                {
+                    _dbgEyeJitterBurstFramesLeft = burstLen;
+                    _dbgEyeJitterLastBurstStartFrame = frame;
+                }
+
+                bool shouldLog = false;
+                int burstLeft = _dbgEyeJitterBurstFramesLeft;
+                bool isBurst = burstLeft > 0;
+                if (isBurst)
+                {
+                    shouldLog = true;
+                    _dbgEyeJitterBurstFramesLeft = burstLeft - 1;
+                }
+                else if ((frame - _dbgEyeJitterLastLogFrame) >= dbgIntervalFrames)
+                {
+                    shouldLog = true;
+                }
+
+                if (shouldLog)
+                {
+                    Vector3 surfSimV3 = (Vector3)surfacePos;
+                    string msg = "[EyeJitterDbg]" +
+                                 " f=" + frame +
+                                 " dt=" + dt.ToString("F4") +
+                                 " t=" + t.ToString("F3") +
+                                 " ft=" + ft.ToString("F3") +
+                                 " offW=" + predictOffsetWorld.ToString("F3") +
+                                 " rawOffW=" + rawOffsetWorld.ToString("F3") +
+                                 " eyeW=" + eyeWorld.ToString("F3") +
+                                 " eyeCenterW=" + eyeCenterWorld.ToString("F3") +
+                                 " baseTargetW=" + baseTargetWorld.ToString("F3") +
+                                 " rayDir=" + rayDirV3.ToString("F3") +
+                                 " lerp=" + posLerpSpeed.ToString("F3") +
+                                 " dW=" + dW.ToString("F3") +
+                                 " fdW=" + fdW.ToString("F3") +
+                                 " fdM=" + fdM.ToString("F4") +
+                                 " fdTargetW=" + fdTargetW.ToString("F3") +
+                                 " fdTargetM=" + fdTargetM.ToString("F4") +
+                                 " prevEyeW=" + prevEyeWorld.ToString("F3") +
+                                 " targetW=" + targetWorld.ToString("F3") +
+                                 " dirFlip=" + (dirFlip ? 1 : 0) +
+                                 " burstLeft=" + burstLeft +
+                                 " fromRearr=" + (_dbgEyeJitterCallFromRearrange ? 1 : 0) +
+                                 " doRay=" + (doRaycast ? 1 : 0) +
+                                 " surfOk=" + (surfOk ? 1 : 0) +
+                                 " surfSim=" + surfSimV3.ToString("F3");
+                    Debug.Log(msg);
+                    _dbgEyeJitterLastLogFrame = frame;
+
+                    if (!isBurst)
+                    {
+                        _dbgEyeJitterPrevSampleEyeWorld = eyeWorld;
+                        _dbgEyeJitterPrevSampleEyeWorldValid = true;
+                    }
+                }
+
+                _dbgEyeJitterPrevFrameEyeWorld = eyeWorld;
+                _dbgEyeJitterPrevFrameEyeWorldValid = true;
+                _dbgEyeJitterPrevFrameTargetWorld = targetWorld;
+                _dbgEyeJitterPrevFrameTargetWorldValid = true;
+                _dbgEyeJitterPrevRayDir = rayDirV3;
+                _dbgEyeJitterPrevRayDirValid = true;
+
                 // 只回写 Velocity，不改 Center（避免与 FixedUpdate 开头设置的 Center 不一致）
                 _controllerBuffer[controllerID] = controller;
             }
@@ -5861,12 +6097,7 @@ namespace Revive.Slime
         /// <returns>总渲染粒子数（activeParticles + dropletCount）</returns>
         private int ConvertToWorldPositionsForRendering()
         {
-            float predictDt = Time.time - Time.fixedTime;
-            if (predictDt < 0f) predictDt = 0f;
-            float fixedDt = Time.fixedDeltaTime;
-            if (predictDt > fixedDt) predictDt = fixedDt;
-
-            float3 predictOffset = (float3)(_renderVelocity * WorldToSimScale) * predictDt;
+            float3 renderOffsetSim = (float3)(GetRenderPredictOffsetWorld() * WorldToSimScale);
 
             // 1. 主体粒子 [0, activeParticles)
             for (int i = 0; i < activeParticles; i++)
@@ -5874,7 +6105,7 @@ namespace Revive.Slime
                 var p = _particles[i];
                 float3 worldPos = Simulation_PBF.GetWorldPosition(p, _controllerBuffer, _sourceControllers);
                 if (p.Type == ParticleType.MainBody || p.Type == ParticleType.Separated)
-                    worldPos += predictOffset;
+                    worldPos += renderOffsetSim;
                 p.Position = worldPos;
                 _particlesRenderBuffer[i] = p;
             }
@@ -6316,7 +6547,7 @@ namespace Revive.Slime
             if (math.lengthsq(rayDir) < 1e-6f)
                 return false;
 
-            bool useSdf = _currentColliderCount <= 0 && recallAvoidUseStaticSdf && useWorldStaticSdf && _worldStaticSdf.IsCreated;
+            bool useSdf = recallAvoidUseStaticSdf && useWorldStaticSdf && _worldStaticSdf.IsCreated;
             if (useSdf)
             {
                 long tSdf0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -6449,6 +6680,8 @@ namespace Revive.Slime
             for (int c = 0; c < _currentColliderCount; c++)
             {
                 MyBoxCollider box = _colliderBuffer[c];
+                if (useSdf && box.IsDynamic == 0)
+                    continue;
 
                 perf.ObbChecked++;
 

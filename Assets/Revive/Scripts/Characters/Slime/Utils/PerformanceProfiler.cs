@@ -48,9 +48,19 @@ namespace Revive.Slime
             public int CallCount;
             public Stopwatch Timer;
         }
+
+        private struct CounterData
+        {
+            public long Current;
+            public long Total;
+            public long Max;
+        }
         
         private static Dictionary<string, StageData> _stages = new Dictionary<string, StageData>();
         private static List<string> _stageKeys = new List<string>(64);
+
+        private static readonly Dictionary<string, CounterData> _counters = new Dictionary<string, CounterData>();
+        private static readonly List<string> _counterKeys = new List<string>(32);
         private static Stopwatch _frameTimer = new Stopwatch();
         private static int _frameCount = 0;
         private static double _totalFrameTime = 0;
@@ -171,6 +181,46 @@ namespace Revive.Slime
             if (!_currentFrameStages.Contains(stageName))
                 _currentFrameStages.Add(stageName);
         }
+
+        public static void CounterSet(string counterName, long value)
+        {
+            if (!Enabled) return;
+
+            if (!_counters.TryGetValue(counterName, out var data))
+            {
+                data = new CounterData
+                {
+                    Current = 0,
+                    Total = 0,
+                    Max = 0
+                };
+                _counters[counterName] = data;
+                _counterKeys.Add(counterName);
+            }
+
+            data.Current = value;
+            _counters[counterName] = data;
+        }
+
+        public static void CounterAdd(string counterName, long delta)
+        {
+            if (!Enabled) return;
+
+            if (!_counters.TryGetValue(counterName, out var data))
+            {
+                data = new CounterData
+                {
+                    Current = 0,
+                    Total = 0,
+                    Max = 0
+                };
+                _counters[counterName] = data;
+                _counterKeys.Add(counterName);
+            }
+
+            data.Current += delta;
+            _counters[counterName] = data;
+        }
         
         /// <summary>
         /// 开始新的一帧（在 Update 或 FixedUpdate 开头调用）
@@ -193,6 +243,16 @@ namespace Revive.Slime
                     _stages[key] = data;
                 }
             }
+
+            for (int i = 0; i < _counterKeys.Count; i++)
+            {
+                string key = _counterKeys[i];
+                if (_counters.TryGetValue(key, out var data))
+                {
+                    data.Current = 0;
+                    _counters[key] = data;
+                }
+            }
         }
         
         /// <summary>
@@ -211,6 +271,17 @@ namespace Revive.Slime
 
             _totalProfiledFrameTime += profiledFrameTime;
             _maxProfiledFrameTime = Math.Max(_maxProfiledFrameTime, profiledFrameTime);
+
+            for (int i = 0; i < _counterKeys.Count; i++)
+            {
+                string key = _counterKeys[i];
+                if (_counters.TryGetValue(key, out var data))
+                {
+                    data.Total += data.Current;
+                    data.Max = Math.Max(data.Max, data.Current);
+                    _counters[key] = data;
+                }
+            }
             
             bool isSlowFrame = frameTime > FrameTimeWarningThreshold;
             if (isSlowFrame)
@@ -243,6 +314,8 @@ namespace Revive.Slime
         {
             _stages.Clear();
             _stageKeys.Clear();
+            _counters.Clear();
+            _counterKeys.Clear();
             _endWithoutBeginLastWarningFrame.Clear();
             _frameCount = 0;
             _totalFrameTime = 0;
@@ -341,6 +414,16 @@ namespace Revive.Slime
                     }
                 }
 
+                for (int i = 0; i < _counterKeys.Count; i++)
+                {
+                    string counterName = _counterKeys[i];
+                    if (_counters.TryGetValue(counterName, out var data) && data.Current != 0)
+                    {
+                        hash = (hash * 31) ^ counterName.GetHashCode();
+                        hash = (hash * 31) ^ (int)(data.Current & 0x7fffffff);
+                    }
+                }
+
                 return hash;
             }
         }
@@ -362,6 +445,21 @@ namespace Revive.Slime
                 {
                     string color = data.CurrentMs > StageTimeWarningThreshold ? "red" : "white";
                     sb.Append($"<color={color}>{stageName}={data.CurrentMs:F2}ms/{data.CurrentFrameTotalMs:F2}ms</color> ");
+                }
+            }
+
+            bool hasAnyCounter = false;
+            for (int i = 0; i < _counterKeys.Count; i++)
+            {
+                string counterName = _counterKeys[i];
+                if (_counters.TryGetValue(counterName, out var data) && data.Current != 0)
+                {
+                    if (!hasAnyCounter)
+                    {
+                        sb.Append("| ");
+                        hasAnyCounter = true;
+                    }
+                    sb.Append($"<color=cyan>{counterName}={data.Current}</color> ");
                 }
             }
             

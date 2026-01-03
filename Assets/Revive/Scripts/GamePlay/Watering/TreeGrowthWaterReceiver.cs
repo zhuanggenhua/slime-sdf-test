@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -29,8 +30,21 @@ namespace Revive.Environment.Watering
         [FormerlySerializedAs("xzScalePerStage")]
         [SerializeField] private float yScalePerStage = 0.2f;
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("浇水命中反馈")]
+        [SerializeField] private MMFeedbacks waterTickFeedbacks;
+
+        [ChineseLabel("浇水命中节流(秒)")]
+        [SerializeField, Min(0f), DefaultValue(0.12f)]
+        private float waterTickCooldownSeconds = 0.12f;
+
+        [ChineseLabel("阶段提升反馈")]
+        [SerializeField] private MMFeedbacks stageUpFeedbacks;
+
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
+
+        private float _nextAllowedWaterTickTime;
 
         public override bool WantsWater => !(maxStage > 0 && stage >= maxStage);
 
@@ -48,6 +62,12 @@ namespace Revive.Environment.Watering
             if (targetTransform == null)
                 targetTransform = transform;
 
+            if (Time.time >= _nextAllowedWaterTickTime)
+            {
+                waterTickFeedbacks?.PlayFeedbacks(input.PositionWorld);
+                _nextAllowedWaterTickTime = Time.time + Mathf.Max(0f, waterTickCooldownSeconds);
+            }
+
             if (!_baseScaleInitialized && targetTransform != null)
             {
                 _baseScaleInitialized = true;
@@ -64,6 +84,7 @@ namespace Revive.Environment.Watering
                 charge -= chargePerStage;
                 stage++;
                 ApplyStageScale();
+                stageUpFeedbacks?.PlayFeedbacks(input.PositionWorld);
             }
         }
 

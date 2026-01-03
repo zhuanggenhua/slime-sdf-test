@@ -88,6 +88,20 @@ namespace Revive.Environment.Watering
             if (triggerCollider == null || !triggerCollider.enabled)
                 return false;
 
+            if (triggerCollider is BoxCollider box)
+            {
+                Transform t = box.transform;
+                if (t == null)
+                    return false;
+
+                Vector3 local = t.InverseTransformPoint(pointWorld) - box.center;
+                Vector3 half = box.size * 0.5f;
+                const float eps = 1e-6f;
+                return Mathf.Abs(local.x) <= half.x + eps &&
+                       Mathf.Abs(local.y) <= half.y + eps &&
+                       Mathf.Abs(local.z) <= half.z + eps;
+            }
+
             Vector3 closest = triggerCollider.ClosestPoint(pointWorld);
             Vector3 d = closest - pointWorld;
             return d.sqrMagnitude <= 1e-8f;

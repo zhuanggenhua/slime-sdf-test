@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using MoreMountains.Feedbacks;
+using MoreMountains.TopDownEngine;
 using UnityEngine;
 using Revive.Slime;
 
@@ -30,9 +33,21 @@ namespace Revive.Environment
         [Revive.ChineseLabel("影响层")]
         public LayerMask AffectsLayers = ~0;
 
+        [Revive.ChineseHeader("反馈")]
+        [Revive.ChineseLabel("进入风场反馈")]
+        [SerializeField] private MMFeedbacks enterFeedbacks;
+
+        [Revive.ChineseLabel("离开风场反馈")]
+        [SerializeField] private MMFeedbacks exitFeedbacks;
+
+        [Revive.ChineseLabel("风场持续反馈(Loop)")]
+        [SerializeField] private MMFeedbacks loopFeedbacks;
+
         public Collider ZoneCollider { get; private set; }
 
         public Bounds WorldBounds => ZoneCollider != null ? ZoneCollider.bounds : default;
+
+        private readonly HashSet<int> _activeTargetIds = new HashSet<int>();
 
         private void Awake()
         {
@@ -48,6 +63,9 @@ namespace Revive.Environment
         private void OnDisable()
         {
             WindFieldRegistry.Unregister(this);
+
+            _activeTargetIds.Clear();
+            loopFeedbacks?.StopFeedbacks();
         }
 
         private void Reset()
@@ -125,6 +143,74 @@ namespace Revive.Environment
             {
                 ZoneCollider.isTrigger = true;
             }
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            if (!TryGetFeedbackTargetId(other, out int id, out Vector3 pos))
+                return;
+
+            bool wasEmpty = _activeTargetIds.Count == 0;
+            if (_activeTargetIds.Add(id))
+            {
+                enterFeedbacks?.PlayFeedbacks(pos);
+
+                if (wasEmpty)
+                {
+                    loopFeedbacks?.PlayFeedbacks(pos);
+                }
+            }
+        }
+
+        private void OnTriggerExit(Collider other)
+        {
+            if (!TryGetFeedbackTargetId(other, out int id, out Vector3 pos))
+                return;
+
+            if (_activeTargetIds.Remove(id))
+            {
+                exitFeedbacks?.PlayFeedbacks(pos);
+
+                if (_activeTargetIds.Count == 0)
+                {
+                    loopFeedbacks?.StopFeedbacks();
+                }
+            }
+        }
+
+        private bool TryGetFeedbackTargetId(Collider other, out int targetId, out Vector3 position)
+        {
+            targetId = 0;
+            position = transform.position;
+
+            if (other == null)
+                return false;
+
+            GameObject go = other.gameObject;
+            if (go == null)
+                return false;
+
+            if (!AffectsLayer(go.layer))
+                return false;
+
+            var controller = other.GetComponentInParent<TopDownController3D>();
+            var carryable = other.GetComponentInParent<SlimeCarryableObject>();
+            if (controller == null && carryable == null)
+                return false;
+
+            if (carryable != null && !AffectsCarryable(carryable))
+                return false;
+
+            if (other.attachedRigidbody != null)
+            {
+                targetId = other.attachedRigidbody.GetInstanceID();
+                position = other.attachedRigidbody.position;
+                return true;
+            }
+
+            targetId = go.transform.root.gameObject.GetInstanceID();
+            position = go.transform.root.position;
+            return true;
         }
 
         private void OnDrawGizmosSelected()

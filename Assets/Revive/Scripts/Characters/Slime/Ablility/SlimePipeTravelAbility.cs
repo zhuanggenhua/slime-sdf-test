@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using MoreMountains.TopDownEngine;
 using UnityEngine;
 using Revive.Environment;
@@ -19,6 +20,10 @@ namespace Revive.Slime
         private bool _alignedToPath;
         private Vector3 _lastForward = Vector3.forward;
         private Vector3 _lastTravelVelocity;
+
+        [ChineseHeader("反馈")]
+        [ChineseLabel("退出推送反馈")]
+        [SerializeField] private MMFeedbacks exitPushFeedbacks;
 
         [Header("Debug")]
         [SerializeField, Min(1)]
@@ -453,6 +458,10 @@ namespace Revive.Slime
 
             _isTravelling = true;
 
+            PlayAbilityStartSfx();
+            PlayAbilityStartFeedbacks();
+            PlayAbilityUsedSfx();
+
             if (Debug.isDebugBuild)
             {
                 Debug.Log(
@@ -466,6 +475,10 @@ namespace Revive.Slime
         {
             if (!_isTravelling)
                 return;
+
+            StopAbilityUsedSfx();
+            PlayAbilityStopSfx();
+            PlayAbilityStopFeedbacks();
 
             if (Debug.isDebugBuild && _path != null)
             {
@@ -530,6 +543,8 @@ namespace Revive.Slime
                 StopTravel();
                 return;
             }
+
+            exitPushFeedbacks?.PlayFeedbacks(transform.position);
 
             Vector3 tangent = _path.EvaluateTangent(_t);
             if (_reverse)

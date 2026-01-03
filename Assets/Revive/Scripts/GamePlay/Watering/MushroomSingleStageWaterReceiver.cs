@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using UnityEngine;
 using Revive.Environment;
 using Revive.Slime;
@@ -22,6 +23,17 @@ namespace Revive.Environment.Watering
         [ChineseLabel("Q弹过渡")]
         [SerializeField] private LocalScaleTransition scaleTransition = new LocalScaleTransition();
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("浇水命中反馈")]
+        [SerializeField] private MMFeedbacks waterTickFeedbacks;
+
+        [ChineseLabel("浇水命中节流(秒)")]
+        [SerializeField, Min(0f), DefaultValue(0.12f)]
+        private float waterTickCooldownSeconds = 0.12f;
+
+        [ChineseLabel("激活反馈")]
+        [SerializeField] private MMFeedbacks waterCompleteFeedbacks;
+
         [ChineseHeader("浇水参数")]
         [ChineseLabel("当前蓄水量(运行时)")]
         [SerializeField] private float charge;
@@ -34,6 +46,8 @@ namespace Revive.Environment.Watering
         private bool _baseScaleInitialized;
         private bool _activated;
         private MushroomJumpPad3D _jumpPad;
+
+        private float _nextAllowedWaterTickTime;
 
         public override bool WantsWater => !_activated;
 
@@ -78,12 +92,20 @@ namespace Revive.Environment.Watering
 
             EnsureBaseScale();
 
+            if (Time.time >= _nextAllowedWaterTickTime)
+            {
+                waterTickFeedbacks?.PlayFeedbacks(input.PositionWorld);
+                _nextAllowedWaterTickTime = Time.time + Mathf.Max(0f, waterTickCooldownSeconds);
+            }
+
             charge += input.Amount;
             if (chargeRequired > 0f && charge >= chargeRequired)
             {
                 charge = 0f;
                 _activated = true;
                 EnsureJumpPad();
+
+                waterCompleteFeedbacks?.PlayFeedbacks(input.PositionWorld);
 
                 Vector3 targetScale = GetActivatedLocalScale();
                 TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>

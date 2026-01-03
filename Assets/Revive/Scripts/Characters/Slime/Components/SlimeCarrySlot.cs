@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 using MoreMountains.TopDownEngine;
+using MoreMountains.Feedbacks;
 
 namespace Revive.Slime
 {
@@ -42,6 +43,19 @@ namespace Revive.Slime
         [Min(0f)]
         public float PostThrowIgnoreDurationSeconds = 1.0f;
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("拾取反馈")]
+        [SerializeField] private MMFeedbacks pickupFeedbacks;
+
+        [ChineseLabel("投掷反馈")]
+        [SerializeField] private MMFeedbacks throwFeedbacks;
+
+        [ChineseLabel("卡住脱手反馈")]
+        [SerializeField] private MMFeedbacks autoDetachFeedbacks;
+
+        [ChineseLabel("消耗反馈")]
+        [SerializeField] private MMFeedbacks consumeFeedbacks;
+
         public bool HasHeldObject => _held != null;
 
         public SlimeCarryableObject HeldObject => _held;
@@ -50,6 +64,8 @@ namespace Revive.Slime
         private Rigidbody _heldRigidbody;
         private bool _heldWasKinematic;
         private bool _heldUsedGravity;
+        private RigidbodyInterpolation _heldInterpolation;
+        private bool _heldInterpolationCached;
         private Collider[] _heldColliders;
         private bool[] _heldColliderWasTrigger;
         private bool _heldIndexIgnored;
@@ -222,6 +238,11 @@ namespace Revive.Slime
 
             consumed = _held;
 
+            if (consumed != null)
+            {
+                consumeFeedbacks?.PlayFeedbacks(consumed.transform.position);
+            }
+
             if (restoreVisuals)
             {
                 RestoreHeldShadowState();
@@ -236,6 +257,8 @@ namespace Revive.Slime
                     index.RegisterDynamicColliders(_heldColliders);
                 }
             }
+
+            RestoreHeldInterpolation();
             _held.IsHeld = false;
 
             _held = null;
@@ -254,6 +277,16 @@ namespace Revive.Slime
             ApplyCarrySpecIfNeeded();
 
             return true;
+        }
+
+        private void RestoreHeldInterpolation()
+        {
+            if (!_heldInterpolationCached)
+                return;
+            if (_heldRigidbody == null)
+                return;
+            _heldRigidbody.interpolation = _heldInterpolation;
+            _heldInterpolationCached = false;
         }
 
         private void FixedUpdate()
@@ -363,9 +396,13 @@ namespace Revive.Slime
             _held = carryable;
             _held.IsHeld = true;
 
+            pickupFeedbacks?.PlayFeedbacks(carryable.transform.position);
+
             _heldRigidbody = carryable.Rigidbody;
             _heldWasKinematic = _heldRigidbody.isKinematic;
             _heldUsedGravity = _heldRigidbody.useGravity;
+            _heldInterpolation = _heldRigidbody.interpolation;
+            _heldInterpolationCached = true;
             _heldMoveBlockedThisFrame = false;
             _heldMoveBlockedSeconds = 0f;
 
@@ -377,6 +414,7 @@ namespace Revive.Slime
 
             _heldRigidbody.isKinematic = true;
             _heldRigidbody.useGravity = false;
+            _heldRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
 
             _heldColliders = carryable.Colliders;
             CacheAndSetHeldColliderTriggerState(true);
@@ -434,6 +472,7 @@ namespace Revive.Slime
                 _heldColliders = null;
                 _heldColliderWasTrigger = null;
                 _heldIndexIgnored = false;
+                _heldInterpolationCached = false;
                 _heldRenderers = null;
                 _heldRendererReceiveShadows = null;
                 _heldRendererShadowCastingModes = null;
@@ -476,6 +515,11 @@ namespace Revive.Slime
 
             rb.isKinematic = false;
             rb.useGravity = _heldUsedGravity;
+            if (_heldInterpolationCached)
+            {
+                rb.interpolation = _heldInterpolation;
+                _heldInterpolationCached = false;
+            }
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
@@ -483,6 +527,8 @@ namespace Revive.Slime
 
             Vector3 impulse = ComputeThrowImpulse(carryable, rb);
             rb.AddForce(impulse, ForceMode.Impulse);
+
+            throwFeedbacks?.PlayFeedbacks(rb.position);
 
             if (objectColliders != null)
             {
@@ -507,6 +553,7 @@ namespace Revive.Slime
             _heldColliders = null;
             _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
+            _heldInterpolationCached = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
             _heldRendererShadowCastingModes = null;
@@ -619,6 +666,8 @@ namespace Revive.Slime
             if (_held == null)
                 return;
 
+            autoDetachFeedbacks?.PlayFeedbacks(_held.transform.position);
+
             var carryable = _held;
             var rb = _heldRigidbody;
             var objectColliders = _heldColliders;
@@ -648,6 +697,11 @@ namespace Revive.Slime
             {
                 rb.isKinematic = _heldWasKinematic;
                 rb.useGravity = _heldUsedGravity;
+                if (_heldInterpolationCached)
+                {
+                    rb.interpolation = _heldInterpolation;
+                    _heldInterpolationCached = false;
+                }
                 rb.position = releasePos;
                 if (!rb.isKinematic)
                 {
@@ -673,6 +727,7 @@ namespace Revive.Slime
             _pickupInTransition = false;
             _heldMoveBlockedThisFrame = false;
             _heldMoveBlockedSeconds = 0f;
+            _heldInterpolationCached = false;
 
             ApplyCarrySpecIfNeeded();
         }
@@ -945,6 +1000,7 @@ namespace Revive.Slime
             {
                 _heldRigidbody.isKinematic = _heldWasKinematic;
                 _heldRigidbody.useGravity = _heldUsedGravity;
+                RestoreHeldInterpolation();
             }
 
             if (_restoreCollisionCoroutine != null)
@@ -979,6 +1035,7 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsValues = null;
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
+            _heldInterpolationCached = false;
         }
 
         private bool IsHeldCollider(Collider col)

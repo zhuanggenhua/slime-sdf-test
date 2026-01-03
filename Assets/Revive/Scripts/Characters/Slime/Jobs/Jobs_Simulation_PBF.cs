@@ -1181,7 +1181,13 @@ namespace Revive.Slime
                 float sdfDistSim = float.MaxValue;
                 bool sdfValid = false;
                 bool sdfSkipStaticColliders = false;
-                if (UseStaticSdf != 0 && StaticSdf.IsCreated)
+                bool canUseSdf = UseStaticSdf != 0 && StaticSdf.IsCreated;
+                bool sdfIsDense = canUseSdf && StaticSdf.Storage == WorldSdfRuntime.Volume.StorageKind.Dense;
+                float3 sdfLocal = default;
+                int3 sdfI0 = default;
+                int3 sdfI1 = default;
+                float3 sdfF = default;
+                if (canUseSdf)
                 {
                     float voxel = math.max(StaticSdf.VoxelSizeSim, 1e-3f);
                     float contactSkin = math.min(voxel * 0.25f, ParticleRadiusSim * 0.25f);
@@ -1193,18 +1199,22 @@ namespace Revive.Slime
                     float boundsMargin = contactRadius + voxel * 2f;
                     sdfInBounds = !(simPos.x < (minSim.x - boundsMargin) || simPos.y < (minSim.y - boundsMargin) || simPos.z < (minSim.z - boundsMargin) ||
                                    simPos.x > (maxSim.x + boundsMargin) || simPos.y > (maxSim.y + boundsMargin) || simPos.z > (maxSim.z + boundsMargin));
-                    float d = StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out float3 sdfLocal, out int3 sdfI0, out int3 sdfI1, out float3 sdfF);
+                    float d = sdfIsDense
+                        ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
+                        : StaticSdf.SampleDistance(simPos);
                     sdfDistSim = d;
                     sdfValid = d < (StaticSdf.MaxDistanceSim - 1e-5f);
                     float skipMargin = voxel * 0.5f;
-                    sdfSkipStaticColliders = sdfInBounds && sdfValid && (d > (contactRadius + skipMargin));
+                    sdfSkipStaticColliders = sdfInBounds && (d > (contactRadius + skipMargin));
                     if (sdfValid && d < contactRadius)
                     {
                         hadSdfCollision = true;
                         float maxStep = voxel * 1.25f;
                         for (int it = 0; it < 4 && d < contactRadius; it++)
                         {
-                            float3 n = StaticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d);
+                            float3 n = sdfIsDense
+                                ? StaticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d)
+                                : StaticSdf.SampleNormalForward(simPos, d);
                             float stepOut = contactRadius - d;
                             if (stepOut <= contactSlop)
                             {
@@ -1216,7 +1226,9 @@ namespace Revive.Slime
                             simPos += n * stepOut;
                             sdfNormal = math.normalizesafe(n, new float3(0, 1, 0));
 
-                            d = StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF);
+                            d = sdfIsDense
+                                ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
+                                : StaticSdf.SampleDistance(simPos);
                         }
                     }
                 }
@@ -1232,86 +1244,85 @@ namespace Revive.Slime
                 for (int c = 0; c < ColliderCount; c++)
                 {
                     MyBoxCollider box = Colliders[c];
-                    if (box.IsDynamic == 0 && UseStaticSdf != 0 && StaticSdf.IsCreated && ((DisableStaticColliderFallback != 0 && sdfInBounds && sdfValid) || sdfSkipStaticColliders || hadSdfCollision))
+                    if (box.IsDynamic == 0 && canUseSdf && ((DisableStaticColliderFallback != 0 && sdfInBounds) || sdfSkipStaticColliders || hadSdfCollision))
                         continue;
 
-                     switch (box.Shape)
-                     {
-                         case ColliderShapes.Obb:
-                         {
-                             quaternion invRot = math.conjugate(box.Rotation);
-                             float3 local = math.mul(invRot, (simPos - box.Center));
-                             float3 vec = math.abs(local);
-                             if (math.all(vec < box.Extent))
-                             {
-                                 float3 remain = box.Extent - vec;
-                                 int axis = 0;
-                                 if (remain.y < remain[axis]) axis = 1;
-                                 if (remain.z < remain[axis]) axis = 2;
+                    switch (box.Shape)
+                    {
+                        case ColliderShapes.Obb:
+                        {
+                            quaternion invRot = math.conjugate(box.Rotation);
+                            float3 local = math.mul(invRot, (simPos - box.Center));
+                            float3 vec = math.abs(local);
+                            if (math.all(vec < box.Extent))
+                            {
+                                float3 remain = box.Extent - vec;
+                                int axis = 0;
+                                if (remain.y < remain[axis]) axis = 1;
+                                if (remain.z < remain[axis]) axis = 2;
 
-                                 float sign = math.sign(local[axis]);
-                                 if (sign == 0f) sign = 1f;
-                                 local[axis] = sign * box.Extent[axis];
-                                 simPos = box.Center + math.mul(box.Rotation, local);
+                                float sign = math.sign(local[axis]);
+                                if (sign == 0f) sign = 1f;
+                                local[axis] = sign * box.Extent[axis];
+                                simPos = box.Center + math.mul(box.Rotation, local);
 
-                                 float3 nLocal = float3.zero;
-                                 nLocal[axis] = sign;
-                                 float3 nWorld = math.mul(box.Rotation, nLocal);
+                                float3 nLocal = float3.zero;
+                                nLocal[axis] = sign;
+                                float3 nWorld = math.mul(box.Rotation, nLocal);
 
-                                 hadObbCollision = true;
-                                 obbNormal = nWorld;
-                                 obbFriction = math.max(obbFriction, box.Friction);
-                                 obbSurfaceVelocity = box.Velocity;
-                             }
-                             break;
-                         }
-                         case ColliderShapes.Capsule:
-                         {
-                             ColliderShapeUtils.ComputeCapsule(in box, out float3 a, out float3 b, out float r);
-                             float r2 = r * r;
-                             float d2 = simPos.udSqrSegment(a, b);
-                             if (d2 < r2)
-                             {
-                                 float3 closest = ColliderShapeUtils.ClosestPointOnSegment(simPos, a, b);
-                                 float3 d = simPos - closest;
+                                hadObbCollision = true;
+                                obbNormal = nWorld;
+                                obbFriction = math.max(obbFriction, box.Friction);
+                                obbSurfaceVelocity = box.Velocity;
+                            }
+                            break;
+                        }
+                        case ColliderShapes.Capsule:
+                        {
+                            ColliderShapeUtils.ComputeCapsule(in box, out float3 a, out float3 b, out float r);
+                            float r2 = r * r;
+                            float d2 = simPos.udSqrSegment(a, b);
+                            if (d2 < r2)
+                            {
+                                float3 closest = ColliderShapeUtils.ClosestPointOnSegment(simPos, a, b);
+                                float3 d = simPos - closest;
 
-                                 float3 n;
-                                 if (d2 < PBF_Utils.NeighborR2Epsilon)
-                                 {
-                                     float3 fallback = math.mul(box.Rotation, new float3(0, 1, 0));
-                                     float fb2 = math.lengthsq(fallback);
-                                     n = fb2 < PBF_Utils.NeighborR2Epsilon ? new float3(0, 1, 0) : fallback * math.rsqrt(fb2);
-                                 }
-                                 else
-                                 {
+                                float3 n;
+                                if (d2 < PBF_Utils.NeighborR2Epsilon)
+                                {
+                                    float3 fallback = math.mul(box.Rotation, new float3(0, 1, 0));
+                                    float fb2 = math.lengthsq(fallback);
+                                    n = fb2 < PBF_Utils.NeighborR2Epsilon ? new float3(0, 1, 0) : fallback * math.rsqrt(fb2);
+                                }
+                                else
+                                {
                                     n = d * math.rsqrt(d2);
-                                 }
+                                }
 
-                                 simPos = closest + n * r;
-                                 hadObbCollision = true;
-                                 obbNormal = n;
-                                 obbFriction = math.max(obbFriction, box.Friction);
-                                 obbSurfaceVelocity = box.Velocity;
-                             }
-                             break;
-                         }
-                         default:
-                         {
-                             float3 dir = simPos - box.Center;
-                             float3 vec = math.abs(dir);
-                             if (math.all(vec < box.Extent))
-                             {
-                                 float3 remain = box.Extent - vec;
-                                 int axis = 0;
-                                 if (remain.y < remain[axis]) axis = 1;
-                                 if (remain.z < remain[axis]) axis = 2;
-                                 simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
-                                 collisionAxes[axis] = true;
-                             }
-                             break;
-                         }
-                     }
-
+                                simPos = closest + n * r;
+                                hadObbCollision = true;
+                                obbNormal = n;
+                                obbFriction = math.max(obbFriction, box.Friction);
+                                obbSurfaceVelocity = box.Velocity;
+                            }
+                            break;
+                        }
+                        default:
+                        {
+                            float3 dir = simPos - box.Center;
+                            float3 vec = math.abs(dir);
+                            if (math.all(vec < box.Extent))
+                            {
+                                float3 remain = box.Extent - vec;
+                                int axis = 0;
+                                if (remain.y < remain[axis]) axis = 1;
+                                if (remain.z < remain[axis]) axis = 2;
+                                simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
+                                collisionAxes[axis] = true;
+                            }
+                            break;
+                        }
+                    }
                 }
 
                 bool terrainCovers = false;

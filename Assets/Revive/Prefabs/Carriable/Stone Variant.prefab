@@ -100,6 +100,14 @@ PrefabInstance:
         type: 3}
       insertIndex: -1
       addedObject: {fileID: 9164779970524302520}
+    - targetCorrespondingSourceObject: {fileID: 1504824461015421659, guid: 6ba2b8a075303164f8f0b94ecf25b18f,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 208314713223963365}
+    - targetCorrespondingSourceObject: {fileID: 1504824461015421659, guid: 6ba2b8a075303164f8f0b94ecf25b18f,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2466667914801606869}
   m_SourcePrefab: {fileID: 100100000, guid: 6ba2b8a075303164f8f0b94ecf25b18f, type: 3}
 --- !u!1 &3132463799465056550 stripped
 GameObject:
@@ -149,3 +157,58 @@ MonoBehaviour:
   Type: 2
   PickupEnabled: 1
   DirectionMode: 0
+  MaxThrowRange: 10
+--- !u!114 &208314713223963365
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3132463799465056550}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 78faa285cd3657649b5451ef1b4ed5ed, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &2466667914801606869
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3132463799465056550}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 718e7de3a3f2c7d46859afd1a98f7a37, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  EnableCarry: 1
+  Carry:
+    MoveSpeedMultiplier: 1
+    JumpImpulseMultiplier: 1
+    ExtraJumps: 0
+    ThrowRangeMultiplier: 1
+    WindFieldImmune: 1
+    DeformLimitMultiplier: 1
+    MaximumFallSpeedMultiplier: 1
+  EnableConsume: 0
+  DurationSeconds: 10
+  OverrideTint: 1
+  Tint: {r: 1, g: 1, b: 1, a: 1}
+  Consume:
+    MoveSpeedMultiplier: 1
+    JumpImpulseMultiplier: 1
+    ExtraJumps: 0
+    ThrowRangeMultiplier: 1
+    WindFieldImmune: 0
+    DeformLimitMultiplier: 1
+    MaximumFallSpeedMultiplier: 1
+  ConsumeDissolveSeconds: 0.35
+  ConsumeDissolveMaterial: {fileID: 0}
+  ConsumeBubbleBurstCount: 60
+  ConsumeBubbleLifetimeSeconds: 1
+  ConsumeBubbleRadiusMultiplier: 1.2
+  ConsumeBubbleUpSpeedWorld: 0.6
+  ConsumeBubbleBoostSeconds: 0
+  ConsumeBubbleBoostMultiplier: 2
+  ConsumeBubbleBoostSizeMultiplier: 1.2

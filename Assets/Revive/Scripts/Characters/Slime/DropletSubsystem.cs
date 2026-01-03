@@ -22,6 +22,7 @@ namespace Revive.Slime
             public int LiquidSolverIterations;
             public float LiquidGravityY;
             public float DropletVerticalOffset;
+            public bool EnableLiquidModeOnDynamicCollision;
         }
 
         // 固定分区边界（仅用于模拟层内存管理）
@@ -146,6 +147,9 @@ namespace Revive.Slime
         {
             if (sourceId < 0 || sourceId >= maxSources) return;
             if (!sources.IsCreated) return;
+
+            if (!_interactionSettings.EnableLiquidModeOnDynamicCollision)
+                return;
             var info = sources[sourceId];
             if (!info.active) return;
 
@@ -174,7 +178,8 @@ namespace Revive.Slime
                 DynamicDragStrength = 35f,
                 DynamicDragRadius = 15f,
                 LiquidSolverIterations = 3,
-                LiquidGravityY = -10f
+                LiquidGravityY = -10f,
+                EnableLiquidModeOnDynamicCollision = false
             };
             sources = new NativeArray<SourceInfo>(maxSourceCount, Allocator.Persistent);
             
@@ -1031,6 +1036,7 @@ namespace Revive.Slime
                 float3 v = velocities[i];
 
                 bool canUseSdf = useStaticSdf != 0 && staticSdf.IsCreated;
+                bool sdfIsDense = canUseSdf && staticSdf.Storage == WorldSdfRuntime.Volume.StorageKind.Dense;
                 bool sdfInBoundsStrict = false;
                 if (canUseSdf)
                 {
@@ -1052,7 +1058,15 @@ namespace Revive.Slime
                     float contactRadius = particleRadiusSim + contactSkin;
                     float contactSlop = math.min(voxel * 0.05f, particleRadiusSim * 0.1f);
 
-                    float d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out float3 sdfLocal, out int3 sdfI0, out int3 sdfI1, out float3 sdfF);
+                    float d;
+                    float3 sdfLocal = default;
+                    int3 sdfI0 = default;
+                    int3 sdfI1 = default;
+                    float3 sdfF = default;
+                    if (sdfIsDense)
+                        d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF);
+                    else
+                        d = staticSdf.SampleDistance(newPos);
                     ticksCollSdfDistance += Stopwatch.GetTimestamp() - tSdfDist0;
                     if (d < contactRadius)
                     {
@@ -1066,7 +1080,7 @@ namespace Revive.Slime
                         {
                             long tSdfN0 = Stopwatch.GetTimestamp();
                             dbgSdfNormalSamples++;
-                            float3 n = staticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d);
+                            float3 n = sdfIsDense ? staticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d) : staticSdf.SampleNormalForward(newPos, d);
                             ticksCollSdfNormal += Stopwatch.GetTimestamp() - tSdfN0;
 
                             float stepOut = contactRadius - d;
@@ -1081,7 +1095,10 @@ namespace Revive.Slime
                             sdfNormal = math.normalizesafe(n, new float3(0, 1, 0));
 
                             long tSdfDist1 = Stopwatch.GetTimestamp();
-                            d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF);
+                            if (sdfIsDense)
+                                d = staticSdf.SampleDistanceDenseWithLocalAndIndices(newPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF);
+                            else
+                                d = staticSdf.SampleDistance(newPos);
                             ticksCollSdfDistance += Stopwatch.GetTimestamp() - tSdfDist1;
                         }
 
@@ -1096,6 +1113,8 @@ namespace Revive.Slime
                 bool liquidMode = false;
                 if (sourceId >= 0 && sourceId < maxSources && _sourceActiveFlags.IsCreated && _sourceActiveFlags[sourceId] != 0)
                     liquidMode = _sourceLiquidFlags.IsCreated && _sourceLiquidFlags[sourceId] != 0;
+
+                bool enableLiquidModeOnDynamicCollision = _interactionSettings.EnableLiquidModeOnDynamicCollision;
                 
                 // 环境碰撞体检测（盒子碰撞）
                 if (colliders.IsCreated && colliderCount > 0)
@@ -1121,6 +1140,8 @@ namespace Revive.Slime
                                 MyBoxCollider box = colliders[c];
                                 dbgColliderChecks++;
                                 dbgCandidateColliderChecks++;
+                                if (!enableLiquidModeOnDynamicCollision && box.IsDynamic != 0)
+                                    continue;
                                 if (box.IsDynamic == 0 && (skipStaticColliders || hadSdfCollision))
                                     continue;
 
@@ -1168,7 +1189,7 @@ namespace Revive.Slime
                                             lastFriction = math.max(lastFriction, box.Friction);
                                             hadCollision = true;
 
-                                            if (box.IsDynamic != 0)
+                                            if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                             {
                                                 liquidMode = true;
                                                 if (sourceId >= 0 && sourceId < maxSources)
@@ -1226,7 +1247,7 @@ namespace Revive.Slime
                                             lastFriction = math.max(lastFriction, box.Friction);
                                             hadCollision = true;
 
-                                            if (box.IsDynamic != 0)
+                                            if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                             {
                                                 liquidMode = true;
                                                 if (sourceId >= 0 && sourceId < maxSources)
@@ -1283,7 +1304,7 @@ namespace Revive.Slime
                                             lastFriction = math.max(lastFriction, box.Friction);
                                             hadCollision = true;
 
-                                            if (box.IsDynamic != 0)
+                                            if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                             {
                                                 liquidMode = true;
                                                 if (sourceId >= 0 && sourceId < maxSources)
@@ -1308,6 +1329,8 @@ namespace Revive.Slime
                             MyBoxCollider box = colliders[c];
                             dbgColliderChecks++;
                             dbgFullScanColliderChecks++;
+                            if (!enableLiquidModeOnDynamicCollision && box.IsDynamic != 0)
+                                continue;
                             if (box.IsDynamic == 0 && (skipStaticColliders || hadSdfCollision))
                                 continue;
 
@@ -1355,7 +1378,7 @@ namespace Revive.Slime
                                         lastFriction = math.max(lastFriction, box.Friction);
                                         hadCollision = true;
 
-                                        if (box.IsDynamic != 0)
+                                        if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                         {
                                             liquidMode = true;
                                             if (sourceId >= 0 && sourceId < maxSources)
@@ -1413,7 +1436,7 @@ namespace Revive.Slime
                                         lastFriction = math.max(lastFriction, box.Friction);
                                         hadCollision = true;
 
-                                        if (box.IsDynamic != 0)
+                                        if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                         {
                                             liquidMode = true;
                                             if (sourceId >= 0 && sourceId < maxSources)
@@ -1470,7 +1493,7 @@ namespace Revive.Slime
                                         lastFriction = math.max(lastFriction, box.Friction);
                                         hadCollision = true;
 
-                                        if (box.IsDynamic != 0)
+                                        if (box.IsDynamic != 0 && enableLiquidModeOnDynamicCollision)
                                         {
                                             liquidMode = true;
                                             if (sourceId >= 0 && sourceId < maxSources)

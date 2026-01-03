@@ -11,10 +11,11 @@ namespace Revive.Slime
     public struct WorldSdfRuntime : IDisposable
     {
         public const uint Magic = 0x46445357;
-        public const int Version = 2;
+        public const int Version = 3;
         public const int HeaderSizeBytes = 40;
 
         private const int PayloadKind_DeflateDenseFloat32 = 1;
+        private const int PayloadKind_BrickSparseFloat32 = 2;
 
         private static void LogLoadError(TextAsset bytesAsset, string reason, int bytesLen)
         {
@@ -28,6 +29,7 @@ namespace Revive.Slime
             {
                 None = 0,
                 Dense = 1,
+                BrickSparse = 2,
             }
 
             public StorageKind Storage;
@@ -40,12 +42,20 @@ namespace Revive.Slime
             public float MaxDistanceSim;
             [ReadOnly] public NativeArray<float> DenseDistancesSim;
 
+            public int BrickSize;
+            public int3 BrickDims;
+            public int BrickStrideY;
+            public int BrickStrideX;
+            [ReadOnly] public NativeArray<int> BrickOffsets;
+            [ReadOnly] public NativeArray<float> BrickDistances;
+
             public bool IsCreated
             {
                 get
                 {
                     if (Dims.x <= 0 || Dims.y <= 0 || Dims.z <= 0 || VoxelSizeSim <= 0f) return false;
                     if (Storage == StorageKind.Dense) return DenseDistancesSim.IsCreated;
+                    if (Storage == StorageKind.BrickSparse) return BrickOffsets.IsCreated && BrickDistances.IsCreated && BrickSize > 0;
                     return false;
                 }
             }
@@ -55,6 +65,7 @@ namespace Revive.Slime
                 if (!IsCreated) return float.MaxValue;
 
                 if (Storage == StorageKind.Dense) return SampleDistanceDense(pSim);
+                if (Storage == StorageKind.BrickSparse) return SampleDistanceBrick(pSim);
                 return float.MaxValue;
             }
 
@@ -129,6 +140,13 @@ namespace Revive.Slime
             {
                 if (!IsCreated) return new float3(0, 1, 0);
 
+                if (Storage == StorageKind.Dense) return SampleNormalForwardDense(pSim, dAtP);
+                if (Storage == StorageKind.BrickSparse) return SampleNormalForwardBrick(pSim, dAtP);
+                return new float3(0, 1, 0);
+            }
+
+            private float3 SampleNormalForwardDense(float3 pSim, float dAtP)
+            {
                 if (Storage != StorageKind.Dense) return new float3(0, 1, 0);
 
                 // cheap sim-space bounds check
@@ -148,6 +166,28 @@ namespace Revive.Slime
                 float dz = sz - d0;
 
                 float3 n = new float3(dx, dy, dz);
+                float lenSq = math.lengthsq(n);
+                if (lenSq < 1e-10f) return new float3(0, 1, 0);
+                return n * math.rsqrt(lenSq);
+            }
+
+            private float3 SampleNormalForwardBrick(float3 pSim, float dAtP)
+            {
+                if (Storage != StorageKind.BrickSparse) return new float3(0, 1, 0);
+
+                if (pSim.x < AabbMinSim.x || pSim.y < AabbMinSim.y || pSim.z < AabbMinSim.z ||
+                    pSim.x > AabbMaxSim.x || pSim.y > AabbMaxSim.y || pSim.z > AabbMaxSim.z)
+                    return new float3(0, 1, 0);
+
+                float inv = InvVoxelSizeSim > 0f ? InvVoxelSizeSim : (1f / VoxelSizeSim);
+                float3 local0 = (pSim - OriginSim) * inv;
+                float d0 = dAtP == float.MaxValue ? SampleDistanceBrickLocal(local0) : dAtP;
+
+                float sx = SampleDistanceBrickLocal(local0 + new float3(1f, 0f, 0f));
+                float sy = SampleDistanceBrickLocal(local0 + new float3(0f, 1f, 0f));
+                float sz = SampleDistanceBrickLocal(local0 + new float3(0f, 0f, 1f));
+
+                float3 n = new float3(sx - d0, sy - d0, sz - d0);
                 float lenSq = math.lengthsq(n);
                 if (lenSq < 1e-10f) return new float3(0, 1, 0);
                 return n * math.rsqrt(lenSq);
@@ -297,6 +337,94 @@ namespace Revive.Slime
                 return SampleDistanceDenseLocal(local);
             }
 
+            private float SampleDistanceBrick(float3 pSim)
+            {
+                if (pSim.x < AabbMinSim.x || pSim.y < AabbMinSim.y || pSim.z < AabbMinSim.z ||
+                    pSim.x > AabbMaxSim.x || pSim.y > AabbMaxSim.y || pSim.z > AabbMaxSim.z)
+                    return MaxDistanceSim;
+
+                float inv = InvVoxelSizeSim > 0f ? InvVoxelSizeSim : (1f / VoxelSizeSim);
+                float3 local = (pSim - OriginSim) * inv;
+                return SampleDistanceBrickLocal(local);
+            }
+
+            private float SampleDistanceBrickLocal(float3 local)
+            {
+                float maxX = Dims.x - 1;
+                float maxY = Dims.y - 1;
+                float maxZ = Dims.z - 1;
+                if (local.x < 0f || local.y < 0f || local.z < 0f || local.x > maxX || local.y > maxY || local.z > maxZ)
+                    return MaxDistanceSim;
+
+                int ix0Raw = (int)local.x;
+                int iy0Raw = (int)local.y;
+                int iz0Raw = (int)local.z;
+                float3 f = new float3(local.x - ix0Raw, local.y - iy0Raw, local.z - iz0Raw);
+
+                int dxm1 = Dims.x - 1;
+                int dym1 = Dims.y - 1;
+                int dzm1 = Dims.z - 1;
+
+                int ix0 = math.max(0, math.min(ix0Raw, dxm1));
+                int iy0 = math.max(0, math.min(iy0Raw, dym1));
+                int iz0 = math.max(0, math.min(iz0Raw, dzm1));
+
+                int ix1 = math.max(0, math.min(ix0Raw + 1, dxm1));
+                int iy1 = math.max(0, math.min(iy0Raw + 1, dym1));
+                int iz1 = math.max(0, math.min(iz0Raw + 1, dzm1));
+
+                int3 i0 = new int3(ix0, iy0, iz0);
+                int3 i1 = new int3(ix1, iy1, iz1);
+                return SampleDistanceBrickLocalFromIndices(i0, i1, f);
+            }
+
+            private float SampleDistanceBrickLocalFromIndices(int3 i0, int3 i1, float3 f)
+            {
+                float c000 = AtBrick(i0.x, i0.y, i0.z);
+                float c100 = AtBrick(i1.x, i0.y, i0.z);
+                float c010 = AtBrick(i0.x, i1.y, i0.z);
+                float c110 = AtBrick(i1.x, i1.y, i0.z);
+                float c001 = AtBrick(i0.x, i0.y, i1.z);
+                float c101 = AtBrick(i1.x, i0.y, i1.z);
+                float c011 = AtBrick(i0.x, i1.y, i1.z);
+                float c111 = AtBrick(i1.x, i1.y, i1.z);
+
+                float cx00 = math.lerp(c000, c100, f.x);
+                float cx10 = math.lerp(c010, c110, f.x);
+                float cx01 = math.lerp(c001, c101, f.x);
+                float cx11 = math.lerp(c011, c111, f.x);
+
+                float cxy0 = math.lerp(cx00, cx10, f.y);
+                float cxy1 = math.lerp(cx01, cx11, f.y);
+
+                return math.lerp(cxy0, cxy1, f.z);
+            }
+
+            private float AtBrick(int x, int y, int z)
+            {
+                int bs = BrickSize;
+                if (bs <= 0) return MaxDistanceSim;
+
+                int bx = x / bs;
+                int by = y / bs;
+                int bz = z / bs;
+
+                int blockIndex = bx * BrickStrideX + by * BrickStrideY + bz;
+                if ((uint)blockIndex >= (uint)BrickOffsets.Length) return MaxDistanceSim;
+
+                int off = BrickOffsets[blockIndex];
+                if (off < 0) return MaxDistanceSim;
+
+                int lx = x - bx * bs;
+                int ly = y - by * bs;
+                int lz = z - bz * bs;
+
+                int blockVoxels = bs * bs * bs;
+                int idx = off * blockVoxels + lx * (bs * bs) + ly * bs + lz;
+                if ((uint)idx >= (uint)BrickDistances.Length) return MaxDistanceSim;
+                return BrickDistances[idx];
+            }
+
             private float SampleDistanceDenseLocal(float3 local)
             {
                 float maxX = Dims.x - 1;
@@ -379,6 +507,8 @@ namespace Revive.Slime
         }
 
         private NativeArray<float> _distances;
+        private NativeArray<int> _brickOffsets;
+        private NativeArray<float> _brickDistances;
         private Volume _volume;
 
         public bool IsCreated => _volume.IsCreated;
@@ -445,6 +575,12 @@ namespace Revive.Slime
 
                 _distances = new NativeArray<float>(total1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
                 _distances.CopyFrom(tmp);
+
+                // Job 里传递 Volume 时，所有 NativeArray 字段都必须是有效容器（即使不使用）。
+                _brickOffsets = new NativeArray<int>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickOffsets[0] = -1;
+                _brickDistances = new NativeArray<float>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickDistances[0] = maxDistanceSim1;
             }
             else if (version == 2)
             {
@@ -517,6 +653,179 @@ namespace Revive.Slime
 
                 _distances = new NativeArray<float>(total1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
                 _distances.CopyFrom(tmp);
+
+                // Job 里传递 Volume 时，所有 NativeArray 字段都必须是有效容器（即使不使用）。
+                _brickOffsets = new NativeArray<int>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickOffsets[0] = -1;
+                _brickDistances = new NativeArray<float>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickDistances[0] = maxDistanceSim1;
+            }
+            else if (version == 3)
+            {
+                int payloadHeaderOffset = HeaderSizeBytes;
+                int payloadHeaderSize = sizeof(int) * 9;
+                if (bytes.Length < payloadHeaderOffset + payloadHeaderSize)
+                {
+                    LogLoadError(bytesAsset, $"v3 payload header too small", bytes.Length);
+                    return;
+                }
+
+                int payloadKind = BitConverter.ToInt32(bytes, payloadHeaderOffset + 0);
+                int brickSize = BitConverter.ToInt32(bytes, payloadHeaderOffset + 4);
+                int bdx = BitConverter.ToInt32(bytes, payloadHeaderOffset + 8);
+                int bdy = BitConverter.ToInt32(bytes, payloadHeaderOffset + 12);
+                int bdz = BitConverter.ToInt32(bytes, payloadHeaderOffset + 16);
+                int offsetsCount = BitConverter.ToInt32(bytes, payloadHeaderOffset + 20);
+                int blocksCount = BitConverter.ToInt32(bytes, payloadHeaderOffset + 24);
+                int uncompressedBytes = BitConverter.ToInt32(bytes, payloadHeaderOffset + 28);
+                int compressedBytes = BitConverter.ToInt32(bytes, payloadHeaderOffset + 32);
+
+                if (payloadKind != PayloadKind_BrickSparseFloat32)
+                {
+                    LogLoadError(bytesAsset, $"v3 payloadKind unsupported kind={payloadKind}", bytes.Length);
+                    return;
+                }
+                if (brickSize <= 0)
+                {
+                    LogLoadError(bytesAsset, $"v3 invalid brickSize={brickSize}", bytes.Length);
+                    return;
+                }
+                if (bdx <= 0 || bdy <= 0 || bdz <= 0)
+                {
+                    LogLoadError(bytesAsset, $"v3 invalid brickDims=({bdx},{bdy},{bdz})", bytes.Length);
+                    return;
+                }
+
+                int expectedOffsetsCount = bdx * bdy * bdz;
+                if (offsetsCount != expectedOffsetsCount)
+                {
+                    LogLoadError(bytesAsset, $"v3 offsetsCount mismatch expected={expectedOffsetsCount} actual={offsetsCount}", bytes.Length);
+                    return;
+                }
+
+                if (blocksCount < 0)
+                {
+                    LogLoadError(bytesAsset, $"v3 invalid blocksCount={blocksCount}", bytes.Length);
+                    return;
+                }
+
+                long expectedUncompressedBytesLong = (long)blocksCount * brickSize * brickSize * brickSize * sizeof(float);
+                if (expectedUncompressedBytesLong < 0 || expectedUncompressedBytesLong > int.MaxValue)
+                {
+                    LogLoadError(bytesAsset, $"v3 uncompressedBytes overflow blocks={blocksCount} brickSize={brickSize}", bytes.Length);
+                    return;
+                }
+                int expectedUncompressedBytes = (int)expectedUncompressedBytesLong;
+                if (uncompressedBytes != expectedUncompressedBytes)
+                {
+                    LogLoadError(bytesAsset, $"v3 uncompressedBytes mismatch expected={expectedUncompressedBytes} actual={uncompressedBytes}", bytes.Length);
+                    return;
+                }
+                if (compressedBytes < 0)
+                {
+                    LogLoadError(bytesAsset, $"v3 invalid compressedBytes={compressedBytes}", bytes.Length);
+                    return;
+                }
+
+                if (uncompressedBytes == 0 && compressedBytes != 0)
+                {
+                    LogLoadError(bytesAsset, $"v3 invalid empty payload compressedBytes={compressedBytes}", bytes.Length);
+                    return;
+                }
+
+                int offsetsBytes = offsetsCount * sizeof(int);
+                int payloadOffset = payloadHeaderOffset + payloadHeaderSize;
+                if (bytes.Length < payloadOffset + offsetsBytes)
+                {
+                    LogLoadError(bytesAsset, $"v3 offsets data too small", bytes.Length);
+                    return;
+                }
+
+                int compressedOffset = payloadOffset + offsetsBytes;
+                if (bytes.Length != compressedOffset + compressedBytes)
+                {
+                    LogLoadError(bytesAsset, $"v3 length mismatch expected={compressedOffset + compressedBytes} actual={bytes.Length}", bytes.Length);
+                    return;
+                }
+
+                var offsetsManaged = new int[offsetsCount];
+                Buffer.BlockCopy(bytes, payloadOffset, offsetsManaged, 0, offsetsBytes);
+
+                for (int i = 0; i < offsetsManaged.Length; i++)
+                {
+                    int o = offsetsManaged[i];
+                    if (o < -1 || o >= blocksCount)
+                    {
+                        LogLoadError(bytesAsset, $"v3 invalid block offset at {i} value={o} blocks={blocksCount}", bytes.Length);
+                        return;
+                    }
+                }
+
+                byte[] raw = null;
+                if (uncompressedBytes > 0)
+                {
+                    try
+                    {
+                        raw = new byte[uncompressedBytes];
+                        using (var src = new MemoryStream(bytes, compressedOffset, compressedBytes))
+                        using (var ds = new DeflateStream(src, CompressionMode.Decompress))
+                        {
+                            int readTotal = 0;
+                            while (readTotal < raw.Length)
+                            {
+                                int n = ds.Read(raw, readTotal, raw.Length - readTotal);
+                                if (n <= 0) break;
+                                readTotal += n;
+                            }
+                            if (readTotal != raw.Length)
+                            {
+                                LogLoadError(bytesAsset, $"v3 deflate read incomplete read={readTotal} expected={raw.Length}", bytes.Length);
+                                return;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        LogLoadError(bytesAsset, "v3 deflate exception", bytes.Length);
+                        return;
+                    }
+                }
+
+                int blockVoxels = brickSize * brickSize * brickSize;
+                int blockFloatCount = blocksCount * blockVoxels;
+                var tmp = new float[blockFloatCount];
+                if (uncompressedBytes > 0)
+                    Buffer.BlockCopy(raw, 0, tmp, 0, uncompressedBytes);
+
+                _brickOffsets = new NativeArray<int>(offsetsCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickOffsets.CopyFrom(offsetsManaged);
+                _brickDistances = new NativeArray<float>(blockFloatCount, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _brickDistances.CopyFrom(tmp);
+
+                // Job 里传递 Volume 时，所有 NativeArray 字段都必须是有效容器（即使不使用）。
+                _distances = new NativeArray<float>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                _distances[0] = maxDistanceSim1;
+
+                _volume = new Volume
+                {
+                    Storage = Volume.StorageKind.BrickSparse,
+                    OriginSim = new float3(ox1, oy1, oz1),
+                    Dims = new int3(dimX1, dimY1, dimZ1),
+                    VoxelSizeSim = voxelSizeSim1,
+                    InvVoxelSizeSim = 1f / voxelSizeSim1,
+                    AabbMinSim = new float3(ox1, oy1, oz1),
+                    AabbMaxSim = new float3(ox1, oy1, oz1) + new float3(dimX1 - 1, dimY1 - 1, dimZ1 - 1) * voxelSizeSim1,
+                    MaxDistanceSim = maxDistanceSim1,
+                    DenseDistancesSim = _distances,
+                    BrickSize = brickSize,
+                    BrickDims = new int3(bdx, bdy, bdz),
+                    BrickStrideY = bdz,
+                    BrickStrideX = bdy * bdz,
+                    BrickOffsets = _brickOffsets,
+                    BrickDistances = _brickDistances,
+                };
+
+                return;
             }
             else
             {
@@ -535,6 +844,12 @@ namespace Revive.Slime
                 AabbMaxSim = new float3(ox1, oy1, oz1) + new float3(dimX1 - 1, dimY1 - 1, dimZ1 - 1) * voxelSizeSim1,
                 MaxDistanceSim = maxDistanceSim1,
                 DenseDistancesSim = _distances,
+                BrickSize = 0,
+                BrickDims = default,
+                BrickStrideY = 0,
+                BrickStrideX = 0,
+                BrickOffsets = _brickOffsets,
+                BrickDistances = _brickDistances,
             };
         }
 
@@ -542,6 +857,10 @@ namespace Revive.Slime
         {
             if (_distances.IsCreated) _distances.Dispose();
             _distances = default;
+            if (_brickOffsets.IsCreated) _brickOffsets.Dispose();
+            _brickOffsets = default;
+            if (_brickDistances.IsCreated) _brickDistances.Dispose();
+            _brickDistances = default;
             _volume = default;
         }
     }

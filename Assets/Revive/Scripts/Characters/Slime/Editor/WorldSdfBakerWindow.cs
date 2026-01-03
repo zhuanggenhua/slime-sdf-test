@@ -762,10 +762,13 @@ namespace Revive.Slime.Editor
             }
 
             long uncompressedBytesLong = totalLong * sizeof(float);
-            if (uncompressedBytesLong <= 0 || uncompressedBytesLong > int.MaxValue)
+            if (Revive.Slime.WorldSdfRuntime.Version <= 2)
             {
-                Debug.LogError($"[WorldSdfBaker] 烘焙数据过大（DenseFloat32）导致无法分配/压缩：voxels={totalLong:N0} uncompressedBytes={uncompressedBytesLong:N0}。请增大 voxelSize 或缩小 bounds。 ");
-                return;
+                if (uncompressedBytesLong <= 0 || uncompressedBytesLong > int.MaxValue)
+                {
+                    Debug.LogError($"[WorldSdfBaker] 烘焙数据过大（DenseFloat32）导致无法分配/压缩：voxels={totalLong:N0} uncompressedBytes={uncompressedBytesLong:N0}。请增大 voxelSize 或缩小 bounds。 ");
+                    return;
+                }
             }
 
             long estimatedBytes = Revive.Slime.WorldSdfRuntime.HeaderSizeBytes + totalLong * sizeof(float);
@@ -1115,10 +1118,27 @@ namespace Revive.Slime.Editor
                     bw.Write(maxDistanceSim);
 
                     int yzStride = dimY * dimZ;
-                    int total = dimX * dimY * dimZ;
-                    var denseSim = new float[total];
-                    for (int i = 0; i < total; i++)
-                        denseSim[i] = maxDistanceSim;
+
+                    const int brickSize = 16;
+                    int bdx = (dimX + brickSize - 1) / brickSize;
+                    int bdy = (dimY + brickSize - 1) / brickSize;
+                    int bdz = (dimZ + brickSize - 1) / brickSize;
+                    int brickStrideY = bdz;
+                    int brickStrideX = bdy * bdz;
+                    int blockVoxels = brickSize * brickSize * brickSize;
+                    int brickYZ = brickSize * brickSize;
+
+                    var brickData = new Dictionary<int, float[]>(8192);
+
+                    float[] GetBrick(int brickIndex)
+                    {
+                        if (brickData.TryGetValue(brickIndex, out var arr))
+                            return arr;
+                        arr = new float[blockVoxels];
+                        Array.Fill(arr, maxDistanceSim);
+                        brickData.Add(brickIndex, arr);
+                        return arr;
+                    }
 
                     float storeBandSqr = storeBandWorld * storeBandWorld;
                     int entryCount = 0;
@@ -1769,7 +1789,20 @@ namespace Revive.Slime.Editor
                                         float dSim = dWorld * invScale;
                                         if (dSim > maxDistanceSim) dSim = maxDistanceSim;
                                         else if (dSim < -maxDistanceSim) dSim = -maxDistanceSim;
-                                        denseSim[key] = dSim;
+
+                                        int bx = x / brickSize;
+                                        int by = y / brickSize;
+                                        int bz = z / brickSize;
+                                        int brickIndex = bx * brickStrideX + by * brickStrideY + bz;
+
+                                        int lx = x - bx * brickSize;
+                                        int ly = y - by * brickSize;
+                                        int lz = z - bz * brickSize;
+                                        int localIndex = lx * brickYZ + ly * brickSize + lz;
+
+                                        var arr = GetBrick(brickIndex);
+                                        arr[localIndex] = dSim;
+
                                         entryCount++;
                                         if (dSim < 0f) insideNegCount++;
                                         if (dSim < updatedMin) updatedMin = dSim;
@@ -1813,56 +1846,80 @@ namespace Revive.Slime.Editor
 
                     if (!cancelled)
                     {
-                        int uncompressedBytes = (int)uncompressedBytesLong;
+                        var activeBrickIndices = new List<int>(brickData.Keys);
+                        activeBrickIndices.Sort();
 
-                        byte[] compressed;
-                        using (var ms = new MemoryStream(Mathf.Min(uncompressedBytes, 16 * 1024 * 1024)))
+                        int offsetsCount = bdx * bdy * bdz;
+                        var offsets = new int[offsetsCount];
+                        Array.Fill(offsets, -1);
+                        int blocksCount = activeBrickIndices.Count;
+                        for (int i = 0; i < blocksCount; i++)
+                            offsets[activeBrickIndices[i]] = i;
+
+                        long uncompressedBytesLongV3 = (long)blocksCount * blockVoxels * sizeof(float);
+                        if (uncompressedBytesLongV3 < 0 || uncompressedBytesLongV3 > int.MaxValue)
                         {
-                            using (var ds = new DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, true))
-                            {
-                                const int chunkBytes = 4 * 1024 * 1024;
-                                int chunkFloats = chunkBytes / sizeof(float);
-                                if (chunkFloats < 1) chunkFloats = 1;
-                                var chunk = new byte[chunkFloats * sizeof(float)];
-
-                                int write = 0;
-                                while (write < denseSim.Length)
-                                {
-                                    int take = Mathf.Min(chunkFloats, denseSim.Length - write);
-                                    int bytesToCopy = take * sizeof(float);
-                                    Buffer.BlockCopy(denseSim, write * sizeof(float), chunk, 0, bytesToCopy);
-                                    ds.Write(chunk, 0, bytesToCopy);
-                                    write += take;
-                                }
-                            }
-                            compressed = ms.ToArray();
+                            Debug.LogError($"[WorldSdfBaker] BrickSparse payload 过大：blocks={blocksCount:N0} brickSize={brickSize} rawBytes={uncompressedBytesLongV3:N0}");
+                            cancelled = true;
                         }
+                        else
+                        {
+                            int uncompressedBytes = (int)uncompressedBytesLongV3;
+                            byte[] compressed;
+                            using (var ms = new MemoryStream(Mathf.Min(uncompressedBytes, 16 * 1024 * 1024)))
+                            {
+                                using (var ds = new DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, true))
+                                {
+                                    const int chunkBytes = 4 * 1024 * 1024;
+                                    int chunkFloats = chunkBytes / sizeof(float);
+                                    if (chunkFloats < 1) chunkFloats = 1;
+                                    var chunk = new byte[chunkFloats * sizeof(float)];
 
-                        bw.Write(1);
-                        bw.Write(uncompressedBytes);
-                        bw.Write(compressed.Length);
-                        bw.Write(compressed);
+                                    for (int bi = 0; bi < blocksCount; bi++)
+                                    {
+                                        int brickIndex = activeBrickIndices[bi];
+                                        var arr = brickData[brickIndex];
+                                        int write = 0;
+                                        while (write < arr.Length)
+                                        {
+                                            int take = Mathf.Min(chunkFloats, arr.Length - write);
+                                            int bytesToCopy = take * sizeof(float);
+                                            Buffer.BlockCopy(arr, write * sizeof(float), chunk, 0, bytesToCopy);
+                                            ds.Write(chunk, 0, bytesToCopy);
+                                            write += take;
+                                        }
+                                    }
+                                }
+                                compressed = ms.ToArray();
+                            }
 
-                        double ratio = uncompressedBytes > 0 ? (double)compressed.Length / uncompressedBytes : 0.0;
-                        estimatedDeflateRatio = Mathf.Clamp01((float)ratio);
-                        EditorPrefs.SetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
-                        long fileBytes = bw.BaseStream != null ? bw.BaseStream.Length : -1;
-                        Debug.Log($"[WorldSdfBaker] PayloadCompressed kind=DeflateDenseFloat32 rawBytes={uncompressedBytes:N0} compressedBytes={compressed.Length:N0} ratio={ratio:P1} fileBytes={fileBytes:N0}");
+                            bw.Write(2);
+                            bw.Write(brickSize);
+                            bw.Write(bdx);
+                            bw.Write(bdy);
+                            bw.Write(bdz);
+                            bw.Write(offsetsCount);
+                            bw.Write(blocksCount);
+                            bw.Write(uncompressedBytes);
+                            bw.Write(compressed.Length);
+                            for (int i = 0; i < offsets.Length; i++)
+                                bw.Write(offsets[i]);
+                            bw.Write(compressed);
+
+                            double ratio = uncompressedBytes > 0 ? (double)compressed.Length / uncompressedBytes : 0.0;
+                            estimatedDeflateRatio = Mathf.Clamp01((float)ratio);
+                            EditorPrefs.SetFloat(PrefKey_EstimatedDeflateRatio, estimatedDeflateRatio);
+                            long fileBytes = bw.BaseStream != null ? bw.BaseStream.Length : -1;
+                            Debug.Log($"[WorldSdfBaker] PayloadBrickSparse kind=BrickSparseFloat32 brickSize={brickSize} brickDims=({bdx},{bdy},{bdz}) offsets={offsetsCount:N0} blocks={blocksCount:N0} rawBytes={uncompressedBytes:N0} compressedBytes={compressed.Length:N0} ratio={ratio:P1} fileBytes={fileBytes:N0}");
+                        }
                     }
 
                     bw.Flush();
 
                     sw.Stop();
-                    int totalNeg = 0;
-                    float allMin = float.PositiveInfinity;
-                    float allMax = float.NegativeInfinity;
-                    for (int i = 0; i < denseSim.Length; i++)
-                    {
-                        float v = denseSim[i];
-                        if (v < 0f) totalNeg++;
-                        if (v < allMin) allMin = v;
-                        if (v > allMax) allMax = v;
-                    }
+                    int totalNeg = insideNegCount;
+                    float allMin = entryCount > 0 ? updatedMin : maxDistanceSim;
+                    float allMax = maxDistanceSim;
                     double invFreq = 1.0 / System.Diagnostics.Stopwatch.Frequency;
                     Debug.Log($"[WorldSdfBaker] BakeProfile time={sw.Elapsed.TotalSeconds:F2}s voxels={voxelsTotal:N0} seedMode={meshSeedMode} seedKeys={seedKeys.Count:N0} seedAddAttempts={seedAddAttempts:N0} seedAdded={seedAdded:N0} seedMeshColliders={seedMeshColliderCount:N0} seedMeshTris={seedTriCount:N0} jobDist={(ticksJobDistance * invFreq):F2}s patchDist={(ticksPatchDistance * invFreq):F2}s boundsPass={voxelsBoundsPass:N0} closestPointCalls={closestPointCalls:N0} closestPointErrors={closestPointErrors:N0} checkSphereCalls={checkSphereCalls:N0} updated={entryCount:N0} updatedNeg={insideNegCount:N0} updatedMin={updatedMin:F4} updatedMax={updatedMax:F4} allNeg={totalNeg:N0} allMin={allMin:F4} allMax={allMax:F4} candidates={candidates.Count}");
                 }

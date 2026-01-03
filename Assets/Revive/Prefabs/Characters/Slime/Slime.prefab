@@ -367,8 +367,8 @@ MonoBehaviour:
   viscosityStrength: 10
   concentration: 50
   baseSpeed: 1.5
-  maxDeformDistXZ: 1
-  maxDeformDistY: 2.5
+  maxDeformDistXZ: 1.5
+  maxDeformDistY: 3
   enableCollisionDeformLimit: 1
   enableVelocityConsistency: 1
   gravity: -5
@@ -469,6 +469,7 @@ MonoBehaviour:
   dropletColliderIndexQueryRadiusWorld: 20
   dropletDynamicDragStrength: 20
   dropletDynamicDragRadiusWorld: 1
+  dropletEnableLiquidModeOnDynamicCollision: 0
   dropletLiquidSolverIterations: 1
   dropletLiquidGravityY: -10
   performanceProfilerEnabled: 1
@@ -504,6 +505,10 @@ MonoBehaviour:
   PostThrowIgnorePlayerCollision: 1
   PostThrowIgnoreSlimeSimulation: 1
   PostThrowIgnoreDurationSeconds: 2
+  pickupFeedbacks: {fileID: 0}
+  throwFeedbacks: {fileID: 0}
+  autoDetachFeedbacks: {fileID: 0}
+  consumeFeedbacks: {fileID: 0}
 --- !u!114 &4923431413906178474
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -525,6 +530,7 @@ MonoBehaviour:
   BlockingMovementStates: 
   BlockingConditionStates: 
   BlockingWeaponStates: 
+  exitPushFeedbacks: {fileID: 0}
   debugTravelLogIntervalFrames: 30
 --- !u!114 &2917138552587269748
 MonoBehaviour:

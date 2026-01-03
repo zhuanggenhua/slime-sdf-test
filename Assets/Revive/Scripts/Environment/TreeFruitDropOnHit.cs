@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using Revive.Slime;
 using UnityEngine;
 
@@ -35,6 +36,9 @@ namespace Revive.Environment
         [ChineseHeader("反馈")]
         [ChineseLabel("掉落特效预制体(可选)")]
         public GameObject DropVfxPrefab;
+
+        [ChineseLabel("掉落反馈(MMFeedbacks)")]
+        public MMFeedbacks DropFeedbacks;
 
         private float _nextAllowedTime;
 
@@ -178,6 +182,8 @@ namespace Revive.Environment
             {
                 Instantiate(DropVfxPrefab, spawnPos, Quaternion.identity);
             }
+
+            DropFeedbacks?.PlayFeedbacks(spawnPos);
 
             return true;
         }
