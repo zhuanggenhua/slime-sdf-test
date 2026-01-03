@@ -239,6 +239,7 @@ Transform:
   - {fileID: 1897841624121174074}
   - {fileID: 618104240425232339}
   - {fileID: 7616625638627863561}
+  - {fileID: 1223962818771220366}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3397864571046969883
@@ -331,6 +332,84 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   AchievementList: {fileID: 11400000, guid: 18225175314a9854581d8d6262302958, type: 2}
   PrintCurrentStatusBtn: 0
+--- !u!1 &6207469459792989672
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1223962818771220366}
+  - component: {fileID: 3983731684889725618}
+  - component: {fileID: 7688362724952036199}
+  m_Layer: 0
+  m_Name: Purification
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1223962818771220366
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6207469459792989672}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4965078368429037418}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3983731684889725618
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6207469459792989672}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: df2f6ea44297b2842bfc6aa805da9ac0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AutomaticallyUnparentOnAwake: 1
+  DetectionRadius: 10
+  TargetPurificationValue: 100
+  ShowDebugGizmos: 1
+  IndicatorGizmosColor: {r: 0.3, g: 1, b: 0.3, a: 0.6}
+  ListenerGizmosColor: {r: 1, g: 0.8, b: 0.2, a: 0.6}
+  RangeGizmosColor: {r: 0.5, g: 0.8, b: 1, a: 0.3}
+  _indicatorCount: 0
+  _listenerCount: 0
+--- !u!114 &7688362724952036199
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6207469459792989672}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b25c946eec5f5124d9a64093aa2ec3a1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  PostProcessingVolume: {fileID: 0}
+  MaxDarknessIntensity: 0.8
+  MinDarknessIntensity: 0
+  MainLight: {fileID: 0}
+  MaxLightIntensity: 1
+  MinLightIntensity: 0.5
+  TransitionSpeed: 2
+  ListenerName: PostProcessingController
+  AutoRegisterOnStart: 1
+  _currentPurificationLevel: 0
+  _targetIntensity: 0
+  _currentIntensity: 0
 --- !u!1 &6709939487405801393
 GameObject:
   m_ObjectHideFlags: 0
