@@ -59,6 +59,14 @@ namespace Revive.Slime
             _timeSinceLastPurification = 0f;
             _indicatorCounter = 0;
             _totalIndicatorsCreated = 0;
+            
+            // 角色初始化时添加一个指示物，贡献值为100
+            PurificationSystem.Instance.AddIndicator(
+                "InitPuri",
+                transform.position,
+                100,
+                IndicatorType
+            );
         }
         
         public override void ProcessAbility()
