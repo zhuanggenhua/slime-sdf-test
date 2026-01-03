@@ -26,6 +26,9 @@ namespace Revive.GamePlay.Purification
         [Tooltip("指示物贡献值范围")]
         public Vector2 ContributionRange = new Vector2(5f, 15f);
         
+        [Tooltip("指示物辐射范围")]
+        public Vector2 RadiationRadiusRange = new Vector2(5f, 12f);
+        
         [Header("查询测试")]
         [Tooltip("查询位置")]
         public Transform QueryPosition;
@@ -146,13 +149,16 @@ namespace Revive.GamePlay.Purification
                 // 随机贡献值
                 float contribution = Random.Range(ContributionRange.x, ContributionRange.y);
                 
+                // 随机辐射范围
+                float radiationRadius = Random.Range(RadiationRadiusRange.x, RadiationRadiusRange.y);
+                
                 // 随机类型
                 string[] types = { "Idle", "Water", "Spore", "Plant" };
                 string type = types[Random.Range(0, types.Length)];
                 
                 // 添加指示物
                 string name = $"{type}_{i}";
-                PurificationSystem.Instance.AddIndicator(name, position, contribution, type);
+                PurificationSystem.Instance.AddIndicator(name, position, contribution, type, radiationRadius);
             }
             
             Debug.Log($"✓ 添加了 {IndicatorCount} 个指示物");
@@ -219,7 +225,8 @@ namespace Revive.GamePlay.Purification
             foreach (var indicator in indicators)
             {
                 float distance = Vector3.Distance(position, indicator.Position);
-                Debug.Log($"  - {indicator.Name}: 距离={distance:F1}m, 贡献={indicator.ContributionValue:F1}, 类型={indicator.IndicatorType}");
+                float weight = indicator.CalculateIntersectionWeight(position, radius);
+                Debug.Log($"  - {indicator.Name}: 距离={distance:F1}m, 贡献={indicator.ContributionValue:F1}, 辐射={indicator.RadiationRadius:F1}m, 权重={weight:F2}, 类型={indicator.IndicatorType}");
             }
         }
         

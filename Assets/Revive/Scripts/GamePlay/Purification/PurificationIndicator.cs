@@ -31,6 +31,11 @@ namespace Revive.GamePlay.Purification
         public string IndicatorType;
         
         /// <summary>
+        /// 辐射范围（米），指示物影响的半径范围
+        /// </summary>
+        public float RadiationRadius;
+        
+        /// <summary>
         /// 创建时间戳
         /// </summary>
         public float Timestamp;
@@ -42,12 +47,14 @@ namespace Revive.GamePlay.Purification
         /// <param name="position">世界坐标</param>
         /// <param name="contributionValue">贡献值</param>
         /// <param name="indicatorType">类型标识</param>
-        public PurificationIndicator(string name, Vector3 position, float contributionValue, string indicatorType)
+        /// <param name="radiationRadius">辐射范围（默认8米）</param>
+        public PurificationIndicator(string name, Vector3 position, float contributionValue, string indicatorType, float radiationRadius = 8f)
         {
             Name = name;
             Position = position;
             ContributionValue = contributionValue;
             IndicatorType = indicatorType;
+            RadiationRadius = radiationRadius;
             Timestamp = Time.time;
         }
         
@@ -75,9 +82,38 @@ namespace Revive.GamePlay.Purification
             return DistanceTo(target) <= radius;
         }
         
+        /// <summary>
+        /// 计算与查询球体的相交权重（线性衰减）
+        /// 用于模拟两个球体的相交影响程度
+        /// </summary>
+        /// <param name="queryPosition">查询位置（球心）</param>
+        /// <param name="queryRadius">查询半径</param>
+        /// <returns>权重 0-1，1表示完全重叠，0表示不相交</returns>
+        public float CalculateIntersectionWeight(Vector3 queryPosition, float queryRadius)
+        {
+            float distance = Vector3.Distance(Position, queryPosition);
+            float radiusSum = RadiationRadius + queryRadius;
+            
+            // 完全不相交：两球心距离 >= 两半径之和
+            if (distance >= radiusSum)
+                return 0f;
+            
+            // 完全重叠：一个球心在另一个球内
+            // 当距离 <= |r1 - r2| 时，小球完全在大球内
+            float radiusDiff = Mathf.Abs(RadiationRadius - queryRadius);
+            if (distance <= radiusDiff)
+                return 1f;
+            
+            // 部分相交：线性衰减
+            // 距离越近权重越大：weight = 1 - (distance / radiusSum)
+            // 当 distance = 0 时，weight = 1（完全重叠）
+            // 当 distance = radiusSum 时，weight = 0（刚好接触）
+            return 1f - (distance / radiusSum);
+        }
+        
         public override string ToString()
         {
-            return $"[{Name}] Type:{IndicatorType} Position:{Position} Value:{ContributionValue} Age:{GetAge():F1}s";
+            return $"[{Name}] Type:{IndicatorType} Position:{Position} Value:{ContributionValue} Radius:{RadiationRadius}m Age:{GetAge():F1}s";
         }
     }
 }

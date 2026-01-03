@@ -65,10 +65,11 @@ namespace Revive.GamePlay.Purification
         /// <param name="position">世界坐标位置</param>
         /// <param name="contributionValue">贡献值</param>
         /// <param name="indicatorType">类型标识</param>
+        /// <param name="radiationRadius">辐射范围（默认8米）</param>
         /// <returns>创建的指示物实例</returns>
-        public PurificationIndicator AddIndicator(string pName, Vector3 position, float contributionValue, string indicatorType)
+        public PurificationIndicator AddIndicator(string pName, Vector3 position, float contributionValue, string indicatorType, float radiationRadius = 8f)
         {
-            PurificationIndicator indicator = new PurificationIndicator(pName, position, contributionValue, indicatorType);
+            PurificationIndicator indicator = new PurificationIndicator(pName, position, contributionValue, indicatorType, radiationRadius);
             _indicators.Add(indicator);
             
             Debug.Log($"[PurificationSystem] 添加指示物: {indicator}");
@@ -174,13 +175,15 @@ namespace Revive.GamePlay.Purification
                 radius = DetectionRadius;
             }
             
-            // 计算范围内所有指示物的贡献值总和
+            // 计算范围内所有指示物的加权贡献值
             float totalContribution = 0f;
             foreach (var indicator in _indicators)
             {
-                if (indicator.IsInRange(position, radius))
+                // 使用球体相交计算权重
+                float weight = indicator.CalculateIntersectionWeight(position, radius);
+                if (weight > 0f)
                 {
-                    totalContribution += indicator.ContributionValue;
+                    totalContribution += indicator.ContributionValue * weight;
                 }
             }
             
@@ -195,8 +198,8 @@ namespace Revive.GamePlay.Purification
         /// </summary>
         /// <param name="position">查询位置</param>
         /// <param name="radius">查询半径</param>
-        /// <param name="totalContribution">输出：贡献值总和</param>
-        /// <param name="indicatorCount">输出：范围内指示物数量</param>
+        /// <param name="totalContribution">输出：加权贡献值总和</param>
+        /// <param name="indicatorCount">输出：范围内有效指示物数量（权重>0）</param>
         /// <returns>净化度 (0-1)</returns>
         public float GetPurificationLevelDetailed(Vector3 position, float radius, out float totalContribution, out int indicatorCount)
         {
@@ -210,9 +213,11 @@ namespace Revive.GamePlay.Purification
             
             foreach (var indicator in _indicators)
             {
-                if (indicator.IsInRange(position, radius))
+                // 使用球体相交计算权重
+                float weight = indicator.CalculateIntersectionWeight(position, radius);
+                if (weight > 0f)
                 {
-                    totalContribution += indicator.ContributionValue;
+                    totalContribution += indicator.ContributionValue * weight;
                     indicatorCount++;
                 }
             }
@@ -442,20 +447,23 @@ namespace Revive.GamePlay.Purification
             
 #if UNITY_EDITOR
             // 绘制所有指示物
-            Gizmos.color = IndicatorGizmosColor;
             foreach (var indicator in _indicators)
             {
+                // 绘制指示物辐射范围（半透明球体）
+                Gizmos.color = new Color(IndicatorGizmosColor.r, IndicatorGizmosColor.g, IndicatorGizmosColor.b, 0.15f);
+                Gizmos.DrawWireSphere(indicator.Position, indicator.RadiationRadius);
+                
+                // 绘制辐射范围圆圈（XZ平面）
+                Gizmos.color = new Color(RangeGizmosColor.r, RangeGizmosColor.g, RangeGizmosColor.b, 0.4f);
+                DrawWireCircle(indicator.Position, indicator.RadiationRadius, 32);
+                
+                // 绘制指示物中心点
+                Gizmos.color = IndicatorGizmosColor;
                 Gizmos.DrawSphere(indicator.Position, 0.3f);
                 
-                // 绘制指示物的影响范围（半透明）
-                Gizmos.color = RangeGizmosColor;
-                DrawWireCircle(indicator.Position, DetectionRadius, 32);
-                
-                // 显示指示物名称和强度
-                string label = $"{indicator.Name}\n强度: {indicator.ContributionValue:F1}";
+                // 显示指示物名称、强度和辐射范围
+                string label = $"{indicator.Name}\n强度: {indicator.ContributionValue:F1}\n范围: {indicator.RadiationRadius:F1}m";
                 UnityEditor.Handles.Label(indicator.Position + Vector3.up * 0.5f, label);
-                
-                Gizmos.color = IndicatorGizmosColor;
             }
             
             // 绘制所有监听者

@@ -21,6 +21,10 @@ namespace Revive.Slime
         [ChineseLabel("贡献值")]
         public float ContributionValue = 10f;
         
+        [Tooltip("辐射范围（米）")]
+        [ChineseLabel("辐射范围")]
+        public float RadiationRadius = 8f;
+        
         [Tooltip("指示物类型标识")]
         [ChineseLabel("类型标识")]
         public string IndicatorType = "SlimePuri";
@@ -65,7 +69,8 @@ namespace Revive.Slime
                 "InitPuri",
                 transform.position,
                 100,
-                IndicatorType
+                IndicatorType,
+                RadiationRadius
             );
         }
         
@@ -103,7 +108,8 @@ namespace Revive.Slime
                 indicatorName,
                 transform.position,
                 ContributionValue,
-                IndicatorType
+                IndicatorType,
+                RadiationRadius
             );
             
             _totalIndicatorsCreated++;
