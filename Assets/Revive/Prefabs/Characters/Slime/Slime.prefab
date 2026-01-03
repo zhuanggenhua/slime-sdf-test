@@ -369,7 +369,7 @@ MonoBehaviour:
   baseSpeed: 1.5
   maxDeformDistXZ: 1.5
   maxDeformDistY: 3
-  enableCollisionDeformLimit: 1
+  enableCollisionDeformLimit: 0
   enableVelocityConsistency: 1
   gravity: -5
   threshold: 2
@@ -453,7 +453,7 @@ MonoBehaviour:
   enableWatering: 1
   mainColliderIndexQueryCacheCapacity: 64
   mainColliderIndexQueryRadiusWorld: 20
-  enableGroundFallbackRaycast: 1
+  enableGroundFallbackRaycast: 0
   worldStaticColliderLayers:
     serializedVersion: 2
     m_Bits: 512

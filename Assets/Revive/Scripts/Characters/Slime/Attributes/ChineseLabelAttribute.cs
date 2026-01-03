@@ -5,13 +5,10 @@ namespace Revive.Slime
     /// <summary>
     /// 中文标签特性 - 让字段在Inspector中显示中文名称
     /// </summary>
-    public class ChineseLabelAttribute : PropertyAttribute
+    public class ChineseLabelAttribute : Revive.ChineseLabelAttribute
     {
-        public string Label { get; private set; }
-        
-        public ChineseLabelAttribute(string label)
+        public ChineseLabelAttribute(string label) : base(label)
         {
-            Label = label;
         }
     }
 }

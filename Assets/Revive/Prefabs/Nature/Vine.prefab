@@ -1,5 +1,58 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &3819294201582960334
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7935804838762191695}
+  - component: {fileID: 4725850739558047377}
+  m_Layer: 0
+  m_Name: "\u6D47\u6C34\u8303\u56F4"
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7935804838762191695
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3819294201582960334}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 5289661096213482809}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &4725850739558047377
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3819294201582960334}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 2.9978943, y: 1.2744651, z: 1.6067791}
+  m_Center: {x: -0.19903564, y: 0.13723254, z: 0.006201744}
 --- !u!1 &4744595163473563994
 GameObject:
   m_ObjectHideFlags: 0
@@ -14,6 +67,7 @@ GameObject:
   - component: {fileID: 3786291449361812141}
   - component: {fileID: 3472502132945677538}
   - component: {fileID: 6629463464707864298}
+  - component: {fileID: 7783368421329890374}
   m_Layer: 0
   m_Name: Vine
   m_TagString: Untagged
@@ -33,7 +87,8 @@ Transform:
   m_LocalPosition: {x: 142.45773, y: 1.24804, z: 28.6333}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 7935804838762191695}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &4529279447043299112
@@ -207,3 +262,28 @@ MonoBehaviour:
   MeshFilter: {fileID: 4529279447043299112}
   BoxCollider: {fileID: 3786291449361812141}
   RandomSeed: 81
+--- !u!114 &7783368421329890374
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4744595163473563994}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a84140bedb1c4a48a771e2e6b208cef, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  triggerCollider: {fileID: 4725850739558047377}
+  waterPerParticle: 1
+  maxConsumePerUpdate: 0
+  consumeEmitted: 1
+  consumeSeparated: 1
+  consumeDroplets: 1
+  targetVine: {fileID: 3472502132945677538}
+  generateMeshOnFirstWater: 1
+  vineGenerator: {fileID: 6629463464707864298}
+  waterRequiredToFullyPurify: 25
+  accumulatedWater: 0
+  purificationIndicatorType: Water
+  purificationIndicatorName: VineWater

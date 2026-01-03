@@ -7,6 +7,7 @@ using MoreMountains.Feedbacks;
 namespace Revive.Slime
 {
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(500)]
     public class SlimeCarrySlot : MonoBehaviour
     {
         [Header("绑定")]
@@ -91,10 +92,104 @@ namespace Revive.Slime
         private float _heldMoveBlockedSeconds;
         private readonly Collider[] _releaseOverlapBuffer = new Collider[64];
 
+        private Vector3 _heldAnchorSmoothedWorld;
+        private bool _heldAnchorSmoothedWorldValid;
+
+        private Vector3 _lastFixedAnchorWorld;
+        private bool _lastFixedAnchorWorldValid;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private int _dbgCarryLogFrame;
+#endif
+
         private void Awake()
         {
             CachePlayerColliders();
             ResolveConsumeBuffControllerIfNeeded();
+        }
+
+        private void LateUpdate()
+        {
+            if (_held == null || CenterAnchor == null)
+            {
+                _heldMoveBlockedThisFrame = false;
+                _heldMoveBlockedSeconds = 0f;
+                _heldAnchorSmoothedWorldValid = false;
+                _lastFixedAnchorWorldValid = false;
+                ApplyCarrySpecIfNeeded();
+                return;
+            }
+
+            bool usedCentroid;
+            Vector3 stablePos = GetHoldAnchorWorldPositionStable(out usedCentroid);
+            Vector3 renderOffset = Vector3.zero;
+            Vector3 targetPos = stablePos;
+            if (usedCentroid && _lastFixedAnchorWorldValid)
+            {
+                renderOffset = CenterAnchor.position - _lastFixedAnchorWorld;
+                if (renderOffset.sqrMagnitude > 2500f)
+                    renderOffset = Vector3.zero;
+                targetPos = stablePos + renderOffset;
+            }
+            if (_pickupInTransition && PickupTransitionSeconds > 0f)
+            {
+                _pickupTransitionElapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(_pickupTransitionElapsed / PickupTransitionSeconds);
+                float eased = t * t * (3f - 2f * t);
+                targetPos = Vector3.LerpUnclamped(_pickupTransitionStart, targetPos, eased);
+                if (t >= 1f)
+                    _pickupInTransition = false;
+            }
+
+            if (_heldRigidbody != null)
+            {
+                MoveHeldRigidbodySafely(targetPos);
+                if (_heldMoveBlockedThisFrame)
+                {
+                    _heldMoveBlockedSeconds += Time.deltaTime;
+                    if (_heldMoveBlockedSeconds >= Mathf.Max(0f, StuckAutoDetachSeconds))
+                    {
+                        AutoDetachHeldBecauseStuck();
+                        return;
+                    }
+                }
+                else
+                {
+                    _heldMoveBlockedSeconds = 0f;
+                }
+            }
+            else
+            {
+                _held.transform.position = targetPos;
+            }
+
+            ApplyCarrySpecIfNeeded();
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            int interval = 20;
+            if (Time.frameCount - _dbgCarryLogFrame >= interval)
+            {
+                _dbgCarryLogFrame = Time.frameCount;
+                bool rawUsedCentroid;
+                Vector3 raw = GetHoldAnchorWorldPosition(out rawUsedCentroid);
+                Vector3 rbPos = _heldRigidbody != null ? _heldRigidbody.position : _held.transform.position;
+                float err = (rbPos - targetPos).magnitude;
+                Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={rawUsedCentroid} raw=({raw.x:F3},{raw.y:F3},{raw.z:F3}) stable=({stablePos.x:F3},{stablePos.y:F3},{stablePos.z:F3}) off=({renderOffset.x:F3},{renderOffset.y:F3},{renderOffset.z:F3}) target=({targetPos.x:F3},{targetPos.y:F3},{targetPos.z:F3}) rb=({rbPos.x:F3},{rbPos.y:F3},{rbPos.z:F3}) err={err:F4} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition}");
+            }
+#endif
+        }
+
+        private void FixedUpdate()
+        {
+            if (CenterAnchor == null)
+            {
+                ResolveCenterAnchorIfNeeded();
+            }
+            if (CenterAnchor == null)
+                return;
+
+            _lastFixedAnchorWorld = CenterAnchor.position;
+            _lastFixedAnchorWorldValid = true;
         }
 
         private void CachePlayerColliders()
@@ -116,6 +211,43 @@ namespace Revive.Slime
             ResolveSlimePbfIfNeeded();
             ResolveConsumeBuffControllerIfNeeded();
             ApplyCarrySpecIfNeeded();
+        }
+
+        private Vector3 GetHoldAnchorWorldPositionStable(out bool usedCentroid)
+        {
+            Vector3 raw = GetHoldAnchorWorldPosition(out usedCentroid);
+
+            if (!usedCentroid)
+            {
+                _heldAnchorSmoothedWorld = raw;
+                _heldAnchorSmoothedWorldValid = true;
+                return raw;
+            }
+
+            if (!_heldAnchorSmoothedWorldValid)
+            {
+                _heldAnchorSmoothedWorld = raw;
+                _heldAnchorSmoothedWorldValid = true;
+                return raw;
+            }
+
+            Vector3 delta = raw - _heldAnchorSmoothedWorld;
+            if (delta.sqrMagnitude > 25f)
+            {
+                _heldAnchorSmoothedWorld = raw;
+                return raw;
+            }
+
+            float dt = Time.inFixedTimeStep ? Time.fixedDeltaTime : Time.deltaTime;
+            float k = 30f;
+            float alpha = dt > 1e-6f ? (1f - Mathf.Exp(-k * dt)) : 1f;
+            _heldAnchorSmoothedWorld = Vector3.Lerp(_heldAnchorSmoothedWorld, raw, alpha);
+            return _heldAnchorSmoothedWorld;
+        }
+
+        private Vector3 GetHoldAnchorWorldPositionStable()
+        {
+            return GetHoldAnchorWorldPositionStable(out _);
         }
 
         private Vector3 ResolveReleasePositionByPenetration(
@@ -273,6 +405,8 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsValues = null;
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
+            _heldAnchorSmoothedWorldValid = false;
+            _lastFixedAnchorWorldValid = false;
 
             ApplyCarrySpecIfNeeded();
 
@@ -287,52 +421,6 @@ namespace Revive.Slime
                 return;
             _heldRigidbody.interpolation = _heldInterpolation;
             _heldInterpolationCached = false;
-        }
-
-        private void FixedUpdate()
-        {
-            if (_held == null || CenterAnchor == null)
-            {
-                _heldMoveBlockedThisFrame = false;
-                _heldMoveBlockedSeconds = 0f;
-                ApplyCarrySpecIfNeeded();
-                return;
-            }
-
-            Vector3 baseAnchor = GetBaseAnchorWorldPosition();
-            Vector3 targetPos = baseAnchor + HeldAnchorOffset;
-            if (_pickupInTransition && PickupTransitionSeconds > 0f)
-            {
-                _pickupTransitionElapsed += Time.fixedDeltaTime;
-                float t = Mathf.Clamp01(_pickupTransitionElapsed / PickupTransitionSeconds);
-                float eased = t * t * (3f - 2f * t);
-                targetPos = Vector3.LerpUnclamped(_pickupTransitionStart, targetPos, eased);
-                if (t >= 1f)
-                    _pickupInTransition = false;
-            }
-            if (_heldRigidbody != null)
-            {
-                MoveHeldRigidbodySafely(targetPos);
-                if (_heldMoveBlockedThisFrame)
-                {
-                    _heldMoveBlockedSeconds += Time.fixedDeltaTime;
-                    if (_heldMoveBlockedSeconds >= Mathf.Max(0f, StuckAutoDetachSeconds))
-                    {
-                        AutoDetachHeldBecauseStuck();
-                        return;
-                    }
-                }
-                else
-                {
-                    _heldMoveBlockedSeconds = 0f;
-                }
-            }
-            else
-            {
-                _held.transform.position = targetPos;
-            }
-
-            ApplyCarrySpecIfNeeded();
         }
 
         private void OnControllerColliderHit(ControllerColliderHit hit)
@@ -429,12 +517,13 @@ namespace Revive.Slime
 
             CacheAndDisableHeldShadowState();
 
-            Vector3 targetPos = GetHoldAnchorWorldPosition();
+            _heldAnchorSmoothedWorldValid = false;
+            Vector3 targetPos = GetHoldAnchorWorldPositionStable();
             float trans = Mathf.Max(0f, PickupTransitionSeconds);
             if (trans <= 0f)
             {
                 _pickupInTransition = false;
-                MoveHeldRigidbodySafely(targetPos);
+                _heldRigidbody.position = targetPos;
             }
             else
             {
@@ -473,6 +562,8 @@ namespace Revive.Slime
                 _heldColliderWasTrigger = null;
                 _heldIndexIgnored = false;
                 _heldInterpolationCached = false;
+                _heldAnchorSmoothedWorldValid = false;
+                _lastFixedAnchorWorldValid = false;
                 _heldRenderers = null;
                 _heldRendererReceiveShadows = null;
                 _heldRendererShadowCastingModes = null;
@@ -554,6 +645,8 @@ namespace Revive.Slime
             _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
             _heldInterpolationCached = false;
+            _heldAnchorSmoothedWorldValid = false;
+            _lastFixedAnchorWorldValid = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
             _heldRendererShadowCastingModes = null;
@@ -609,9 +702,34 @@ namespace Revive.Slime
             return anchor;
         }
 
+        private Vector3 GetBaseAnchorWorldPosition(out bool usedCentroid)
+        {
+            Vector3 anchor = CenterAnchor != null ? CenterAnchor.position : transform.position;
+            usedCentroid = false;
+            if (PreferSlimePbfCentroid)
+            {
+                ResolveSlimePbfIfNeeded();
+                if (_slimePbf != null)
+                {
+                    Vector3 centroid = _slimePbf.MainBodyCentroidWorld;
+                    if ((centroid - anchor).sqrMagnitude < 2500f)
+                    {
+                        anchor = centroid;
+                        usedCentroid = true;
+                    }
+                }
+            }
+            return anchor;
+        }
+
         private Vector3 GetHoldAnchorWorldPosition()
         {
             return GetBaseAnchorWorldPosition() + HeldAnchorOffset;
+        }
+
+        private Vector3 GetHoldAnchorWorldPosition(out bool usedCentroid)
+        {
+            return GetBaseAnchorWorldPosition(out usedCentroid) + HeldAnchorOffset;
         }
 
         private void MoveHeldRigidbodySafely(Vector3 targetWorldPos)
@@ -625,7 +743,7 @@ namespace Revive.Slime
             float dist = delta.magnitude;
             if (dist <= 0.00001f)
             {
-                _heldRigidbody.MovePosition(targetWorldPos);
+                _heldRigidbody.position = targetWorldPos;
                 return;
             }
 
@@ -658,7 +776,7 @@ namespace Revive.Slime
                 }
             }
 
-            _heldRigidbody.MovePosition(targetWorldPos);
+            _heldRigidbody.position = targetWorldPos;
         }
 
         private void AutoDetachHeldBecauseStuck()
@@ -728,6 +846,8 @@ namespace Revive.Slime
             _heldMoveBlockedThisFrame = false;
             _heldMoveBlockedSeconds = 0f;
             _heldInterpolationCached = false;
+            _heldAnchorSmoothedWorldValid = false;
+            _lastFixedAnchorWorldValid = false;
 
             ApplyCarrySpecIfNeeded();
         }
@@ -1036,6 +1156,8 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
             _heldInterpolationCached = false;
+            _heldAnchorSmoothedWorldValid = false;
+            _lastFixedAnchorWorldValid = false;
         }
 
         private bool IsHeldCollider(Collider col)

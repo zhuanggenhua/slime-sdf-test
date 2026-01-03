@@ -1,13 +1,13 @@
 using UnityEngine;
 using UnityEditor;
-using Revive.Slime;
+using Revive;
 
 namespace Revive.Slime.Editor
 {
     /// <summary>
     /// ChineseLabel特性的自定义绘制器 - 在Inspector中显示中文标签
     /// </summary>
-    [CustomPropertyDrawer(typeof(ChineseLabelAttribute))]
+    [CustomPropertyDrawer(typeof(ChineseLabelAttribute), true)]
     public class ChineseLabelDrawer : PropertyDrawer
     {
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)

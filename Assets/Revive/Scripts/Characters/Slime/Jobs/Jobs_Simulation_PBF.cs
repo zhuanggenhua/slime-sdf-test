@@ -5,6 +5,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
+using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 
 namespace Revive.Slime
@@ -1040,8 +1041,13 @@ namespace Revive.Slime
             [ReadOnly] public NativeList<ParticleController> Controllers; // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
             [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
             public int ColliderCount;
+            public int EnableCollisionStats;
+            public int CollisionStatsStride;
+            [NativeDisableParallelForRestriction] public NativeArray<int> CollisionStats;
+            [NativeSetThreadIndex] public int ThreadIndex;
             public int UseStaticSdf;
             public WorldSdfRuntime.Volume StaticSdf;
+            public float StaticSdfQueryMul;
             public int DisableStaticColliderFallback;
             public float ParticleRadiusSim;
             public float StaticFriction;
@@ -1170,6 +1176,13 @@ namespace Revive.Slime
                     Ps[i] = p;
                     return;
                 }
+
+                int statsBase = -1;
+                if (EnableCollisionStats != 0 && CollisionStats.IsCreated)
+                {
+                    statsBase = ThreadIndex * CollisionStatsStride;
+                    CollisionStats[statsBase]++;
+                }
                 
                 // 所有粒子统一使用模拟坐标（内部坐标）
                 float3 simPos = p.Position;
@@ -1183,25 +1196,30 @@ namespace Revive.Slime
                 bool sdfSkipStaticColliders = false;
                 bool canUseSdf = UseStaticSdf != 0 && StaticSdf.IsCreated;
                 bool sdfIsDense = canUseSdf && StaticSdf.Storage == WorldSdfRuntime.Volume.StorageKind.Dense;
+                float sdfMul = math.max(StaticSdfQueryMul, 1e-6f);
+                float sdfInvMul = 1f / sdfMul;
+                float3 sdfPos = simPos;
                 float3 sdfLocal = default;
                 int3 sdfI0 = default;
                 int3 sdfI1 = default;
                 float3 sdfF = default;
                 if (canUseSdf)
                 {
+                    sdfPos = simPos * sdfMul;
+                    float particleRadiusSdf = ParticleRadiusSim * sdfMul;
                     float voxel = math.max(StaticSdf.VoxelSizeSim, 1e-3f);
-                    float contactSkin = math.min(voxel * 0.25f, ParticleRadiusSim * 0.25f);
-                    float contactRadius = ParticleRadiusSim + contactSkin;
-                    float contactSlop = math.min(voxel * 0.05f, ParticleRadiusSim * 0.1f);
+                    float contactSkin = math.min(voxel * 0.25f, particleRadiusSdf * 0.25f);
+                    float contactRadius = particleRadiusSdf + contactSkin;
+                    float contactSlop = math.min(voxel * 0.05f, particleRadiusSdf * 0.1f);
 
                     float3 minSim = StaticSdf.AabbMinSim;
                     float3 maxSim = StaticSdf.AabbMaxSim;
                     float boundsMargin = contactRadius + voxel * 2f;
-                    sdfInBounds = !(simPos.x < (minSim.x - boundsMargin) || simPos.y < (minSim.y - boundsMargin) || simPos.z < (minSim.z - boundsMargin) ||
-                                   simPos.x > (maxSim.x + boundsMargin) || simPos.y > (maxSim.y + boundsMargin) || simPos.z > (maxSim.z + boundsMargin));
+                    sdfInBounds = !(sdfPos.x < (minSim.x - boundsMargin) || sdfPos.y < (minSim.y - boundsMargin) || sdfPos.z < (minSim.z - boundsMargin) ||
+                                   sdfPos.x > (maxSim.x + boundsMargin) || sdfPos.y > (maxSim.y + boundsMargin) || sdfPos.z > (maxSim.z + boundsMargin));
                     float d = sdfIsDense
-                        ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
-                        : StaticSdf.SampleDistance(simPos);
+                        ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(sdfPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
+                        : StaticSdf.SampleDistance(sdfPos);
                     sdfDistSim = d;
                     sdfValid = d < (StaticSdf.MaxDistanceSim - 1e-5f);
                     float skipMargin = voxel * 0.5f;
@@ -1214,7 +1232,7 @@ namespace Revive.Slime
                         {
                             float3 n = sdfIsDense
                                 ? StaticSdf.SampleNormalForwardDenseLocalFromIndices(sdfLocal, sdfI0, sdfI1, sdfF, d)
-                                : StaticSdf.SampleNormalForward(simPos, d);
+                                : StaticSdf.SampleNormalForward(sdfPos, d);
                             float stepOut = contactRadius - d;
                             if (stepOut <= contactSlop)
                             {
@@ -1223,20 +1241,23 @@ namespace Revive.Slime
                             }
 
                             stepOut = math.min(stepOut, maxStep);
-                            simPos += n * stepOut;
+                            sdfPos += n * stepOut;
                             sdfNormal = math.normalizesafe(n, new float3(0, 1, 0));
 
                             d = sdfIsDense
-                                ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(simPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
-                                : StaticSdf.SampleDistance(simPos);
+                                ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(sdfPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
+                                : StaticSdf.SampleDistance(sdfPos);
                         }
                     }
+
+                    simPos = sdfPos * sdfInvMul;
                 }
                 
                 // 碰撞检测（Colliders 也是模拟坐标，包含地面碰撞体）
                 // 记录碰撞轴，用于后续速度衰减
                 bool3 collisionAxes = false;
                 bool hadObbCollision = false;
+                bool hadAabbCollision = false;
                 float3 obbNormal = float3.zero;
                 float obbFriction = 0f;
                 float3 obbSurfaceVelocity = float3.zero;
@@ -1319,6 +1340,7 @@ namespace Revive.Slime
                                 if (remain.z < remain[axis]) axis = 2;
                                 simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
                                 collisionAxes[axis] = true;
+                                hadAabbCollision = true;
                             }
                             break;
                         }
@@ -1372,12 +1394,26 @@ namespace Revive.Slime
                 
                 bool allowGroundClamp = PBF_Utils.AllowGroundClamp(UseStaticSdf, DisableStaticColliderFallback);
                 bool allowGroundClampForType = p.Type == ParticleType.MainBody || p.Type == ParticleType.Separated || p.Type == ParticleType.Emitted;
+                bool hadGroundClampCollision = false;
                 if (!terrainCovers && allowGroundClamp && allowGroundClampForType)
                 {
                     int controllerIndex = GetControllerIndex(p);
                     GetGroundFallback(controllerIndex, simPos, out float groundY, out float3 groundPoint, out float3 groundNormal);
                     if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, groundPoint, groundNormal))
+                    {
                         collisionAxes.y = true;
+                        hadGroundClampCollision = true;
+                    }
+                }
+
+                if (statsBase >= 0 && (statsBase + CollisionStatsStride - 1) < CollisionStats.Length)
+                {
+                    if (hadSdfCollision) CollisionStats[statsBase + 1]++;
+                    if (hadTerrainCollision) CollisionStats[statsBase + 2]++;
+                    if (hadObbCollision) CollisionStats[statsBase + 3]++;
+                    if (hadGroundClampCollision) CollisionStats[statsBase + 4]++;
+                    if (collisionAxes.y) CollisionStats[statsBase + 5]++;
+                    if (hadAabbCollision) CollisionStats[statsBase + 7]++;
                 }
                 
                 // 更新位置（模拟坐标）
@@ -1416,6 +1452,10 @@ namespace Revive.Slime
                 bool3 dampAxes = collisionAxes;
                 if (hadTerrainCollision)
                     dampAxes.y = false;
+                if (statsBase >= 0 && (statsBase + CollisionStatsStride - 1) < CollisionStats.Length)
+                {
+                    if (dampAxes.y) CollisionStats[statsBase + 6]++;
+                }
                 if (dampAxes.x) velCalc.x *= normalCollisionDamping;
                 if (dampAxes.y) velCalc.y *= normalCollisionDamping;
                 if (dampAxes.z) velCalc.z *= normalCollisionDamping;

@@ -1,17 +1,16 @@
 using UnityEngine;
 using UnityEditor;
-using Revive.Slime;
+using Revive;
 
 namespace Revive.Slime.Editor
 {
     /// <summary>
     /// ChineseHeader特性的自定义绘制器 - 用下划线样式显示中文Header
     /// </summary>
-    [CustomPropertyDrawer(typeof(ChineseHeaderAttribute))]
+    [CustomPropertyDrawer(typeof(Revive.ChineseHeaderAttribute), true)]
     public class ChineseHeaderDrawer : DecoratorDrawer
     {
         private static GUIStyle _headerStyle;
-        private static GUIStyle _lineStyle;
         
         private static GUIStyle HeaderStyle
         {
@@ -33,7 +32,7 @@ namespace Revive.Slime.Editor
         
         public override void OnGUI(Rect position)
         {
-            var headerAttr = attribute as ChineseHeaderAttribute;
+            var headerAttr = attribute as Revive.ChineseHeaderAttribute;
             if (headerAttr == null) return;
             
             // 上方留白
