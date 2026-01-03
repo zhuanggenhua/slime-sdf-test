@@ -72,6 +72,10 @@ namespace Revive.Environment.Watering
         [DefaultValue(10f)]
         [SerializeField] private float purificationContributionValue = 10f;
 
+        [ChineseLabel("辐射范围(米)")]
+        [DefaultValue(8f)]
+        [SerializeField] private float purificationRadiationRadius = 8f;
+
         private bool _warnedMissingTriggerCollider;
         private bool _warnedTriggerColliderNotTrigger;
         private bool _warnedMissingTarget;
@@ -91,6 +95,13 @@ namespace Revive.Environment.Watering
 
         protected string PurificationIndicatorType => purificationIndicatorType;
         protected float PurificationContributionValue => purificationContributionValue;
+        protected float PurificationRadiationRadius => purificationRadiationRadius;
+
+        protected void SetPurificationConfig(string indicatorType, float contributionValue)
+        {
+            purificationIndicatorType = indicatorType;
+            purificationContributionValue = contributionValue;
+        }
 
         public virtual bool WantsWater => true;
 
@@ -287,7 +298,7 @@ namespace Revive.Environment.Watering
             return system;
         }
 
-        protected PurificationIndicator EnsurePurificationIndicator(ref PurificationIndicator indicator, string indicatorName, Vector3 positionWorld, float contributionValue, string indicatorType)
+        protected PurificationIndicator EnsurePurificationIndicator(ref PurificationIndicator indicator, string indicatorName, Vector3 positionWorld, float contributionValue, string indicatorType, float radiationRadius = 8f)
         {
             PurificationSystem system = GetPurificationSystemChecked();
             if (system == null)
@@ -295,7 +306,7 @@ namespace Revive.Environment.Watering
 
             if (indicator == null)
             {
-                indicator = system.AddIndicator(indicatorName, positionWorld, contributionValue, indicatorType);
+                indicator = system.AddIndicator(indicatorName, positionWorld, contributionValue, indicatorType, radiationRadius);
                 return indicator;
             }
 
@@ -303,6 +314,7 @@ namespace Revive.Environment.Watering
             indicator.Position = positionWorld;
             indicator.ContributionValue = contributionValue;
             indicator.IndicatorType = indicatorType;
+            indicator.RadiationRadius = radiationRadius;
             return indicator;
         }
 

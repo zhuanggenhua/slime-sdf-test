@@ -27,7 +27,6 @@ namespace Revive.Slime
         public float CurrentThrowRangeMultiplier { get; private set; } = 1f;
 
         public bool WindFieldImmuneActive { get; private set; }
-        public float DeformLimitMultiplierActive { get; private set; } = 1f;
 
         private SlimeCarryableBuffSpec _carrySpec;
         private float _carryMoveSpeedMultiplier = 1f;
@@ -35,7 +34,6 @@ namespace Revive.Slime
         private int _carryExtraJumps;
         private float _carryThrowRangeMultiplier = 1f;
         private bool _carryWindFieldImmune;
-        private float _carryDeformLimitMultiplier = 1f;
         private float _carryMaximumFallSpeedMultiplier = 1f;
 
         private float _buffEndTime = -1f;
@@ -46,7 +44,6 @@ namespace Revive.Slime
         private int _consumeExtraJumps;
         private float _consumeThrowRangeMultiplier = 1f;
         private bool _consumeWindFieldImmune;
-        private float _consumeDeformLimitMultiplier = 1f;
         private float _consumeMaximumFallSpeedMultiplier = 1f;
 
         private Color _baseSurfaceTint = Color.white;
@@ -197,7 +194,6 @@ namespace Revive.Slime
             _consumeExtraJumps = m.ExtraJumps;
             _consumeThrowRangeMultiplier = Mathf.Max(0f, m.ThrowRangeMultiplier);
             _consumeWindFieldImmune = m.WindFieldImmune;
-            _consumeDeformLimitMultiplier = Mathf.Max(0.01f, m.DeformLimitMultiplier);
             _consumeMaximumFallSpeedMultiplier = Mathf.Max(0f, m.MaximumFallSpeedMultiplier);
 
             ApplyRuntimeValues();
@@ -216,7 +212,6 @@ namespace Revive.Slime
             _consumeExtraJumps = 0;
             _consumeThrowRangeMultiplier = 1f;
             _consumeWindFieldImmune = false;
-            _consumeDeformLimitMultiplier = 1f;
             _consumeMaximumFallSpeedMultiplier = 1f;
 
             ApplyRuntimeValues();
@@ -238,7 +233,6 @@ namespace Revive.Slime
                 _carryExtraJumps = 0;
                 _carryThrowRangeMultiplier = 1f;
                 _carryWindFieldImmune = false;
-                _carryDeformLimitMultiplier = 1f;
                 _carryMaximumFallSpeedMultiplier = 1f;
             }
             else
@@ -249,7 +243,6 @@ namespace Revive.Slime
                 _carryExtraJumps = m.ExtraJumps;
                 _carryThrowRangeMultiplier = Mathf.Max(0f, m.ThrowRangeMultiplier);
                 _carryWindFieldImmune = m.WindFieldImmune;
-                _carryDeformLimitMultiplier = Mathf.Max(0.01f, m.DeformLimitMultiplier);
                 _carryMaximumFallSpeedMultiplier = Mathf.Max(0f, m.MaximumFallSpeedMultiplier);
             }
 
@@ -282,7 +275,6 @@ namespace Revive.Slime
 
             CurrentThrowRangeMultiplier = _consumeThrowRangeMultiplier * _carryThrowRangeMultiplier;
             WindFieldImmuneActive = _consumeWindFieldImmune || _carryWindFieldImmune;
-            DeformLimitMultiplierActive = Mathf.Max(0.01f, Mathf.Min(_consumeDeformLimitMultiplier, _carryDeformLimitMultiplier));
 
             float maxFallSpeedMul = Mathf.Max(0f, Mathf.Min(_consumeMaximumFallSpeedMultiplier, _carryMaximumFallSpeedMultiplier));
 
@@ -309,7 +301,6 @@ namespace Revive.Slime
             if (slimePbf != null)
             {
                 slimePbf.SetConsumeWindFieldImmune(WindFieldImmuneActive);
-                slimePbf.SetConsumeDeformLimitMultiplier(DeformLimitMultiplierActive);
             }
         }
 

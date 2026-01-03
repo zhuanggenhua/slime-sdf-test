@@ -7,7 +7,7 @@ using Revive.Slime;
 
 namespace Revive.Environment.Watering
 {
-    public class MushroomGrowthWaterReceiver : PbfWaterReceiver, IPbfWaterTarget
+    public class MushroomGrowthWaterReceiver : PbfChargeWaterReceiver
     {
         [ChineseHeader("蘑菇")]
         [ChineseLabel("目标Transform"), Tooltip("缩放作用的目标(通常是蘑菇可视模型)")]
@@ -20,14 +20,6 @@ namespace Revive.Environment.Watering
         [DefaultValue(true)]
         [SerializeField] private bool uniformScale = true;
 
-        [ChineseHeader("浇水参数")]
-        [ChineseLabel("当前蓄水量(运行时)")]
-        [SerializeField] private float charge;
-
-        [ChineseLabel("触发所需水量"), Tooltip("达到该水量后蘑菇变大并启用跳跳垫")]
-        [DefaultValue(25f)]
-        [SerializeField] private float chargeRequired = 25f;
-
         [ChineseHeader("缩放")]
         [ChineseLabel("放大系数(每次触发)"), Tooltip("触发后缩放倍率 = 1 + 该值")]
         [DefaultValue(0.2f)]
@@ -37,25 +29,12 @@ namespace Revive.Environment.Watering
         [ChineseLabel("Q弹过渡")]
         [SerializeField] private LocalScaleTransition scaleTransition = new LocalScaleTransition();
 
-        [ChineseHeader("反馈")]
-        [ChineseLabel("浇水命中反馈")]
-        [SerializeField] private MMFeedbacks waterTickFeedbacks;
-
-        [ChineseLabel("浇水命中节流(秒)")]
-        [SerializeField, Min(0f), DefaultValue(0.12f)]
-        private float waterTickCooldownSeconds = 0.12f;
-
-        [ChineseLabel("激活反馈")]
-        [SerializeField] private MMFeedbacks waterCompleteFeedbacks;
-
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
         private bool _activated;
         private MushroomJumpPad3D _jumpPad;
         private bool _resetQueued;
         private bool _scaleResetQueued;
-
-        private float _nextAllowedWaterTickTime;
 
         private SlimeCarryableObject _carryable;
         private bool _carryablePickupEnabledPrev;
@@ -87,7 +66,14 @@ namespace Revive.Environment.Watering
             }
         }
 
-        public void ReceiveWater(WaterInput input)
+        protected override void OnChargeUpdated(WaterInput input)
+        {
+            if (targetTransform == null)
+                targetTransform = transform;
+            EnsureBaseScale();
+        }
+
+        protected override void OnChargeCompleted(WaterInput input)
         {
             if (_activated)
                 return;
@@ -96,34 +82,22 @@ namespace Revive.Environment.Watering
                 targetTransform = transform;
             EnsureBaseScale();
 
-            if (Time.time >= _nextAllowedWaterTickTime)
+            _activated = true;
+            SetCarryablePickupEnabled(false);
+            EnsureJumpPad();
+
+            string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
+            PurificationSystem system = GetPurificationSystemChecked();
+            system.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
+
+            Vector3 targetScale = GetActivatedLocalScale();
+            TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
             {
-                waterTickFeedbacks?.PlayFeedbacks(input.PositionWorld);
-                _nextAllowedWaterTickTime = Time.time + Mathf.Max(0f, waterTickCooldownSeconds);
-            }
-
-            charge += input.Amount;
-            if (chargeRequired > 0f && charge >= chargeRequired)
-            {
-                charge = 0f;
-                _activated = true;
-                SetCarryablePickupEnabled(false);
-                EnsureJumpPad();
-
-                string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
-                PurificationSystem.Instance.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType);
-
-                waterCompleteFeedbacks?.PlayFeedbacks(input.PositionWorld);
-
-                Vector3 targetScale = GetActivatedLocalScale();
-                TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
+                if (_jumpPad != null)
                 {
-                    if (_jumpPad != null)
-                    {
-                        RefreshJumpPadAfterScaleChange();
-                    }
-                });
-            }
+                    RefreshJumpPadAfterScaleChange();
+                }
+            });
         }
 
         private void SetCarryablePickupEnabled(bool enabled)
@@ -193,7 +167,7 @@ namespace Revive.Environment.Watering
                 yield return new WaitForSeconds(delay);
 
             _activated = false;
-            charge = 0f;
+            ResetCharge();
             _resetQueued = false;
             _scaleResetQueued = false;
 

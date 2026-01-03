@@ -86,7 +86,7 @@ namespace Revive.Environment
                 return;
             }
 
-            if (carryable.LastThrowTime <= 0f)
+            if (carryable.LastThrowTime < 0f)
             {
                 return;
             }
@@ -118,7 +118,7 @@ namespace Revive.Environment
                 {
                     return carryable.LastThrowerTransform.position;
                 }
-                if (carryable.LastThrowTime > 0f)
+                if (carryable.LastThrowTime >= 0f)
                 {
                     return carryable.LastThrowerPositionWorld;
                 }

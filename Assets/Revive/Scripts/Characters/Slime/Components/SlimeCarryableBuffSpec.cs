@@ -29,10 +29,6 @@ namespace Revive.Slime
             [DefaultValue(false)]
             public bool WindFieldImmune;
 
-            [ChineseLabel("形变扼制倍率")]
-            [Min(0f), DefaultValue(1f)]
-            public float DeformLimitMultiplier;
-
             [ChineseLabel("最大下落速度倍率"), Tooltip("最大下落速度 = 角色基础MaximumFallSpeed × 倍率。越小越像滑翔。")]
             [Min(0f), DefaultValue(1f)]
             public float MaximumFallSpeedMultiplier;
@@ -45,7 +41,6 @@ namespace Revive.Slime
                     ExtraJumps = 0,
                     ThrowRangeMultiplier = 1f,
                     WindFieldImmune = false,
-                    DeformLimitMultiplier = 1f,
                     MaximumFallSpeedMultiplier = 1f
                 };
         }

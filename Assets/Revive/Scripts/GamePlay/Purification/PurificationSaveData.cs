@@ -15,6 +15,7 @@ namespace Revive.GamePlay.Purification
         public float PositionZ;
         public float ContributionValue;
         public string IndicatorType;
+        public float RadiationRadius;
         public float Timestamp;
         
         /// <summary>
@@ -28,6 +29,7 @@ namespace Revive.GamePlay.Purification
             PositionZ = indicator.Position.z;
             ContributionValue = indicator.ContributionValue;
             IndicatorType = indicator.IndicatorType;
+            RadiationRadius = indicator.RadiationRadius;
             Timestamp = indicator.Timestamp;
         }
         
@@ -37,7 +39,7 @@ namespace Revive.GamePlay.Purification
         public PurificationIndicator ToIndicator()
         {
             Vector3 position = new Vector3(PositionX, PositionY, PositionZ);
-            return new PurificationIndicator(Name, position, ContributionValue, IndicatorType)
+            return new PurificationIndicator(Name, position, ContributionValue, IndicatorType, RadiationRadius)
             {
                 Timestamp = Timestamp
             };

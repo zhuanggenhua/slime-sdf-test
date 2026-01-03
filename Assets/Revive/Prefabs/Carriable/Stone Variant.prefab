@@ -189,7 +189,6 @@ MonoBehaviour:
     ExtraJumps: 0
     ThrowRangeMultiplier: 1
     WindFieldImmune: 1
-    DeformLimitMultiplier: 1
     MaximumFallSpeedMultiplier: 1
   EnableConsume: 0
   DurationSeconds: 10
@@ -201,7 +200,6 @@ MonoBehaviour:
     ExtraJumps: 0
     ThrowRangeMultiplier: 1
     WindFieldImmune: 0
-    DeformLimitMultiplier: 1
     MaximumFallSpeedMultiplier: 1
   ConsumeDissolveSeconds: 0.35
   ConsumeDissolveMaterial: {fileID: 0}

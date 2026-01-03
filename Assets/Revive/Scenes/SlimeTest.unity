@@ -1005,11 +1005,8 @@ MonoBehaviour:
   PickupEnabled: 1
   DirectionMode: 0
   MaxThrowRange: 10
-  thrownImpactGroundFeedbacks: {fileID: 0}
-  thrownImpactOtherFeedbacks: {fileID: 0}
+  thrownImpactFeedbacks: {fileID: 0}
   thrownImpactCooldownSeconds: 0.08
-  thrownImpactMinRelativeSpeed: 1.5
-  thrownImpactGroundNormalYThreshold: 0.6
   thrownImpactWindowSeconds: 6
 --- !u!54 &493330646
 Rigidbody:
@@ -1689,11 +1686,8 @@ MonoBehaviour:
   PickupEnabled: 1
   DirectionMode: 0
   MaxThrowRange: 10
-  thrownImpactGroundFeedbacks: {fileID: 0}
-  thrownImpactOtherFeedbacks: {fileID: 0}
+  thrownImpactFeedbacks: {fileID: 0}
   thrownImpactCooldownSeconds: 0.08
-  thrownImpactMinRelativeSpeed: 1.5
-  thrownImpactGroundNormalYThreshold: 0.6
   thrownImpactWindowSeconds: 6
 --- !u!54 &655906595
 Rigidbody:
@@ -1914,6 +1908,28 @@ RectTransform:
   m_AnchoredPosition: {x: -5, y: 0}
   m_SizeDelta: {x: -20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &755836434 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6709939487405801393, guid: a3c305b375451a14d8dccc2ae8edba95,
+    type: 3}
+  m_PrefabInstance: {fileID: 5764341679735938050}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &755836437
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 755836434}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 614edb33c38bcf949846d5675f29f9fb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AutomaticallyUnparentOnAwake: 1
+  settingsSo: {fileID: 11400000, guid: 07ea3ff88e1ecb84d91f58aa804badc6, type: 2}
+  AudioSourcePoolSize: 10
+  PoolCanExpand: 1
 --- !u!1 &897202424
 GameObject:
   m_ObjectHideFlags: 0
@@ -3171,11 +3187,8 @@ MonoBehaviour:
   PickupEnabled: 1
   DirectionMode: 0
   MaxThrowRange: 10
-  thrownImpactGroundFeedbacks: {fileID: 0}
-  thrownImpactOtherFeedbacks: {fileID: 0}
+  thrownImpactFeedbacks: {fileID: 0}
   thrownImpactCooldownSeconds: 0.08
-  thrownImpactMinRelativeSpeed: 1.5
-  thrownImpactGroundNormalYThreshold: 0.6
   thrownImpactWindowSeconds: 6
 --- !u!54 &1534316068
 Rigidbody:
@@ -3627,6 +3640,9 @@ MonoBehaviour:
   consumeEmitted: 1
   consumeSeparated: 1
   consumeDroplets: 1
+  purificationIndicatorType: Tree
+  purificationContributionValue: 10
+  purificationRadiationRadius: 8
   targetTransform: {fileID: 1973845846}
   charge: 0
   chargePerStage: 100
@@ -3636,6 +3652,63 @@ MonoBehaviour:
   waterTickFeedbacks: {fileID: 0}
   waterTickCooldownSeconds: 0.12
   stageUpFeedbacks: {fileID: 0}
+  purificationIndicatorNamePrefix: TreeStage
+--- !u!1 &2021639982
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2021639984}
+  - component: {fileID: 2021639983}
+  m_Layer: 0
+  m_Name: PurificationFlowerBloom
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2021639983
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2021639982}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 250e27526f57e21478de7aef6ae76d8a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  FlowerRoot: {fileID: 2021639982}
+  AutoFindFlowerInChildren: 1
+  BloomThreshold: 0.5
+  WitherThreshold: 0.3
+  TransitionSpeed: 1
+  WitheredScale: 0.1
+  BloomedScale: 1
+  ListenerName: Flower
+  AutoRegisterOnStart: 1
+  _currentPurificationLevel: 0
+  _currentState: 0
+  _growthProgress: 0
+--- !u!4 &2021639984
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2021639982}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -1.52, y: 0, z: -2.99}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2050968993
 GameObject:
   m_ObjectHideFlags: 0
@@ -3707,11 +3780,8 @@ MonoBehaviour:
   PickupEnabled: 1
   DirectionMode: 0
   MaxThrowRange: 10
-  thrownImpactGroundFeedbacks: {fileID: 0}
-  thrownImpactOtherFeedbacks: {fileID: 0}
+  thrownImpactFeedbacks: {fileID: 0}
   thrownImpactCooldownSeconds: 0.08
-  thrownImpactMinRelativeSpeed: 1.5
-  thrownImpactGroundNormalYThreshold: 0.6
   thrownImpactWindowSeconds: 6
 --- !u!54 &2135638250
 Rigidbody:
@@ -4045,7 +4115,11 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 6709939487405801393, guid: a3c305b375451a14d8dccc2ae8edba95,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 755836437}
   m_SourcePrefab: {fileID: 100100000, guid: a3c305b375451a14d8dccc2ae8edba95, type: 3}
 --- !u!1001 &7068902749127292632
 PrefabInstance:
@@ -4126,7 +4200,7 @@ PrefabInstance:
     - target: {fileID: 669667514955044571, guid: b0793ba02d766fe40a23715c1cb1afd5,
         type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0
+      value: 6.79
       objectReference: {fileID: 0}
     - target: {fileID: 669667514955044571, guid: b0793ba02d766fe40a23715c1cb1afd5,
         type: 3}
@@ -4136,7 +4210,7 @@ PrefabInstance:
     - target: {fileID: 669667514955044571, guid: b0793ba02d766fe40a23715c1cb1afd5,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: 0
+      value: -1.33
       objectReference: {fileID: 0}
     - target: {fileID: 669667514955044571, guid: b0793ba02d766fe40a23715c1cb1afd5,
         type: 3}
@@ -4212,3 +4286,4 @@ SceneRoots:
   - {fileID: 8113260842586466051}
   - {fileID: 524629805}
   - {fileID: 1912751687}
+  - {fileID: 2021639984}

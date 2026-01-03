@@ -33,23 +33,12 @@ namespace Revive.Slime
         public float MaxThrowRange = 10f;
 
         [ChineseHeader("反馈")]
-        [ChineseLabel("投掷后落地反馈")]
-        [SerializeField] private MMFeedbacks thrownImpactGroundFeedbacks;
-
-        [ChineseLabel("投掷后撞击反馈")]
-        [SerializeField] private MMFeedbacks thrownImpactOtherFeedbacks;
+        [ChineseLabel("投掷后碰撞反馈")]
+        [SerializeField] private MMFeedbacks thrownImpactFeedbacks;
 
         [ChineseLabel("投掷碰撞节流(秒)")]
         [SerializeField, Min(0f), DefaultValue(0.08f)]
         private float thrownImpactCooldownSeconds = 0.08f;
-
-        [ChineseLabel("投掷碰撞最小相对速度")]
-        [SerializeField, Min(0f), DefaultValue(1.5f)]
-        private float thrownImpactMinRelativeSpeed = 1.5f;
-
-        [ChineseLabel("落地法线阈值(Y)")]
-        [SerializeField, Range(0f, 1f), DefaultValue(0.6f)]
-        private float thrownImpactGroundNormalYThreshold = 0.6f;
 
         [ChineseLabel("投掷碰撞有效窗口(秒)")]
         [SerializeField, Min(0f), DefaultValue(6f)]
@@ -65,6 +54,7 @@ namespace Revive.Slime
         public float LastThrowTime { get; private set; }
 
         private float _nextAllowedThrownImpactTime;
+        private bool _thrownImpactPlayed;
 
         private void Awake()
         {
@@ -83,6 +73,7 @@ namespace Revive.Slime
             LastThrowerPositionWorld = thrower != null ? thrower.position : Vector3.zero;
             LastThrowTime = Time.time;
             _nextAllowedThrownImpactTime = Time.time;
+            _thrownImpactPlayed = false;
         }
 
         public void ArmImpactWindow(float startDelaySeconds = 0f)
@@ -91,6 +82,7 @@ namespace Revive.Slime
             LastThrowerPositionWorld = Vector3.zero;
             LastThrowTime = Time.time;
             _nextAllowedThrownImpactTime = Time.time + Mathf.Max(0f, startDelaySeconds);
+            _thrownImpactPlayed = false;
         }
 
         private void OnEnable()
@@ -153,33 +145,12 @@ namespace Revive.Slime
             if (Time.time < _nextAllowedThrownImpactTime)
                 return;
 
-            float minSpeed = Mathf.Max(0f, thrownImpactMinRelativeSpeed);
-            if (minSpeed > 0f && collision.relativeVelocity.sqrMagnitude < (minSpeed * minSpeed))
+            if (_thrownImpactPlayed)
                 return;
 
-            float bestNy = float.NegativeInfinity;
-            var contacts = collision.contacts;
-            if (contacts != null && contacts.Length > 0)
-            {
-                for (int i = 0; i < contacts.Length; i++)
-                {
-                    float ny = contacts[i].normal.y;
-                    if (ny > bestNy)
-                        bestNy = ny;
-                }
-            }
-
-            bool isGroundLike = bestNy >= Mathf.Clamp01(thrownImpactGroundNormalYThreshold);
             Vector3 pos = collision.contactCount > 0 ? collision.GetContact(0).point : transform.position;
-
-            if (isGroundLike)
-            {
-                thrownImpactGroundFeedbacks?.PlayFeedbacks(pos);
-            }
-            else
-            {
-                thrownImpactOtherFeedbacks?.PlayFeedbacks(pos);
-            }
+            thrownImpactFeedbacks?.PlayFeedbacks(pos);
+            _thrownImpactPlayed = true;
 
             _nextAllowedThrownImpactTime = Time.time + Mathf.Max(0f, thrownImpactCooldownSeconds);
         }

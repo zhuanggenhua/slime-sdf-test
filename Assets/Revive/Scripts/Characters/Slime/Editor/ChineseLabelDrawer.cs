@@ -1,5 +1,7 @@
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.UIElements;
+using UnityEngine.UIElements;
 using Revive;
 
 namespace Revive.Slime.Editor
@@ -10,6 +12,13 @@ namespace Revive.Slime.Editor
     [CustomPropertyDrawer(typeof(ChineseLabelAttribute), true)]
     public class ChineseLabelDrawer : PropertyDrawer
     {
+        public override VisualElement CreatePropertyGUI(SerializedProperty property)
+        {
+            var chineseLabel = attribute as ChineseLabelAttribute;
+            string displayText = chineseLabel != null ? chineseLabel.Label : property.displayName;
+            return new PropertyField(property, displayText);
+        }
+
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
         {
             var chineseLabel = attribute as ChineseLabelAttribute;

@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MoreMountains.Tools;
@@ -35,6 +36,9 @@ namespace Revive.GamePlay.Purification
         private readonly List<PurificationIndicator> _indicators = new(16);
         
         private readonly List<IPurificationListener> _listeners = new(16);
+        
+        public event Action<PurificationIndicator> IndicatorAdded;
+        public event Action<PurificationIndicator> IndicatorRemoved;
         
         // 统计信息（用于Inspector显示）
         [Header("运行时统计")]
@@ -73,6 +77,7 @@ namespace Revive.GamePlay.Purification
             _indicators.Add(indicator);
             
             Debug.Log($"[PurificationSystem] 添加指示物: {indicator}");
+            IndicatorAdded?.Invoke(indicator);
             
             // 通知半径范围内的监听者
             NotifyListenersInRange(position);
@@ -90,6 +95,7 @@ namespace Revive.GamePlay.Purification
             if (_indicators.Remove(indicator))
             {
                 Debug.Log($"[PurificationSystem] 移除指示物: {indicator}");
+                IndicatorRemoved?.Invoke(indicator);
                 
                 // 通知可能受影响的监听者
                 NotifyListenersInRange(indicator.Position);
@@ -106,13 +112,19 @@ namespace Revive.GamePlay.Purification
         /// <returns>移除的指示物数量</returns>
         public int RemoveIndicatorsByName(string name)
         {
-            int removed = _indicators.RemoveAll(i => i.Name == name);
-            if (removed > 0)
+            List<PurificationIndicator> removedIndicators = _indicators.Where(i => i.Name == name).ToList();
+            if (removedIndicators.Count > 0)
             {
-                Debug.Log($"[PurificationSystem] 根据名称移除了 {removed} 个指示物: {name}");
+                foreach (var indicator in removedIndicators)
+                {
+                    _indicators.Remove(indicator);
+                    IndicatorRemoved?.Invoke(indicator);
+                }
+                
+                Debug.Log($"[PurificationSystem] 根据名称移除了 {removedIndicators.Count} 个指示物: {name}");
                 NotifyAllListeners();
             }
-            return removed;
+            return removedIndicators.Count;
         }
         
         /// <summary>
@@ -122,13 +134,19 @@ namespace Revive.GamePlay.Purification
         /// <returns>移除的指示物数量</returns>
         public int RemoveIndicatorsByType(string indicatorType)
         {
-            int removed = _indicators.RemoveAll(i => i.IndicatorType == indicatorType);
-            if (removed > 0)
+            List<PurificationIndicator> removedIndicators = _indicators.Where(i => i.IndicatorType == indicatorType).ToList();
+            if (removedIndicators.Count > 0)
             {
-                Debug.Log($"[PurificationSystem] 根据类型移除了 {removed} 个指示物: {indicatorType}");
+                foreach (var indicator in removedIndicators)
+                {
+                    _indicators.Remove(indicator);
+                    IndicatorRemoved?.Invoke(indicator);
+                }
+                
+                Debug.Log($"[PurificationSystem] 根据类型移除了 {removedIndicators.Count} 个指示物: {indicatorType}");
                 NotifyAllListeners();
             }
-            return removed;
+            return removedIndicators.Count;
         }
         
         /// <summary>
@@ -136,8 +154,13 @@ namespace Revive.GamePlay.Purification
         /// </summary>
         public void ClearAllIndicators()
         {
-            int count = _indicators.Count;
+            List<PurificationIndicator> removedIndicators = _indicators.ToList();
+            int count = removedIndicators.Count;
             _indicators.Clear();
+            foreach (var indicator in removedIndicators)
+            {
+                IndicatorRemoved?.Invoke(indicator);
+            }
             Debug.Log($"[PurificationSystem] 清空了 {count} 个指示物");
             NotifyAllListeners();
         }
@@ -395,8 +418,19 @@ namespace Revive.GamePlay.Purification
                 
                 if (saveData != null && saveData.Indicators != null)
                 {
+                    List<PurificationIndicator> previousIndicators = _indicators.ToList();
                     saveData.ToIndicators(_indicators);
                     Debug.Log($"[PurificationSystem] 加载成功: {filename}, 指示物数量: {_indicators.Count}, 存档时间: {saveData.SaveTime}");
+                    
+                    foreach (var indicator in previousIndicators)
+                    {
+                        IndicatorRemoved?.Invoke(indicator);
+                    }
+                    
+                    foreach (var indicator in _indicators)
+                    {
+                        IndicatorAdded?.Invoke(indicator);
+                    }
                     
                     // 通知所有监听者
                     NotifyAllListeners();

@@ -10,6 +10,9 @@ namespace Revive.Slime
     [DefaultExecutionOrder(500)]
     public class SlimeCarrySlot : MonoBehaviour
     {
+        private const float FollowResponse = 28f;
+        private const float FollowMaxSpeed = 12f;
+
         [Header("绑定")]
         [Tooltip("放置被持有物体的世界坐标锚点；若可用则默认使用 Slime_PBF.trans。")]
         public Transform CenterAnchor;
@@ -95,11 +98,28 @@ namespace Revive.Slime
         private Vector3 _heldAnchorSmoothedWorld;
         private bool _heldAnchorSmoothedWorldValid;
 
+        private Vector3 _prevFixedAnchorWorld;
+        private bool _prevFixedAnchorWorldValid;
+
         private Vector3 _lastFixedAnchorWorld;
         private bool _lastFixedAnchorWorldValid;
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         private int _dbgCarryLogFrame;
+        private int _dbgFixedStepsSinceLate;
+        private bool _dbgUsedCentroid;
+        private Vector3 _dbgRawAnchorWorld;
+        private Vector3 _dbgStableAnchorWorld;
+        private Vector3 _dbgTargetWorld;
+        private Vector3 _dbgRenderOffsetWorld;
+
+        private bool _dbgFixedTargetWorldValid;
+        private Vector3 _dbgPrevFixedTargetWorld;
+        private Vector3 _dbgLastFixedTargetWorld;
+
+        private bool _dbgFixedRbWorldValid;
+        private Vector3 _dbgPrevFixedRbWorld;
+        private Vector3 _dbgLastFixedRbWorld;
 #endif
 
         private void Awake()
@@ -115,8 +135,52 @@ namespace Revive.Slime
                 _heldMoveBlockedThisFrame = false;
                 _heldMoveBlockedSeconds = 0f;
                 _heldAnchorSmoothedWorldValid = false;
+                _prevFixedAnchorWorldValid = false;
                 _lastFixedAnchorWorldValid = false;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                _dbgFixedTargetWorldValid = false;
+                _dbgFixedRbWorldValid = false;
+                _dbgFixedStepsSinceLate = 0;
+#endif
                 ApplyCarrySpecIfNeeded();
+                return;
+            }
+
+            if (_heldRigidbody != null)
+            {
+                ApplyCarrySpecIfNeeded();
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                int rbInterval = Input.GetKey(KeyCode.F8) ? 1 : 20;
+                if (Time.frameCount - _dbgCarryLogFrame >= rbInterval)
+                {
+                    _dbgCarryLogFrame = Time.frameCount;
+                    Vector3 rbPos = _heldRigidbody.position;
+                    Vector3 rbTrPos = _heldRigidbody.transform.position;
+                    Vector3 heldTrPos = _held != null ? _held.transform.position : rbTrPos;
+                    float err = (rbPos - _dbgTargetWorld).magnitude;
+                    float trErr = (rbTrPos - _dbgTargetWorld).magnitude;
+                    Vector3 anchorNow = CenterAnchor != null ? CenterAnchor.position : transform.position;
+                    float fixedDt = Time.fixedDeltaTime;
+                    float dtSinceFixed = Mathf.Clamp(Time.time - Time.fixedTime, 0f, 10f);
+
+                    float alpha = fixedDt > 1e-6f ? Mathf.Clamp01(dtSinceFixed / fixedDt) : 1f;
+                    Vector3 targetRender = _dbgFixedTargetWorldValid
+                        ? Vector3.Lerp(_dbgPrevFixedTargetWorld, _dbgLastFixedTargetWorld, alpha)
+                        : _dbgTargetWorld;
+                    Vector3 rbRenderExpected = targetRender;
+                    Vector3 trMinusRb = rbTrPos - rbPos;
+                    Vector3 heldMinusRbTr = heldTrPos - rbTrPos;
+                    float trMinusTargetR = (rbTrPos - targetRender).magnitude;
+                    float targetStep = _dbgFixedTargetWorldValid ? (_dbgLastFixedTargetWorld - _dbgPrevFixedTargetWorld).magnitude : 0f;
+                    float rawStableMag = (_dbgRawAnchorWorld - _dbgStableAnchorWorld).magnitude;
+
+                    Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={_dbgUsedCentroid} raw=({_dbgRawAnchorWorld.x:F4},{_dbgRawAnchorWorld.y:F4},{_dbgRawAnchorWorld.z:F4}) stable=({_dbgStableAnchorWorld.x:F4},{_dbgStableAnchorWorld.y:F4},{_dbgStableAnchorWorld.z:F4}) rawStableMag={rawStableMag:F6} off=({_dbgRenderOffsetWorld.x:F6},{_dbgRenderOffsetWorld.y:F6},{_dbgRenderOffsetWorld.z:F6}) offMag={_dbgRenderOffsetWorld.magnitude:F6} fixed=({_lastFixedAnchorWorld.x:F4},{_lastFixedAnchorWorld.y:F4},{_lastFixedAnchorWorld.z:F4}) anchor=({anchorNow.x:F4},{anchorNow.y:F4},{anchorNow.z:F4}) target=({_dbgTargetWorld.x:F4},{_dbgTargetWorld.y:F4},{_dbgTargetWorld.z:F4}) rb=({rbPos.x:F4},{rbPos.y:F4},{rbPos.z:F4}) rbTr=({rbTrPos.x:F4},{rbTrPos.y:F4},{rbTrPos.z:F4}) heldTr=({heldTrPos.x:F4},{heldTrPos.y:F4},{heldTrPos.z:F4}) heldMinusRbTr=({heldMinusRbTr.x:F4},{heldMinusRbTr.y:F4},{heldMinusRbTr.z:F4}) err={err:F6} trErr={trErr:F6} trMinusRb=({trMinusRb.x:F4},{trMinusRb.y:F4},{trMinusRb.z:F4}) rbInterp={_heldRigidbody.interpolation} alpha={alpha:F3} targetR=({targetRender.x:F4},{targetRender.y:F4},{targetRender.z:F4}) trMinusTargetR={trMinusTargetR:F6} rbExp=({rbRenderExpected.x:F4},{rbRenderExpected.y:F4},{rbRenderExpected.z:F4}) targetStep={targetStep:F6} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition} dt={Time.deltaTime:F4} fixedDt={fixedDt:F4} dtSinceFixed={dtSinceFixed:F4} fixedSteps={_dbgFixedStepsSinceLate}");
+                }
+
+                _dbgFixedStepsSinceLate = 0;
+#endif
                 return;
             }
 
@@ -124,9 +188,12 @@ namespace Revive.Slime
             Vector3 stablePos = GetHoldAnchorWorldPositionStable(out usedCentroid);
             Vector3 renderOffset = Vector3.zero;
             Vector3 targetPos = stablePos;
-            if (usedCentroid && _lastFixedAnchorWorldValid)
+            if (usedCentroid)
             {
-                renderOffset = CenterAnchor.position - _lastFixedAnchorWorld;
+                ResolveSlimePbfIfNeeded();
+                if (_slimePbf != null)
+                    renderOffset = _slimePbf.RenderPredictOffsetWorld;
+
                 if (renderOffset.sqrMagnitude > 2500f)
                     renderOffset = Vector3.zero;
                 targetPos = stablePos + renderOffset;
@@ -141,27 +208,14 @@ namespace Revive.Slime
                     _pickupInTransition = false;
             }
 
-            if (_heldRigidbody != null)
+            Vector3 nextPos = targetPos;
+            if (!_pickupInTransition)
             {
-                MoveHeldRigidbodySafely(targetPos);
-                if (_heldMoveBlockedThisFrame)
-                {
-                    _heldMoveBlockedSeconds += Time.deltaTime;
-                    if (_heldMoveBlockedSeconds >= Mathf.Max(0f, StuckAutoDetachSeconds))
-                    {
-                        AutoDetachHeldBecauseStuck();
-                        return;
-                    }
-                }
-                else
-                {
-                    _heldMoveBlockedSeconds = 0f;
-                }
+                Vector3 cur = _held.transform.position;
+                nextPos = ComputeFollowPosition(cur, targetPos, Time.deltaTime);
             }
-            else
-            {
-                _held.transform.position = targetPos;
-            }
+
+            _held.transform.position = nextPos;
 
             ApplyCarrySpecIfNeeded();
 
@@ -175,9 +229,40 @@ namespace Revive.Slime
                 Vector3 rbPos = _heldRigidbody != null ? _heldRigidbody.position : _held.transform.position;
                 float err = (rbPos - targetPos).magnitude;
                 Vector3 anchorNow = CenterAnchor != null ? CenterAnchor.position : transform.position;
-                Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={rawUsedCentroid} raw=({raw.x:F4},{raw.y:F4},{raw.z:F4}) stable=({stablePos.x:F4},{stablePos.y:F4},{stablePos.z:F4}) off=({renderOffset.x:F6},{renderOffset.y:F6},{renderOffset.z:F6}) offMag={renderOffset.magnitude:F6} fixed=({_lastFixedAnchorWorld.x:F4},{_lastFixedAnchorWorld.y:F4},{_lastFixedAnchorWorld.z:F4}) anchor=({anchorNow.x:F4},{anchorNow.y:F4},{anchorNow.z:F4}) target=({targetPos.x:F4},{targetPos.y:F4},{targetPos.z:F4}) rb=({rbPos.x:F4},{rbPos.y:F4},{rbPos.z:F4}) err={err:F6} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition}");
+                float fixedDt = Time.fixedDeltaTime;
+                float dtSinceFixed = Mathf.Clamp(Time.time - Time.fixedTime, 0f, 10f);
+                Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={rawUsedCentroid} raw=({raw.x:F4},{raw.y:F4},{raw.z:F4}) stable=({stablePos.x:F4},{stablePos.y:F4},{stablePos.z:F4}) off=({renderOffset.x:F6},{renderOffset.y:F6},{renderOffset.z:F6}) offMag={renderOffset.magnitude:F6} fixed=({_lastFixedAnchorWorld.x:F4},{_lastFixedAnchorWorld.y:F4},{_lastFixedAnchorWorld.z:F4}) anchor=({anchorNow.x:F4},{anchorNow.y:F4},{anchorNow.z:F4}) target=({targetPos.x:F4},{targetPos.y:F4},{targetPos.z:F4}) rb=({rbPos.x:F4},{rbPos.y:F4},{rbPos.z:F4}) err={err:F6} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition} dt={Time.deltaTime:F4} fixedDt={fixedDt:F4} dtSinceFixed={dtSinceFixed:F4} fixedSteps={_dbgFixedStepsSinceLate}");
             }
+
+            _dbgFixedStepsSinceLate = 0;
 #endif
+        }
+
+        private static Vector3 ComputeFollowPosition(Vector3 current, Vector3 target, float dt)
+        {
+            if (dt <= 0f)
+                return target;
+
+            float fixedDt = Time.fixedDeltaTime;
+            if (fixedDt <= 1e-6f)
+                fixedDt = dt;
+
+            int steps = Mathf.Clamp(Mathf.CeilToInt(dt / fixedDt), 1, 4);
+            float subDt = dt / steps;
+            for (int i = 0; i < steps; i++)
+            {
+                float alpha = 1f - Mathf.Exp(-FollowResponse * subDt);
+                Vector3 desiredStep = Vector3.Lerp(current, target, alpha) - current;
+                float maxStep = FollowMaxSpeed * subDt;
+                if (maxStep > 0f)
+                {
+                    float stepMag = desiredStep.magnitude;
+                    if (stepMag > maxStep)
+                        desiredStep = desiredStep * (maxStep / stepMag);
+                }
+                current += desiredStep;
+            }
+            return current;
         }
 
         private void FixedUpdate()
@@ -189,8 +274,96 @@ namespace Revive.Slime
             if (CenterAnchor == null)
                 return;
 
+            if (_lastFixedAnchorWorldValid)
+            {
+                _prevFixedAnchorWorld = _lastFixedAnchorWorld;
+                _prevFixedAnchorWorldValid = true;
+            }
+
             _lastFixedAnchorWorld = CenterAnchor.position;
             _lastFixedAnchorWorldValid = true;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#endif
+
+            if (_held == null || _heldRigidbody == null)
+                return;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _dbgFixedStepsSinceLate++;
+#endif
+
+            bool usedCentroid;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            bool rawUsedCentroid;
+            _dbgRawAnchorWorld = GetHoldAnchorWorldPosition(out rawUsedCentroid);
+#endif
+
+            Vector3 stablePos = GetHoldAnchorWorldPositionStable(out usedCentroid);
+            Vector3 targetPos = stablePos;
+
+            if (_pickupInTransition && PickupTransitionSeconds > 0f)
+            {
+                _pickupTransitionElapsed += Time.fixedDeltaTime;
+                float t = Mathf.Clamp01(_pickupTransitionElapsed / PickupTransitionSeconds);
+                float eased = t * t * (3f - 2f * t);
+                targetPos = Vector3.LerpUnclamped(_pickupTransitionStart, targetPos, eased);
+                if (t >= 1f)
+                    _pickupInTransition = false;
+            }
+
+            Vector3 nextPos = targetPos;
+            if (_pickupInTransition)
+            {
+                nextPos = targetPos;
+            }
+
+            MoveHeldRigidbodySafely(nextPos);
+
+            if (_heldMoveBlockedThisFrame)
+            {
+                _heldMoveBlockedSeconds += Time.fixedDeltaTime;
+                if (_heldMoveBlockedSeconds >= Mathf.Max(0f, StuckAutoDetachSeconds))
+                {
+                    AutoDetachHeldBecauseStuck();
+                    return;
+                }
+            }
+            else
+            {
+                _heldMoveBlockedSeconds = 0f;
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            _dbgUsedCentroid = usedCentroid;
+            _dbgStableAnchorWorld = stablePos;
+            _dbgTargetWorld = targetPos;
+            _dbgRenderOffsetWorld = Vector3.zero;
+
+            if (_dbgFixedTargetWorldValid)
+            {
+                _dbgPrevFixedTargetWorld = _dbgLastFixedTargetWorld;
+            }
+            else
+            {
+                _dbgPrevFixedTargetWorld = targetPos;
+            }
+            _dbgLastFixedTargetWorld = targetPos;
+            _dbgFixedTargetWorldValid = true;
+
+            Vector3 rbPos = _heldRigidbody.position;
+            if (_dbgFixedRbWorldValid)
+            {
+                _dbgPrevFixedRbWorld = _dbgLastFixedRbWorld;
+            }
+            else
+            {
+                _dbgPrevFixedRbWorld = rbPos;
+            }
+            _dbgLastFixedRbWorld = rbPos;
+            _dbgFixedRbWorldValid = true;
+#endif
         }
 
         private void CachePlayerColliders()
@@ -232,19 +405,23 @@ namespace Revive.Slime
                 return raw;
             }
 
-            Vector3 delta = raw - _heldAnchorSmoothedWorld;
             const float maxLagWorld = 0.04f;
-            if (delta.sqrMagnitude > maxLagWorld * maxLagWorld)
-            {
-                _heldAnchorSmoothedWorld = raw;
-                return raw;
-            }
-
             float dt = Time.inFixedTimeStep ? Time.fixedDeltaTime : Time.deltaTime;
             float k = 60f;
             float alpha = dt > 1e-6f ? (1f - Mathf.Exp(-k * dt)) : 1f;
-            _heldAnchorSmoothedWorld = Vector3.Lerp(_heldAnchorSmoothedWorld, raw, alpha);
-            return _heldAnchorSmoothedWorld;
+            Vector3 next = Vector3.Lerp(_heldAnchorSmoothedWorld, raw, alpha);
+            Vector3 lag = raw - next;
+            float maxLagSqr = maxLagWorld * maxLagWorld;
+            if (lag.sqrMagnitude > maxLagSqr)
+            {
+                float lagMag = lag.magnitude;
+                if (lagMag > 1e-6f)
+                    next = raw - lag * (maxLagWorld / lagMag);
+                else
+                    next = raw;
+            }
+            _heldAnchorSmoothedWorld = next;
+            return next;
         }
 
         private Vector3 GetHoldAnchorWorldPositionStable()
@@ -479,8 +656,6 @@ namespace Revive.Slime
                 _postThrowIndexIgnored = false;
                 _postThrowIgnoredColliders = null;
             }
-
-            // 确保不会因之前的投掷而遗留忽略碰撞的状态。
             SetIgnorePlayerCollision(carryable.Colliders, false);
 
             _held = carryable;
@@ -618,6 +793,8 @@ namespace Revive.Slime
 
             carryable.RecordThrower(transform);
 
+            Debug.Log($"[SlimeCarrySlot] ThrowHeld: carryable={carryable.name} id={carryable.GetInstanceID()} LastThrowTime={carryable.LastThrowTime:F3}", this);
+
             Vector3 impulse = ComputeThrowImpulse(carryable, rb);
             rb.AddForce(impulse, ForceMode.Impulse);
 
@@ -694,7 +871,9 @@ namespace Revive.Slime
                 ResolveSlimePbfIfNeeded();
                 if (_slimePbf != null)
                 {
-                    Vector3 centroid = _slimePbf.MainBodyCentroidWorld;
+                    Vector3 centroid = Time.inFixedTimeStep
+                        ? _slimePbf.MainBodyCentroidWorldFixed
+                        : _slimePbf.MainBodyCentroidWorldForRender;
                     if ((centroid - anchor).sqrMagnitude < 2500f)
                     {
                         anchor = centroid;
@@ -713,7 +892,9 @@ namespace Revive.Slime
                 ResolveSlimePbfIfNeeded();
                 if (_slimePbf != null)
                 {
-                    Vector3 centroid = _slimePbf.MainBodyCentroidWorld;
+                    Vector3 centroid = Time.inFixedTimeStep
+                        ? _slimePbf.MainBodyCentroidWorldFixed
+                        : _slimePbf.MainBodyCentroidWorldForRender;
                     if ((centroid - anchor).sqrMagnitude < 2500f)
                     {
                         anchor = centroid;
@@ -745,7 +926,10 @@ namespace Revive.Slime
             float dist = delta.magnitude;
             if (dist <= 0.00001f)
             {
-                _heldRigidbody.position = targetWorldPos;
+                if (Time.inFixedTimeStep)
+                    _heldRigidbody.MovePosition(targetWorldPos);
+                else
+                    _heldRigidbody.position = targetWorldPos;
                 return;
             }
 
@@ -778,7 +962,10 @@ namespace Revive.Slime
                 }
             }
 
-            _heldRigidbody.position = targetWorldPos;
+            if (Time.inFixedTimeStep)
+                _heldRigidbody.MovePosition(targetWorldPos);
+            else
+                _heldRigidbody.position = targetWorldPos;
         }
 
         private void AutoDetachHeldBecauseStuck()
@@ -806,6 +993,7 @@ namespace Revive.Slime
             _heldIndexIgnored = false;
 
             carryable.IsHeld = false;
+            carryable.ArmImpactWindow(0f);
 
             Vector3 releasePos = rb != null ? rb.position : carryable.transform.position;
             if (objectColliders != null)

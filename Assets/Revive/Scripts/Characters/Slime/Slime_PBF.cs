@@ -391,8 +391,6 @@ namespace Revive.Slime
         private float _bubbleBoostSizeMultiplier = 1f;
 
         private bool _consumeWindFieldImmune;
-        private float _consumeDeformLimitMultiplier = 1f;
-        private float _consumeDeformLimitMultiplierCurrent = 1f;
         
         #endregion
 
@@ -427,11 +425,6 @@ namespace Revive.Slime
         public void SetConsumeWindFieldImmune(bool immune)
         {
             _consumeWindFieldImmune = immune;
-        }
-
-        public void SetConsumeDeformLimitMultiplier(float multiplier)
-        {
-            _consumeDeformLimitMultiplier = Mathf.Max(0.01f, multiplier);
         }
 
         public void TriggerConsumeBubbleBurst(int count, float lifetimeSeconds, float radiusMultiplier, float upSpeedWorld)
@@ -704,6 +697,28 @@ namespace Revive.Slime
 		}
 
 		public Vector3 MainBodyCentroidWorld => _mainBodyCentroidWorld;
+		public Vector3 RenderPredictOffsetWorld => GetRenderPredictOffsetWorld();
+		public Vector3 MainBodyCentroidWorldFixed
+		{
+			get
+			{
+				if (_fixedMainBodyCentroidWorldValid)
+					return _lastFixedMainBodyCentroidWorld;
+				return _mainBodyCentroidWorld;
+			}
+		}
+		public Vector3 MainBodyCentroidWorldForRender
+		{
+			get
+			{
+				if (!_fixedMainBodyCentroidWorldValid)
+					return _mainBodyCentroidWorld;
+
+				float fixedDt = Time.fixedDeltaTime;
+				float alpha = fixedDt > 1e-6f ? Mathf.Clamp01((Time.time - Time.fixedTime) / fixedDt) : 1f;
+				return Vector3.Lerp(_prevFixedMainBodyCentroidWorld, _lastFixedMainBodyCentroidWorld, alpha);
+			}
+		}
 
 		public float MainBodyRadiusWorld
 		{
@@ -775,6 +790,70 @@ namespace Revive.Slime
         public bool TryConsumeDropletParticle(int globalIndex)
         {
             return _dropletSubsystem.MigrateToMainBody(globalIndex, out _, out _);
+        }
+
+        /// <summary>
+        /// 恢复主体粒子（将 Dormant 粒子转换为 MainBody），用于水井等补给点
+        /// </summary>
+        /// <param name="count">要恢复的粒子数量</param>
+        /// <returns>实际恢复的粒子数量</returns>
+        public int RestoreMainBodyParticles(int count)
+        {
+            if (!_runtimeInitialized || !_particles.IsCreated || !_velocityBuffer.IsCreated)
+                return 0;
+
+            if (count <= 0)
+                return 0;
+
+            // 计算可恢复的最大数量（不能超过主体分区上限）
+            int maxRestorable = MainBodyMaxParticles - activeParticles;
+            if (maxRestorable <= 0)
+                return 0;
+
+            int toRestore = math.min(count, maxRestorable);
+
+            // 获取主体中心位置用于生成新粒子
+            float3 mainCenter = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
+                ? _controllerBuffer[0].Center
+                : (trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero);
+
+            float mainRadius = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
+                ? _controllerBuffer[0].Radius
+                : coreRadius;
+
+            int restored = 0;
+            for (int i = 0; i < toRestore; i++)
+            {
+                int newIdx = activeParticles;
+                if (newIdx >= MainBodyMaxParticles || newIdx >= _particles.Length)
+                    break;
+
+                // 在主体中心附近随机生成位置
+                float3 randomOffset = new float3(
+                    (UnityEngine.Random.value - 0.5f) * mainRadius * 0.8f,
+                    (UnityEngine.Random.value - 0.5f) * mainRadius * 0.4f,
+                    (UnityEngine.Random.value - 0.5f) * mainRadius * 0.8f
+                );
+
+                var newParticle = new Particle
+                {
+                    Position = mainCenter + randomOffset,
+                    Type = ParticleType.MainBody,
+                    ControllerSlot = 0,
+                    BlobId = 0,
+                    FreeFrames = 0,
+                    SourceId = -1,
+                    ClusterId = 0,
+                    FramesOutsideMain = 0
+                };
+
+                _particles[newIdx] = newParticle;
+                _velocityBuffer[newIdx] = float3.zero;
+                activeParticles++;
+                restored++;
+            }
+
+            return restored;
         }
 
         private void ApplyWateringInteraction()
@@ -1125,6 +1204,9 @@ namespace Revive.Slime
         }
 
         private Vector3 _mainBodyCentroidWorld;
+        private Vector3 _prevFixedMainBodyCentroidWorld;
+        private Vector3 _lastFixedMainBodyCentroidWorld;
+        private bool _fixedMainBodyCentroidWorldValid;
         
         #endregion
         
@@ -2711,16 +2793,35 @@ namespace Revive.Slime
             
             // 计算主体半径 - 基于 MainBody 粒子的最大距离
             float mainMaxDist = 0f;
+            float3 mainCentroidSum = float3.zero;
+            int mainCentroidCount = 0;
             int count = math.min(activeParticles, _particles.Length);
             for (int i = 0; i < count; i++)
             {
                 var p = _particles[i];
                 if (p.Type != ParticleType.MainBody) continue;
+
+                mainCentroidSum += p.Position;
+                mainCentroidCount++;
                 float dist = math.length(p.Position - mainCenter);
                 if (dist < coreRadius)
                 {
                     mainMaxDist = math.max(mainMaxDist, dist);
                 }
+            }
+
+            float3 mainCentroidSim = mainCentroidCount > 0 ? (mainCentroidSum / mainCentroidCount) : mainCenter;
+            Vector3 mainCentroidWorld = (Vector3)(mainCentroidSim * SimToWorldScale);
+            if (!_fixedMainBodyCentroidWorldValid)
+            {
+                _prevFixedMainBodyCentroidWorld = mainCentroidWorld;
+                _lastFixedMainBodyCentroidWorld = mainCentroidWorld;
+                _fixedMainBodyCentroidWorldValid = true;
+            }
+            else
+            {
+                _prevFixedMainBodyCentroidWorld = _lastFixedMainBodyCentroidWorld;
+                _lastFixedMainBodyCentroidWorld = mainCentroidWorld;
             }
             
             float rawMainRadius = math.max(coreRadius, mainMaxDist * mainRadiusScale);
@@ -3276,10 +3377,6 @@ namespace Revive.Slime
             }
 
             int windTargetLayerBit = 1 << gameObject.layer;
-            float consumeDeformMulTarget = Mathf.Max(0.01f, _consumeDeformLimitMultiplier);
-            float consumeAlpha = 1f - Mathf.Exp(-12f * deltaTime);
-            _consumeDeformLimitMultiplierCurrent = Mathf.Lerp(_consumeDeformLimitMultiplierCurrent, consumeDeformMulTarget, consumeAlpha);
-            float consumeDeformMul = _consumeDeformLimitMultiplierCurrent;
             new Simulation_PBF.ApplyForceJob
             {
                 Ps = _particles,
@@ -3302,8 +3399,8 @@ namespace Revive.Slime
                 UseRecallEligibleBlobIds = _connect && _recallEligibleBlobIds.IsCreated,
                 MainCenter = mainCenterForJob,
                 MainVelocity = mainVelocityForJob,
-                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * WorldToSimScale, // 水平形变上限
-                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * WorldToSimScale,   // 垂直形变上限
+                MaxDeformDistXZ = maxDeformDistXZ * WorldToSimScale, // 水平形变上限
+                MaxDeformDistY = maxDeformDistY * WorldToSimScale,   // 垂直形变上限
             }.Schedule(activeParticles, batchCount).Complete();
             if (disposeWindZonesForJob)
             {
@@ -3388,8 +3485,8 @@ namespace Revive.Slime
                 PsNew = _particles,
                 ClampDelta = _clampDelta, // 【P4】输出钳制位移量
                 TargetDensity = targetDensity,
-                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * WorldToSimScale,
-                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * WorldToSimScale,
+                MaxDeformDistXZ = maxDeformDistXZ * WorldToSimScale,
+                MaxDeformDistY = maxDeformDistY * WorldToSimScale,
                 MainCenter = mainCenterForJob,
             }.Schedule(activeParticles, batchCount).Complete();
             PerformanceProfiler.End("ComputeDeltaPos");
@@ -3464,8 +3561,8 @@ namespace Revive.Slime
 				MaxVelocity = dynamicMaxVelocity,
 				DeltaTime = deltaTime,
 				FallbackGroundY = fallbackGroundY,
-                MaxDeformDistXZ = (maxDeformDistXZ * consumeDeformMul) * WorldToSimScale, // 水平形变上限
-                MaxDeformDistY = (maxDeformDistY * consumeDeformMul) * WorldToSimScale,   // 垂直形变上限
+                MaxDeformDistXZ = maxDeformDistXZ * WorldToSimScale, // 水平形变上限
+                MaxDeformDistY = maxDeformDistY * WorldToSimScale,   // 垂直形变上限
                 MainCenter = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Center : float3.zero,
                 MainVelocity = _controllerBuffer.Length > 0 ? _controllerBuffer[0].Velocity : float3.zero,
                 EnableCollisionDeformLimit = enableCollisionDeformLimit,

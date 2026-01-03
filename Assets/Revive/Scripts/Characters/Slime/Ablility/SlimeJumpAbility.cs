@@ -21,64 +21,6 @@ namespace Revive.Slime
         [SerializeField] private bool _debugOnlyWhenPlaying = true;
         [SerializeField] private Vector3 _debugWorldOffset = new Vector3(0f, 2f, 0f);
 
-        [SerializeField, Min(1)] private int _debugLogIntervalFrames = 15;
-        private int _dbgLogFrame = -999999;
-        private int _dbgFailLogFrame = -999999;
-
-        private void DebugLogThrottled(string message)
-        {
-            if (!Debug.isDebugBuild)
-            {
-                return;
-            }
-
-            if (Time.frameCount - _dbgLogFrame < _debugLogIntervalFrames)
-            {
-                return;
-            }
-
-            _dbgLogFrame = Time.frameCount;
-            Debug.Log(message, this);
-        }
-
-        private void DebugLogFailThrottled(string message)
-        {
-            if (!Debug.isDebugBuild)
-            {
-                return;
-            }
-
-            if (Time.frameCount - _dbgFailLogFrame < _debugLogIntervalFrames)
-            {
-                return;
-            }
-
-            _dbgFailLogFrame = Time.frameCount;
-            Debug.Log(message, this);
-        }
-
-        private void DebugLogState(string phase)
-        {
-            if (!Debug.isDebugBuild)
-            {
-                return;
-            }
-
-            bool grounded = _controller3D != null && _controller3D.Grounded;
-            bool justGrounded = _controller3D != null && _controller3D.JustGotGrounded;
-            bool tooSteep = _controller3D != null && _controller3D.TooSteep();
-            bool exitedTooSteep = _controller3D != null && _controller3D.ExitedTooSteepSlopeThisFrame;
-            float vy = _controller3D != null ? _controller3D.Velocity.y : 0f;
-            float lastVy = _controller3D != null ? _controller3D.VelocityLastFrame.y : 0f;
-            var mode = _controller3D != null ? _controller3D.UpdateMode : default;
-            bool grav = _controller3D != null && _controller3D.GravityActive;
-            var cond = _condition != null ? _condition.CurrentState : default;
-            var move = _movement != null ? _movement.CurrentState : default;
-            DebugLogThrottled(
-                $"[SlimeJumpDbg] phase={phase} frame={Time.frameCount} grounded={grounded} justGrounded={justGrounded} tooSteep={tooSteep} exitedTooSteep={exitedTooSteep} " +
-                $"jumpsLeft={NumberOfJumpsLeft}/{NumberOfJumps} vy={vy:F2} lastVy={lastVy:F2} grav={grav} mode={mode} cond={cond} move={move}");
-        }
-
         protected override void HandleInput()
         {
             if (_controller3D != null
@@ -99,7 +41,6 @@ namespace Revive.Slime
         {
             if (!EvaluateJumpConditions())
             {
-                DebugLogJumpFail();
                 return;
             }
 
@@ -182,72 +123,11 @@ namespace Revive.Slime
             return true;
         }
 
-        private void DebugLogJumpFail()
-        {
-            if (!Debug.isDebugBuild)
-            {
-                return;
-            }
-
-            string reason = "unknown";
-
-            if (!AbilityAuthorized)
-            {
-                reason = "AbilityAuthorized=false";
-            }
-            else if (_condition != null && _condition.CurrentState != CharacterStates.CharacterConditions.Normal)
-            {
-                reason = $"condition={_condition.CurrentState}";
-            }
-            else if (_characterButtonActivation != null
-                     && _characterButtonActivation.AbilityAuthorized
-                     && _characterButtonActivation.InButtonActivatedZone
-                     && _characterButtonActivation.PreventJumpInButtonActivatedZone)
-            {
-                reason = "PreventJumpInButtonActivatedZone";
-            }
-            else if (!CanJumpOnTooSteepSlopes && _controller3D != null && _controller3D.TooSteep())
-            {
-                reason = "TooSteep";
-            }
-            else if (_characterCrouch != null && _characterCrouch.InATunnel)
-            {
-                reason = "InATunnel";
-            }
-            else if (CeilingTest())
-            {
-                reason = "CeilingTest";
-            }
-            else if (NumberOfJumpsLeft <= 0)
-            {
-                reason = $"NoJumpsLeft({NumberOfJumpsLeft}/{NumberOfJumps})";
-            }
-            else if (_movement != null && _movement.CurrentState == CharacterStates.MovementStates.Dashing)
-            {
-                reason = "Dashing";
-            }
-
-            bool grounded = _controller3D != null && _controller3D.Grounded;
-            bool justGrounded = _controller3D != null && _controller3D.JustGotGrounded;
-            bool tooSteep = _controller3D != null && _controller3D.TooSteep();
-            bool exitedTooSteep = _controller3D != null && _controller3D.ExitedTooSteepSlopeThisFrame;
-            float vy = _controller3D != null ? _controller3D.Velocity.y : 0f;
-            float lastVy = _controller3D != null ? _controller3D.VelocityLastFrame.y : 0f;
-            var mode = _controller3D != null ? _controller3D.UpdateMode : default;
-            bool grav = _controller3D != null && _controller3D.GravityActive;
-
-            DebugLogFailThrottled(
-                $"[SlimeJumpFail] frame={Time.frameCount} reason={reason} grounded={grounded} justGrounded={justGrounded} tooSteep={tooSteep} exitedTooSteep={exitedTooSteep} " +
-                $"jumpsLeft={NumberOfJumpsLeft}/{NumberOfJumps} vy={vy:F2} lastVy={lastVy:F2} grav={grav} mode={mode}");
-        }
-
         /// <summary>
         /// 重写处理 - 不再持续施力，只检测状态
         /// </summary>
         public override void ProcessAbility()
         {
-            DebugLogState("tick");
-
             if (_controller.JustGotGrounded)
             {
                 ResetNumberOfJumps();
