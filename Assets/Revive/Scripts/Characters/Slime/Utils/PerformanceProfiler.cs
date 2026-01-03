@@ -77,6 +77,14 @@ namespace Revive.Slime
         private static int _lastSlowFrameDetailLogProfilerFrame = -999999;
         private static int _lastSlowFrameDetailSignature = 0;
         private static bool _wasSlowFrameLastProfilerFrame = false;
+
+        private const double FrameDetailMinStageMs = 0.05;
+        private const int FrameDetailMaxStages = 48;
+
+        private const double SummaryMinAvgPerFrameMs = 0.02;
+        private const int SummaryMaxStages = 48;
+
+        private static readonly System.Text.StringBuilder _sharedStringBuilder = new System.Text.StringBuilder(4096);
         
         // 当前帧的阶段执行顺序
         private static List<string> _currentFrameStages = new List<string>();
@@ -337,7 +345,8 @@ namespace Revive.Slime
         {
             if (_frameCount == 0) return;
             
-            var sb = new System.Text.StringBuilder();
+            var sb = _sharedStringBuilder;
+            sb.Length = 0;
             sb.AppendLine($"========== 性能分析汇总 (累计 {_frameCount} 帧) ==========");
             sb.AppendLine($"帧时间: 平均={_totalFrameTime / _frameCount:F2}ms, 最大={_maxFrameTime:F2}ms");
             sb.AppendLine($"包裹阶段合计: 平均={_totalProfiledFrameTime / _frameCount:F2}ms, 最大={_maxProfiledFrameTime:F2}ms");
@@ -348,6 +357,7 @@ namespace Revive.Slime
             var sortedStages = new List<KeyValuePair<string, StageData>>(_stages);
             sortedStages.Sort((a, b) => b.Value.TotalMs.CompareTo(a.Value.TotalMs));
             
+            int printedStages = 0;
             foreach (var kvp in sortedStages)
             {
                 if (kvp.Value.CallCount == 0) continue;
@@ -356,7 +366,17 @@ namespace Revive.Slime
                 double avgPerFrameMs = kvp.Value.TotalMs / _frameCount;
                 double callsPerFrame = (double)kvp.Value.CallCount / _frameCount;
                 string marker = kvp.Value.MaxMs > StageTimeWarningThreshold ? " ★慢★" : "";
+
+                if (avgPerFrameMs < SummaryMinAvgPerFrameMs && kvp.Value.MaxMs < StageTimeWarningThreshold)
+                    continue;
+
                 sb.AppendLine($"  [{kvp.Key}]: 总计={kvp.Value.TotalMs:F1}ms, 每帧={avgPerFrameMs:F2}ms, 单次均值={avgPerCallMs:F2}ms, 最大={kvp.Value.MaxMs:F2}ms, 调用={kvp.Value.CallCount}次({callsPerFrame:F2}/帧){marker}");
+                printedStages++;
+                if (printedStages >= SummaryMaxStages)
+                {
+                    sb.AppendLine($"  ...(+{sortedStages.Count - printedStages} stages)");
+                    break;
+                }
             }
             
             sb.AppendLine("================================================");
@@ -430,7 +450,8 @@ namespace Revive.Slime
         
         private static void OutputFrameDetails(double frameTime, double profiledFrameTime, bool isSlowFrame)
         {
-            var sb = new System.Text.StringBuilder();
+            var sb = _sharedStringBuilder;
+            sb.Length = 0;
             
             if (isSlowFrame)
                 sb.Append($"<color=red>[卡顿帧]</color> ");
@@ -438,13 +459,41 @@ namespace Revive.Slime
                 sb.Append("[帧详情] ");
 
             sb.Append($"帧#{Time.frameCount}({_frameCount}) 总耗时={frameTime:F2}ms 包裹合计={profiledFrameTime:F2}ms | ");
-            
-            foreach (var stageName in _currentFrameStages)
+
+            List<KeyValuePair<string, StageData>> stageList = null;
+            int stageCount = 0;
+            for (int i = 0; i < _currentFrameStages.Count; i++)
             {
-                if (_stages.TryGetValue(stageName, out var data) && data.CurrentMs > 0)
+                string stageName = _currentFrameStages[i];
+                if (_stages.TryGetValue(stageName, out var data) && data.CurrentFrameTotalMs >= FrameDetailMinStageMs)
                 {
+                    if (stageList == null)
+                        stageList = new List<KeyValuePair<string, StageData>>(32);
+                    stageList.Add(new KeyValuePair<string, StageData>(stageName, data));
+                    stageCount++;
+                }
+            }
+
+            if (stageList != null && stageList.Count > 1)
+            {
+                stageList.Sort((a, b) => b.Value.CurrentFrameTotalMs.CompareTo(a.Value.CurrentFrameTotalMs));
+            }
+
+            int printedStages = 0;
+            if (stageList != null)
+            {
+                for (int i = 0; i < stageList.Count; i++)
+                {
+                    var kv = stageList[i];
+                    var data = kv.Value;
                     string color = data.CurrentMs > StageTimeWarningThreshold ? "red" : "white";
-                    sb.Append($"<color={color}>{stageName}={data.CurrentMs:F2}ms/{data.CurrentFrameTotalMs:F2}ms</color> ");
+                    sb.Append($"<color={color}>{kv.Key}={data.CurrentMs:F2}ms/{data.CurrentFrameTotalMs:F2}ms</color> ");
+                    printedStages++;
+                    if (printedStages >= FrameDetailMaxStages)
+                    {
+                        sb.Append($"<color=white>...(+{stageCount - printedStages} stages)</color> ");
+                        break;
+                    }
                 }
             }
 

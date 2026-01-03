@@ -1,4 +1,3 @@
-using System.Linq;
 using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
 using UnityEngine;
@@ -69,12 +68,21 @@ namespace Revive.GamePlay.Purification
         {
             if (PostProcessingVolume == null)
             {
-                PostProcessingVolume = FindObjectsByType<Volume>(FindObjectsSortMode.None)
-                    .FirstOrDefault(v => 
-                        v.profile != null 
-                        && v.gameObject.activeSelf 
-                        && v.name.Contains("Dark")
-                        );
+                var volumes = FindObjectsByType<Volume>(FindObjectsSortMode.None);
+                for (int i = 0; i < volumes.Length; i++)
+                {
+                    var v = volumes[i];
+                    if (v == null)
+                        continue;
+                    if (v.profile == null)
+                        continue;
+                    if (!v.gameObject.activeSelf)
+                        continue;
+                    if (v.name == null || !v.name.Contains("Dark"))
+                        continue;
+                    PostProcessingVolume = v;
+                    break;
+                }
             }
             
             if (PostProcessingVolume == null)
@@ -84,11 +92,19 @@ namespace Revive.GamePlay.Purification
 
             if (MainLight == null)
             {
-                MainLight = FindObjectsByType<Light>(FindObjectsSortMode.None)
-                    .FirstOrDefault(l =>
-                        l.type == LightType.Directional
-                        && l.gameObject.activeSelf
-                    );
+                var lights = FindObjectsByType<Light>(FindObjectsSortMode.None);
+                for (int i = 0; i < lights.Length; i++)
+                {
+                    var l = lights[i];
+                    if (l == null)
+                        continue;
+                    if (l.type != LightType.Directional)
+                        continue;
+                    if (!l.gameObject.activeSelf)
+                        continue;
+                    MainLight = l;
+                    break;
+                }
             }
 
             if (MainLight == null)
@@ -131,8 +147,6 @@ namespace Revive.GamePlay.Purification
             
             // 计算目标强度：净化度越高，灰暗越低
             _targetIntensity = Mathf.Lerp(MaxDarknessIntensity, MinDarknessIntensity, purificationLevel);
-            
-            Debug.Log($"[{ListenerName}] 净化度更新: {purificationLevel:F2} -> 目标强度: {_targetIntensity:F2}");
         }
         
         public Vector3 GetListenerPosition()

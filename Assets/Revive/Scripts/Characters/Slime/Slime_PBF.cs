@@ -373,9 +373,16 @@ namespace Revive.Slime
         private static readonly int _bubblesSizeId = Shader.PropertyToID("_Size");
         private static readonly int _bubblesSimToWorldScaleId = Shader.PropertyToID("_SimToWorldScale");
         private static readonly int _bubblesBufferId = Shader.PropertyToID("_BubblesBuffer");
+        private static readonly int _bubblesPredictOffsetWorldId = Shader.PropertyToID("_PredictOffsetWorld");
+        private static readonly int _faceTextureId = Shader.PropertyToID("_Texture2D");
+        private static readonly int _faceColorId = Shader.PropertyToID("_Color");
         private MaterialPropertyBlock _bubblesBlock;
         private float _bubblesBaseSize = 0.035f;
         private bool _bubblesBaseSizeCached;
+
+        private Material _slimeStencilMaskMat;
+        private Material _faceStencilMat;
+        private Material _bubblesStencilMat;
 
         [ChineseHeader("气泡效果")]
         [ChineseLabel("启用气泡")]
@@ -616,6 +623,27 @@ namespace Revive.Slime
         
         [Tooltip("体积组件 - 管理史莱姆资源状态")]
         [SerializeField] private SlimeVolume _slimeVolume;
+
+        [ChineseHeader("出生凝聚")]
+        [ChineseLabel("出生凝聚特效")]
+        [SerializeField, DefaultValue(false)]
+        private bool enableSpawnCoalesce;
+
+        [ChineseLabel("出生初始主体粒子数")]
+        [SerializeField, Range(1, 512), DefaultValue(32)]
+        private int spawnCoalesceInitialMainParticles = 32;
+
+        [ChineseLabel("出生分批粒子数")]
+        [SerializeField, Range(10, 2000), DefaultValue(200)]
+        private int spawnCoalesceParticlesPerBatch = 200;
+
+        [ChineseLabel("出生批次间隔(秒)")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.05f)]
+        private float spawnCoalesceBatchInterval = 0.05f;
+
+        [ChineseLabel("出生生成范围倍率")]
+        [SerializeField, Range(1f, 6f), DefaultValue(3.5f)]
+        private float spawnCoalesceSpawnRadius = 3.5f;
         
         [Tooltip("渲染模式 - Particles显示粒子，Surface显示表面")]
         public RenderMode renderMode = RenderMode.Surface;
@@ -635,6 +663,18 @@ namespace Revive.Slime
         [ChineseLabel("水珠MarchingCubes间隔(帧)"), Tooltip("Surface模式下水珠表面重建的间隔帧数，数值越大越省CPU但更新更不及时")]
         [SerializeField, Range(1, 10), DefaultValue(3)]
         private int dropletMarchingCubesIntervalFrames = 3;
+
+        [ChineseLabel("主体MarchingCubes间隔(帧)"), Tooltip("Surface模式下主体表面重建的间隔帧数，数值越大越省CPU但更新更不及时")]
+        [SerializeField, Range(1, 10), DefaultValue(1)]
+        private int mainMarchingCubesIntervalFrames = 1;
+
+        [ChineseLabel("追帧时主体MarchingCubes间隔(帧)"), Tooltip("发生追帧（同一渲染帧内多次FixedUpdate）时主体表面重建的间隔帧数")]
+        [SerializeField, Range(1, 20), DefaultValue(4)]
+        private int mainMarchingCubesIntervalFramesWhenBacklog = 4;
+
+        [ChineseLabel("追帧时主体表面降频"), Tooltip("发生追帧时降低主体MarchingCubes更新频率以避免LateUpdate卡顿")]
+        [SerializeField, DefaultValue(true)]
+        private bool adaptiveMainSurfaceUpdateWhenBacklog = true;
 
         [ChineseHeader("脸部缩放")]
         [ChineseLabel("脸部缩放系数"), Tooltip("脸部/眼睛的基础缩放系数")]
@@ -932,6 +972,62 @@ namespace Revive.Slime
             if (mainCount <= 0 && dropletCount <= 0)
                 return;
 
+            bool hasCandidatesMain = false;
+            float3 candidatesMinSim = default;
+            float3 candidatesMaxSim = default;
+            if (mainCount > 0)
+            {
+                for (int i = 0; i < mainCount; i++)
+                {
+                    Particle p = Particles[i];
+                    if (p.SourceId >= 0)
+                        continue;
+
+                    if (p.Type != ParticleType.Emitted && p.Type != ParticleType.Separated)
+                        continue;
+
+                    float3 pos = p.Position;
+                    if (!hasCandidatesMain)
+                    {
+                        hasCandidatesMain = true;
+                        candidatesMinSim = pos;
+                        candidatesMaxSim = pos;
+                    }
+                    else
+                    {
+                        candidatesMinSim = math.min(candidatesMinSim, pos);
+                        candidatesMaxSim = math.max(candidatesMaxSim, pos);
+                    }
+                }
+            }
+
+            if (!hasCandidatesMain && dropletCount <= 0)
+                return;
+
+            Bounds queryBoundsWorld = default;
+            bool hasQueryBoundsWorld = false;
+            if (hasCandidatesMain)
+            {
+                queryBoundsWorld.SetMinMax((Vector3)(candidatesMinSim * SimToWorldScale), (Vector3)(candidatesMaxSim * SimToWorldScale));
+                float marginW = math.max(particleRadiusWorld, PBF_Utils.CellSize * SimToWorldScale);
+                queryBoundsWorld.Expand(marginW * 2f);
+                hasQueryBoundsWorld = true;
+            }
+
+            if (dropletCount > 0)
+            {
+                if (!hasQueryBoundsWorld)
+                {
+                    queryBoundsWorld = _dropletBounds;
+                    hasQueryBoundsWorld = true;
+                }
+                else
+                {
+                    queryBoundsWorld.Encapsulate(_dropletBounds.min);
+                    queryBoundsWorld.Encapsulate(_dropletBounds.max);
+                }
+            }
+
             var particles = Particles;
             var lut = SpatialLut;
             var hashes = SpatialHashes;
@@ -970,6 +1066,11 @@ namespace Revive.Slime
                 }
 
                 receiversWithBounds++;
+
+                if (hasQueryBoundsWorld && !boundsWorld.Intersects(queryBoundsWorld))
+                {
+                    continue;
+                }
 
                 var target = receiver.Target;
                 if (target == null)
@@ -1335,6 +1436,14 @@ namespace Revive.Slime
         [Tooltip("性能分析器日志总开关（PerformanceProfiler）")]
         public bool performanceProfilerEnabled = true;
 
+        public bool adaptiveMainSimSubsteps = true;
+
+        [Min(1), DefaultValue(2)]
+        public int mainSimSubstepsPerFixedUpdate = 2;
+
+        [Min(1), DefaultValue(1)]
+        public int mainSimSubstepsWhenBacklog = 1;
+
         [Tooltip("显示网格调试信息")]
         public bool gridDebug;
         
@@ -1346,22 +1455,6 @@ namespace Revive.Slime
 
         [Tooltip("显示召回避障 SphereCast 调试线框")]
         public bool recallAvoidanceGizmos;
-
-        [Tooltip("低频打印：主体中心 vs 水珠 active bounds 中心（用于定位水珠贴地/中心偏移）")]
-        public bool dropletCenterDebugLog;
-
-        [Min(1)]
-        public int dropletCenterDebugLogIntervalFrames = 60;
-
-        public bool fallDeformDebugLog;
-
-        [Min(1)]
-        public int fallDeformDebugLogIntervalFrames = 30;
-
-        public bool fallDeformDebugStats;
-
-        [Min(1)]
-        public int fallDeformDebugStatsIntervalFrames = 30;
         
         #endregion
         
@@ -1407,25 +1500,8 @@ namespace Revive.Slime
         private Vector3 _dbgRecallSphereHitPointW;
         private Vector3 _dbgRecallSphereHitNormalW;
 
-        private int _dbgDropletCenterLogFrame = -999999;
-
-        private int _dbgFallDeformLogFrame = -999999;
-        private int _dbgFallDeformStatsFrame = -999999;
         private int _dbgFixedUpdateCountFrame = -999999;
         private int _dbgFixedUpdateCountThisFrame;
-        private int _dbgSimulateSubstep;
-
-        private int _dbgEyeJitterLastLogFrame = -999999;
-        private Vector3 _dbgEyeJitterPrevSampleEyeWorld;
-        private bool _dbgEyeJitterPrevSampleEyeWorldValid;
-        private Vector3 _dbgEyeJitterPrevFrameEyeWorld;
-        private bool _dbgEyeJitterPrevFrameEyeWorldValid;
-        private Vector3 _dbgEyeJitterPrevFrameTargetWorld;
-        private bool _dbgEyeJitterPrevFrameTargetWorldValid;
-        private Vector3 _dbgEyeJitterPrevRayDir;
-        private bool _dbgEyeJitterPrevRayDirValid;
-        private int _dbgEyeJitterBurstFramesLeft;
-        private int _dbgEyeJitterLastBurstStartFrame = -999999;
         private bool _dbgEyeJitterCallFromRearrange;
 
         private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
@@ -1517,10 +1593,15 @@ namespace Revive.Slime
 		private Vector3 _prevRenderTransPosition;
 		private bool _renderVelocityInitialized;
 		private bool _deferredPostSimPending;
+		private int _fixedUpdateCountFrame = -999999;
+		private int _fixedUpdateCountThisFrame;
 		private int _lastPerformanceProfilerFrame = -999999;
 		private bool _runtimeInitialized;
+		private int _spawnCoalesceRemaining;
+		private float _spawnCoalesceNextBatchTime;
 		private float _lastMainRadius; // 用于 mainRadius 防抖
 		private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
+		private int _lastMainMarchingCubesFrame = -999999;
 		private int _lastDropletMarchingCubesFrame = -999999;
 		private int _lastSurfaceSpikeLogFrame = -999999;
 		private int _lastGroundFallbackHitLogFrame = -999999;
@@ -1882,10 +1963,19 @@ namespace Revive.Slime
             // 使用 maxParticles 替代 PBF_Utils.Num
             _particles = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
             _particlesRenderBuffer = new NativeArray<Particle>(maxParticles, Allocator.Persistent);
-            int initialMainCount = DefaultInitialMainCount;
-            initialMainCount = Mathf.Min(initialMainCount, maxParticles);
+            int targetInitialMainCount = _slimeVolume != null ? _slimeVolume.initialMainVolume : DefaultInitialMainCount;
+            targetInitialMainCount = Mathf.Min(targetInitialMainCount, maxParticles);
             // 主体粒子分区为[0-8191]，最大8192个
-            initialMainCount = Mathf.Min(initialMainCount, MainBodyMaxParticles);
+            targetInitialMainCount = Mathf.Min(targetInitialMainCount, MainBodyMaxParticles);
+
+            int initialMainCount = targetInitialMainCount;
+            if (enableSpawnCoalesce)
+            {
+                int core = Mathf.Clamp(spawnCoalesceInitialMainParticles, 1, targetInitialMainCount);
+                initialMainCount = core;
+                _spawnCoalesceRemaining = Mathf.Max(0, targetInitialMainCount - initialMainCount);
+                _spawnCoalesceNextBatchTime = Time.time;
+            }
             
         // 初始化主体粒子 - 使用简单的线性循环，确保所有粒子都被初始化
             // 获取玩家位置作为粒子生成中心（转换为模拟坐标系）
@@ -2207,6 +2297,10 @@ namespace Revive.Slime
         {
             _runtimeInitialized = false;
 
+            if (_slimeStencilMaskMat != null) Destroy(_slimeStencilMaskMat);
+            if (_faceStencilMat != null) Destroy(_faceStencilMat);
+            if (_bubblesStencilMat != null) Destroy(_bubblesStencilMat);
+
             if (_particles.IsCreated) _particles.Dispose();
             if (_particlesRenderBuffer.IsCreated) _particlesRenderBuffer.Dispose();
             if (_particlesTemp.IsCreated) _particlesTemp.Dispose();
@@ -2300,6 +2394,8 @@ namespace Revive.Slime
             if (!_runtimeInitialized)
                 return;
 
+            ProcessSpawnCoalesce();
+
             // 渲染预测使用 FixedUpdate 中的稳定速度，避免 transform 仅在 FixedUpdate 跳变时
             // 用 Time.deltaTime 计算速度导致的脉冲/过冲。
             _renderVelocity = _velocity;
@@ -2308,6 +2404,26 @@ namespace Revive.Slime
             {
                 _prevRenderTransPosition = trans.position;
                 _renderVelocityInitialized = true;
+            }
+        }
+
+        private void ProcessSpawnCoalesce()
+        {
+            if (!enableSpawnCoalesce)
+                return;
+            if (_spawnCoalesceRemaining <= 0)
+                return;
+            if (Time.time < _spawnCoalesceNextBatchTime)
+                return;
+
+            int batch = Mathf.Min(_spawnCoalesceRemaining, Mathf.Max(1, spawnCoalesceParticlesPerBatch));
+            int restored = RestoreMainBodyParticles(batch, spawnCoalesceSpawnRadius);
+            _spawnCoalesceRemaining -= restored;
+            _spawnCoalesceNextBatchTime = Time.time + Mathf.Max(0f, spawnCoalesceBatchInterval);
+
+            if (_slimeVolume != null && restored > 0)
+            {
+                _slimeVolume.UpdateFromParticles(_particles, true);
             }
         }
 
@@ -2391,13 +2507,25 @@ namespace Revive.Slime
             }
 
             if (renderMode == RenderMode.Surface)
+            {
+                PerformanceProfiler.Begin("RenderSurfaceMeshes");
                 RenderSurfaceMeshes();
+                PerformanceProfiler.End("RenderSurfaceMeshes");
+            }
             else if (renderMode == RenderMode.Particles)
+            {
+                PerformanceProfiler.Begin("RenderParticles");
                 RenderParticles();
+                PerformanceProfiler.End("RenderParticles");
+            }
 
+            PerformanceProfiler.Begin("RenderBubbles");
             RenderBubbles();
+            PerformanceProfiler.End("RenderBubbles");
 
+            PerformanceProfiler.Begin("RenderFaces");
             RenderFaces();
+            PerformanceProfiler.End("RenderFaces");
 
             if (_lastPerformanceProfilerFrame == Time.frameCount)
                 PerformanceProfiler.EndFrame();
@@ -2411,17 +2539,6 @@ namespace Revive.Slime
                 Surface();
                 PerformanceProfiler.End("Surface");
             }
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (Application.isEditor && fallDeformDebugLog)
-            {
-                int interval = math.max(1, fallDeformDebugLogIntervalFrames);
-                if (Time.frameCount - _dbgFallDeformLogFrame >= interval)
-                {
-                    Debug.Log($"[FallDeformDbg_Post] frame={Time.frameCount} fixedCount={_dbgFixedUpdateCountThisFrame} deferredPostSim=1");
-                }
-            }
-#endif
             
             PerformanceProfiler.Begin("Unshuffle");
             NativeArray<Particle>.Copy(_particles, _particlesTemp, activeParticles);
@@ -2451,13 +2568,17 @@ namespace Revive.Slime
             Control();
             PerformanceProfiler.End("Control");
             
+            PerformanceProfiler.Begin("UpdateBubblesEffects");
             UpdateBubblesEffects();
+            PerformanceProfiler.End("UpdateBubblesEffects");
             
             bubblesNum = PBF_Utils.BubblesCount - _bubblesPoolBuffer.Length;
             
             if (_bubblesDataBuffer != null)
             {
+                PerformanceProfiler.Begin("Bubbles_SetData");
                 _bubblesDataBuffer.SetData(_bubblesBuffer);
+                PerformanceProfiler.End("Bubbles_SetData");
             }
 
             if (renderMode == RenderMode.Particles)
@@ -2504,6 +2625,35 @@ namespace Revive.Slime
             return offset;
         }
 
+        private void EnsureStencilMaterials()
+        {
+            if (_slimeStencilMaskMat == null)
+            {
+                var shader = Shader.Find("Hidden/Revive/SlimeStencilMask");
+                if (shader != null)
+                {
+                    _slimeStencilMaskMat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    _slimeStencilMaskMat.renderQueue = 3002;
+                }
+            }
+
+            if (_bubblesStencilMat == null && bubblesMat != null)
+            {
+                _bubblesStencilMat = new Material(bubblesMat) { hideFlags = HideFlags.HideAndDontSave };
+                _bubblesStencilMat.renderQueue = 3003;
+            }
+
+            if (_faceStencilMat == null && faceMat != null)
+            {
+                var shader = Shader.Find("Revive/Slime/FaceStencil");
+                if (shader != null)
+                {
+                    _faceStencilMat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    _faceStencilMat.renderQueue = 3003;
+                }
+            }
+        }
+
         private void RenderBubbles()
         {
             if (!enableBubbles)
@@ -2517,12 +2667,15 @@ namespace Revive.Slime
             if (!_bubblesBuffer.IsCreated)
                 return;
 
+            EnsureStencilMaterials();
+            Material bubblesMatToUse = _bubblesStencilMat != null ? _bubblesStencilMat : bubblesMat;
+
             if (_bubblesBlock == null)
                 _bubblesBlock = new MaterialPropertyBlock();
 
-            if (!_bubblesBaseSizeCached && bubblesMat.HasProperty(_bubblesSizeId))
+            if (!_bubblesBaseSizeCached && bubblesMatToUse.HasProperty(_bubblesSizeId))
             {
-                _bubblesBaseSize = bubblesMat.GetFloat(_bubblesSizeId);
+                _bubblesBaseSize = bubblesMatToUse.GetFloat(_bubblesSizeId);
                 _bubblesBaseSizeCached = true;
             }
 
@@ -2531,11 +2684,12 @@ namespace Revive.Slime
                 sizeBoost = Mathf.Max(0f, _bubbleBoostSizeMultiplier);
 
             _bubblesBlock.SetFloat(_bubblesSizeId, _bubblesBaseSize * SlimeWorldScaleFactor * sizeBoost);
-            if (bubblesMat.HasProperty(_bubblesSimToWorldScaleId))
+            if (bubblesMatToUse.HasProperty(_bubblesSimToWorldScaleId))
                 _bubblesBlock.SetFloat(_bubblesSimToWorldScaleId, SimToWorldScale);
             _bubblesBlock.SetBuffer(_bubblesBufferId, _bubblesDataBuffer);
 
             Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
+            _bubblesBlock.SetVector(_bubblesPredictOffsetWorldId, predictOffsetWorld);
             Bounds drawBounds = _bounds.size.sqrMagnitude > 1e-6f
                 ? _bounds
                 : new Bounds(trans != null ? trans.position : Vector3.zero, Vector3.one * 10000f);
@@ -2544,7 +2698,7 @@ namespace Revive.Slime
             Graphics.DrawMeshInstancedProcedural(
                 particleMesh,
                 0,
-                bubblesMat,
+                bubblesMatToUse,
                 drawBounds,
                 PBF_Utils.BubblesCount,
                 _bubblesBlock,
@@ -2561,6 +2715,17 @@ namespace Revive.Slime
                 return;
             if (!_slimeInstances.IsCreated)
                 return;
+
+            EnsureStencilMaterials();
+            Material faceMatToUse = faceMat;
+            if (_faceStencilMat != null)
+            {
+                faceMatToUse = _faceStencilMat;
+                if (faceMat.HasProperty(_faceTextureId) && _faceStencilMat.HasProperty(_faceTextureId))
+                    _faceStencilMat.SetTexture(_faceTextureId, faceMat.GetTexture(_faceTextureId));
+                if (faceMat.HasProperty(_faceColorId) && _faceStencilMat.HasProperty(_faceColorId))
+                    _faceStencilMat.SetColor(_faceColorId, faceMat.GetColor(_faceColorId));
+            }
 
             Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
             int layer = gameObject.layer;
@@ -2605,7 +2770,7 @@ namespace Revive.Slime
                 float faceWorldScale = faceScale * countFactor * math.sqrt(slime.Radius * SimToWorldScale);
                 Graphics.DrawMesh(faceMesh, Matrix4x4.TRS(slime.Pos * SimToWorldScale + predictOffsetWorld,
                     Quaternion.LookRotation(-renderDir),
-                    faceWorldScale * Vector3.one), faceMat, layer);
+                    faceWorldScale * Vector3.one), faceMatToUse, layer);
             }
         }
 
@@ -2619,7 +2784,14 @@ namespace Revive.Slime
             Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
 
             if (_mesh != null)
-                Graphics.DrawMesh(_mesh, Matrix4x4.TRS(_meshOriginWorld + predictOffsetWorld, Quaternion.identity, Vector3.one), mat, layer, null, 0, block);
+            {
+                Matrix4x4 matrix = Matrix4x4.TRS(_meshOriginWorld + predictOffsetWorld, Quaternion.identity, Vector3.one);
+                Graphics.DrawMesh(_mesh, matrix, mat, layer, null, 0, block);
+
+                EnsureStencilMaterials();
+                if (_slimeStencilMaskMat != null)
+                    Graphics.DrawMesh(_mesh, matrix, _slimeStencilMaskMat, layer);
+            }
 
             if (_dropletMesh != null)
             {
@@ -2645,7 +2817,9 @@ namespace Revive.Slime
 
             _particleRenderer.SetSimToWorldScale(SimToWorldScale);
 
+            PerformanceProfiler.Begin("Particles_ConvertToWorldPositions");
             int totalParticles = ConvertToWorldPositionsForRendering();
+            PerformanceProfiler.End("Particles_ConvertToWorldPositions");
             if (totalParticles <= 0)
                 return;
 
@@ -2663,9 +2837,14 @@ namespace Revive.Slime
             if (_lastParticleRenderUploadFrame != Time.frameCount)
             {
                 _lastParticleRenderUploadFrame = Time.frameCount;
+                PerformanceProfiler.Begin("Particles_Upload");
                 _particleRenderer.UploadParticles(_particlesRenderBuffer, totalParticles);
+                PerformanceProfiler.End("Particles_Upload");
             }
+
+            PerformanceProfiler.Begin("Particles_Draw");
             _particleRenderer.Draw(totalParticles, anisotropic: false);
+            PerformanceProfiler.End("Particles_Draw");
         }
 
         private void FixedUpdate()
@@ -2674,6 +2853,13 @@ namespace Revive.Slime
                 return;
             if (!_runtimeInitialized)
                 return;
+
+            if (_fixedUpdateCountFrame != Time.frameCount)
+            {
+                _fixedUpdateCountFrame = Time.frameCount;
+                _fixedUpdateCountThisFrame = 0;
+            }
+            _fixedUpdateCountThisFrame++;
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_dbgFixedUpdateCountFrame != Time.frameCount)
@@ -2747,84 +2933,19 @@ namespace Revive.Slime
             // 这样 len 和 Radius 匹配，粒子更容易满足 len < Radius 条件受向心力
             // Center 和 Radius 统一在 Control() 中更新（Simulate 之后）
             
-            // 主体粒子模拟（原版每帧执行2次）
-            for (int i = 0; i < 2; i++)
+            int mainSubsteps = math.max(1, mainSimSubstepsPerFixedUpdate);
+            if (adaptiveMainSimSubsteps && _fixedUpdateCountThisFrame > 1)
+                mainSubsteps = math.max(1, mainSimSubstepsWhenBacklog);
+
+            for (int i = 0; i < mainSubsteps; i++)
             {
                 Profiler.BeginSample("Simulate_Main");
                 PerformanceProfiler.Begin(i == 0 ? "Simulate_0" : "Simulate_1");
                 PerformanceProfiler.CounterAdd(i == 0 ? "Slime_Simulate0Calls" : "Slime_Simulate1Calls", 1);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-                _dbgSimulateSubstep = i;
-#endif
                 Simulate();
                 PerformanceProfiler.End(i == 0 ? "Simulate_0" : "Simulate_1");
                 Profiler.EndSample();
             }
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (Application.isEditor && fallDeformDebugStats)
-            {
-                int interval = math.max(1, fallDeformDebugStatsIntervalFrames);
-                if (Time.frameCount - _dbgFallDeformStatsFrame >= interval)
-                {
-                    _dbgFallDeformStatsFrame = Time.frameCount;
-
-                    float minY = float.PositiveInfinity;
-                    float maxY = float.NegativeInfinity;
-                    int mainCount = 0;
-
-                    int count = math.min(activeParticles, _particles.Length);
-                    for (int pi = 0; pi < count; pi++)
-                    {
-                        var p = _particles[pi];
-                        if (p.Type != ParticleType.MainBody)
-                            continue;
-                        mainCount++;
-                        minY = math.min(minY, p.Position.y);
-                        maxY = math.max(maxY, p.Position.y);
-                    }
-
-                    if (mainCount > 0 && minY < maxY)
-                    {
-                        float midY = (minY + maxY) * 0.5f;
-                        float3 botSum = float3.zero;
-                        float3 topSum = float3.zero;
-                        int botCount = 0;
-                        int topCount = 0;
-
-                        for (int pi = 0; pi < count; pi++)
-                        {
-                            var p = _particles[pi];
-                            if (p.Type != ParticleType.MainBody)
-                                continue;
-
-                            float3 v = _velocityBuffer[pi];
-                            if (p.Position.y < midY)
-                            {
-                                botSum += v;
-                                botCount++;
-                            }
-                            else
-                            {
-                                topSum += v;
-                                topCount++;
-                            }
-                        }
-
-                        float3 botAvg = botCount > 0 ? (botSum / botCount) : float3.zero;
-                        float3 topAvg = topCount > 0 ? (topSum / topCount) : float3.zero;
-                        float botXZ = math.length(new float2(botAvg.x, botAvg.z));
-                        float topXZ = math.length(new float2(topAvg.x, topAvg.z));
-
-                        Debug.Log(
-                            $"[FallDeformStats] frame={Time.frameCount} fixedCount={_dbgFixedUpdateCountThisFrame} " +
-                            $"mainCount={mainCount} yRange=({minY:F2},{maxY:F2}) " +
-                            $"botAvgSim=({botAvg.x:F2},{botAvg.y:F2},{botAvg.z:F2}) botXZ={botXZ:F2} botCount={botCount} " +
-                            $"topAvgSim=({topAvg.x:F2},{topAvg.y:F2},{topAvg.z:F2}) topXZ={topXZ:F2} topCount={topCount}");
-                    }
-                }
-            }
-#endif
 
             
             // 水珠独立模拟（独立分区，使用完整 PBF 物理 + 环境碰撞）
@@ -2875,66 +2996,6 @@ namespace Revive.Slime
                 ParticleRadiusWorldScaled * WorldToSimScale,
                 worldStaticSdfFriction,
                 (useSdf != 0 && disableStaticColliderFallbackWhenUsingSdf) ? 1 : 0);
-
-            if (Application.isEditor && dropletCenterDebugLog)
-            {
-                int interval = math.max(1, dropletCenterDebugLogIntervalFrames);
-                if (Time.frameCount - _dbgDropletCenterLogFrame >= interval)
-                {
-                    _dbgDropletCenterLogFrame = Time.frameCount;
-
-                    float3 mainCenterSim = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
-                        ? _controllerBuffer[0].Center
-                        : float3.zero;
-                    float s2w = SimToWorldScale;
-                    float w2s = WorldToSimScale;
-                    Vector3 mainCenterW = (Vector3)(mainCenterSim * s2w);
-                    Vector3 transW = trans != null ? trans.position : Vector3.zero;
-
-                    int dropletActive = _dropletSubsystem.ActiveCount;
-                    int dropletSourceCount = 0;
-                    for (int s = 0; s < allSources.Count; s++)
-                    {
-                        var src = allSources[s];
-                        if (src == null) continue;
-                        if (src.State == DropWater.DropletSourceState.Simulated)
-                            dropletSourceCount++;
-                    }
-
-                    bool hasBounds = _dropletSubsystem.TryGetActiveBounds(out float3 dropletMinSim, out float3 dropletMaxSim);
-                    float3 dropletCenterSim = hasBounds ? (dropletMinSim + dropletMaxSim) * 0.5f : float3.zero;
-                    Vector3 dropletCenterW = (Vector3)(dropletCenterSim * s2w);
-                    Vector3 dropletMinW = (Vector3)(dropletMinSim * s2w);
-                    Vector3 dropletMaxW = (Vector3)(dropletMaxSim * s2w);
-
-                    string srcPos = string.Empty;
-                    int srcPrinted = 0;
-                    for (int s = 0; s < allSources.Count; s++)
-                    {
-                        var src = allSources[s];
-                        if (src == null) continue;
-                        if (src.State != DropWater.DropletSourceState.Simulated) continue;
-                        Vector3 sw = src.transform.position;
-                        float3 ss = (float3)(sw * w2s);
-                        if (srcPrinted == 0)
-                            srcPos = $"src[{s}]W=({sw.x:F2},{sw.y:F2},{sw.z:F2}) sim=({ss.x:F2},{ss.y:F2},{ss.z:F2})";
-                        else
-                            srcPos += $" | src[{s}]W=({sw.x:F2},{sw.y:F2},{sw.z:F2}) sim=({ss.x:F2},{ss.y:F2},{ss.z:F2})";
-                        srcPrinted++;
-                        if (srcPrinted >= 4) break;
-                    }
-
-                    Debug.Log(
-                        $"[DropletCenterDbg] frame={Time.frameCount} " +
-                        $"s2w={s2w:F3} w2s={w2s:F3} " +
-                        $"mainCenterSim=({mainCenterSim.x:F2},{mainCenterSim.y:F2},{mainCenterSim.z:F2}) mainCenterW=({mainCenterW.x:F2},{mainCenterW.y:F2},{mainCenterW.z:F2}) transW=({transW.x:F2},{transW.y:F2},{transW.z:F2}) " +
-                        $"droplets={dropletActive} sources={dropletSourceCount} hasBounds={hasBounds} " +
-                        $"dropletCenterSim=({dropletCenterSim.x:F2},{dropletCenterSim.y:F2},{dropletCenterSim.z:F2}) dropletCenterW=({dropletCenterW.x:F2},{dropletCenterW.y:F2},{dropletCenterW.z:F2}) " +
-                        $"dropletMinW=({dropletMinW.x:F2},{dropletMinW.y:F2},{dropletMinW.z:F2}) dropletMaxW=({dropletMaxW.x:F2},{dropletMaxW.y:F2},{dropletMaxW.z:F2}) " +
-                        $"dropletVerticalOffset={dropletVerticalOffset:F3} dropletGroundYSim={dropletGroundY:F3} dropletColliderCount={_currentDropletColliderCount} useSdf={useSdf} " +
-                        $"{srcPos}");
-                }
-            }
             
             PerformanceProfiler.End("Simulate_Droplets");
             Profiler.EndSample();
@@ -3040,7 +3101,18 @@ namespace Revive.Slime
         private void Surface()
         {
             float t0 = Time.realtimeSinceStartup;
-            SurfaceMain();
+
+            int mainInterval = math.max(1, mainMarchingCubesIntervalFrames);
+            if (adaptiveMainSurfaceUpdateWhenBacklog && _fixedUpdateCountThisFrame > 1)
+                mainInterval = math.max(mainInterval, mainMarchingCubesIntervalFramesWhenBacklog);
+
+            bool shouldUpdateMainMesh = (_mesh == null) || ((Time.frameCount - _lastMainMarchingCubesFrame) >= mainInterval);
+            if (shouldUpdateMainMesh)
+            {
+                SurfaceMain();
+                _lastMainMarchingCubesFrame = Time.frameCount;
+            }
+
             SurfaceDroplets();
 
             float dtMs = (Time.realtimeSinceStartup - t0) * 1000f;
@@ -3524,32 +3596,6 @@ namespace Revive.Slime
             var controllersForJob = _controllerBuffer.AsArray();
             float3 mainCenterForJob = controllersForJob.Length > 0 ? controllersForJob[0].Center : float3.zero;
             float3 mainVelocityForJob = controllersForJob.Length > 0 ? controllersForJob[0].Velocity : float3.zero;
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (Application.isEditor && fallDeformDebugLog)
-            {
-                bool falling = _velocity.y < -0.01f;
-                if (falling)
-                {
-                    int interval = math.max(1, fallDeformDebugLogIntervalFrames);
-                    if (Time.frameCount - _dbgFallDeformLogFrame >= interval)
-                    {
-                        _dbgFallDeformLogFrame = Time.frameCount;
-
-                        float3 transCenterSim = trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero;
-                        float centerErrSim = math.length(transCenterSim - mainCenterForJob);
-
-                        Debug.Log(
-                            $"[FallDeformDbg] frame={Time.frameCount} fixedCount={_dbgFixedUpdateCountThisFrame} sub={_dbgSimulateSubstep} " +
-                            $"velW=({_velocity.x:F2},{_velocity.y:F2},{_velocity.z:F2}) " +
-                            $"mainCenterSim=({mainCenterForJob.x:F2},{mainCenterForJob.y:F2},{mainCenterForJob.z:F2}) " +
-                            $"transCenterSim=({transCenterSim.x:F2},{transCenterSim.y:F2},{transCenterSim.z:F2}) centerErrSim={centerErrSim:F2} " +
-                            $"mainVelSim=({mainVelocityForJob.x:F2},{mainVelocityForJob.y:F2},{mainVelocityForJob.z:F2}) " +
-                            $"verticalOffset={verticalOffset:F3} maxDeformXZ={(maxDeformDistXZ * WorldToSimScale):F2} maxDeformY={(maxDeformDistY * WorldToSimScale):F2}");
-                    }
-                }
-            }
-#endif
 
             NativeArray<WindFieldZoneData> windZonesForJob;
             bool disposeWindZonesForJob = false;
@@ -6241,90 +6287,6 @@ namespace Revive.Slime
             
             if (isControlled)
             {
-                int frame = Time.frameCount;
-                float dt = Time.deltaTime;
-                float t = Time.time;
-                float ft = Time.fixedTime;
-
-                Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
-                Vector3 rawOffsetWorld = Vector3.zero;
-                if (trans != null && _lastFixedTransPosWorldInitialized)
-                    rawOffsetWorld = trans.position - _lastFixedTransPosWorld;
-
-                Vector3 eyeWorld = ((Vector3)slime.Pos) * SimToWorldScale + predictOffsetWorld;
-                Vector3 targetWorld = ((Vector3)newPos) * SimToWorldScale + predictOffsetWorld;
-                Vector3 eyeCenterWorld = ((Vector3)eyeCenter) * SimToWorldScale + predictOffsetWorld;
-                Vector3 baseTargetWorld = ((Vector3)basePos) * SimToWorldScale + predictOffsetWorld;
-                Vector3 prevTargetWorld = _dbgEyeJitterPrevFrameTargetWorld;
-                Vector3 fdTargetW = _dbgEyeJitterPrevFrameTargetWorldValid ? (targetWorld - prevTargetWorld) : Vector3.zero;
-                float fdTargetM = fdTargetW.magnitude;
-                Vector3 prevEyeWorld = _dbgEyeJitterPrevFrameEyeWorld;
-                Vector3 fdW = _dbgEyeJitterPrevFrameEyeWorldValid ? (eyeWorld - prevEyeWorld) : Vector3.zero;
-                float fdM = fdW.magnitude;
-                Vector3 dW = _dbgEyeJitterPrevSampleEyeWorldValid ? (eyeWorld - _dbgEyeJitterPrevSampleEyeWorld) : Vector3.zero;
-
-                Vector3 rayDirV3 = (Vector3)rayDir;
-                bool dirFlip = _dbgEyeJitterPrevRayDirValid && Vector3.Dot(_dbgEyeJitterPrevRayDir, rayDirV3) < 0f;
-
-                const int dbgIntervalFrames = 1;
-                const int burstLen = 20;
-                const int burstCooldownFrames = 60;
-                const float burstThresholdWorld = 0.03f;
-
-                if ((fdM > burstThresholdWorld || dirFlip) && (frame - _dbgEyeJitterLastBurstStartFrame) > burstCooldownFrames)
-                {
-                    _dbgEyeJitterBurstFramesLeft = burstLen;
-                    _dbgEyeJitterLastBurstStartFrame = frame;
-                }
-
-                bool shouldLog = true;
-                int burstLeft = _dbgEyeJitterBurstFramesLeft;
-                bool isBurst = burstLeft > 0;
-                if (isBurst)
-                    _dbgEyeJitterBurstFramesLeft = burstLeft - 1;
-
-                if (shouldLog)
-                {
-                    Vector3 surfSimV3 = (Vector3)surfacePos;
-                    string msg = "[EyeJitterDbg]" +
-                                 " f=" + frame +
-                                 " dt=" + dt.ToString("F4") +
-                                 " t=" + t.ToString("F3") +
-                                 " ft=" + ft.ToString("F3") +
-                                 " offW=" + predictOffsetWorld.ToString("F3") +
-                                 " rawOffW=" + rawOffsetWorld.ToString("F3") +
-                                 " eyeW=" + eyeWorld.ToString("F3") +
-                                 " eyeCenterW=" + eyeCenterWorld.ToString("F3") +
-                                 " baseTargetW=" + baseTargetWorld.ToString("F3") +
-                                 " rayDir=" + rayDirV3.ToString("F3") +
-                                 " lerp=" + posLerpSpeed.ToString("F3") +
-                                 " dW=" + dW.ToString("F3") +
-                                 " fdW=" + fdW.ToString("F3") +
-                                 " fdM=" + fdM.ToString("F4") +
-                                 " fdTargetW=" + fdTargetW.ToString("F3") +
-                                 " fdTargetM=" + fdTargetM.ToString("F4") +
-                                 " prevEyeW=" + prevEyeWorld.ToString("F3") +
-                                 " targetW=" + targetWorld.ToString("F3") +
-                                 " dirFlip=" + (dirFlip ? 1 : 0) +
-                                 " burstLeft=" + burstLeft +
-                                 " fromRearr=" + (_dbgEyeJitterCallFromRearrange ? 1 : 0) +
-                                 " doRay=" + (doRaycast ? 1 : 0) +
-                                 " surfOk=" + (surfOk ? 1 : 0) +
-                                 " surfSim=" + surfSimV3.ToString("F3");
-                    Debug.Log(msg);
-                    _dbgEyeJitterLastLogFrame = frame;
-
-                    _dbgEyeJitterPrevSampleEyeWorld = eyeWorld;
-                    _dbgEyeJitterPrevSampleEyeWorldValid = true;
-                }
-
-                _dbgEyeJitterPrevFrameEyeWorld = eyeWorld;
-                _dbgEyeJitterPrevFrameEyeWorldValid = true;
-                _dbgEyeJitterPrevFrameTargetWorld = targetWorld;
-                _dbgEyeJitterPrevFrameTargetWorldValid = true;
-                _dbgEyeJitterPrevRayDir = rayDirV3;
-                _dbgEyeJitterPrevRayDirValid = true;
-
                 // 只回写 Velocity，不改 Center（避免与 FixedUpdate 开头设置的 Center 不一致）
                 _controllerBuffer[controllerID] = controller;
             }

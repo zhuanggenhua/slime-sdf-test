@@ -15,7 +15,7 @@
                 "RenderType" = "Transparent"
             }
             ZWrite Off
-            ZTest LEqual
+            ZTest Always
             Stencil
             {
                 Ref 1
@@ -58,6 +58,7 @@
             float _Size;
             float4 _Color;
             float _SimToWorldScale;
+            float3 _PredictOffsetWorld;
 
             StructuredBuffer<Bubble> _BubblesBuffer;
 
@@ -65,7 +66,7 @@
             {
                 v2f o;
                 Bubble b = _BubblesBuffer[id];
-                float3 worldPosition = (b.Pos * _SimToWorldScale) + (v.vertex.xyz - float3(0, 0.2, 0)) * (_Size * b.Radius);
+                float3 worldPosition = (b.Pos * _SimToWorldScale) + (v.vertex.xyz - float3(0, 0.2, 0)) * (_Size * b.Radius) + _PredictOffsetWorld;
                 o.worldPos = worldPosition;
                 // project into camera space
                 o.pos = TransformWorldToHClip(worldPosition);

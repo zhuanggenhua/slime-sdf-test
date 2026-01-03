@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using MoreMountains.TopDownEngine;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -17,9 +18,38 @@ namespace Revive.Slime
         [Tooltip("瞬时跳跃速度（类似原版 velocity.y += 4）")]
         public float JumpImpulse = 4f;
 
+        [Header("Landing Feedback")]
+        [Tooltip("普通落地反馈")]
+        public MMFeedbacks LandingFeedbacks;
+
+        [Tooltip("高处/重落地反馈")]
+        public MMFeedbacks HardLandingFeedbacks;
+
+        [Tooltip("判定为高处落地的下落高度阈值（米）")]
+        public float HardLandingHeight = 2.5f;
+
+        [Tooltip("判定为高处落地的下落速度阈值（取空中最小Y速度的绝对值）")]
+        public float HardLandingSpeed = 3f;
+
+        [Tooltip("用于传给Feedback强度参数的速度区间（min->0, max->1）")]
+        public Vector2 LandingSpeedToIntensity = new Vector2(2f, 12f);
+
         [SerializeField] private bool _debugSceneLabel = true;
         [SerializeField] private bool _debugOnlyWhenPlaying = true;
         [SerializeField] private Vector3 _debugWorldOffset = new Vector3(0f, 2f, 0f);
+
+        private bool _wasGrounded;
+        private float _airborneStartY;
+        private float _minAirborneVelocityY;
+        private float _lastLandingFeedbackTime;
+
+        protected override void Initialization()
+        {
+            base.Initialization();
+            LandingFeedbacks?.Initialization(this.gameObject);
+            HardLandingFeedbacks?.Initialization(this.gameObject);
+            _wasGrounded = _controller != null && _controller.Grounded;
+        }
 
         protected override void HandleInput()
         {
@@ -128,8 +158,24 @@ namespace Revive.Slime
         /// </summary>
         public override void ProcessAbility()
         {
+            if (_controller != null)
+            {
+                bool grounded = _controller.Grounded;
+                if (!grounded && _wasGrounded)
+                {
+                    _airborneStartY = transform.position.y;
+                    _minAirborneVelocityY = 0f;
+                }
+                else if (!grounded)
+                {
+                    _minAirborneVelocityY = Mathf.Min(_minAirborneVelocityY, _controller.Velocity.y);
+                }
+                _wasGrounded = grounded;
+            }
+
             if (_controller.JustGotGrounded)
             {
+                PlayLandingFeedbacks();
                 ResetNumberOfJumps();
             }
 
@@ -199,6 +245,35 @@ namespace Revive.Slime
                     || (_movement.CurrentState == CharacterStates.MovementStates.Falling)))
             {
                 JumpStop();
+            }
+        }
+
+        private void PlayLandingFeedbacks()
+        {
+            float now = Time.time;
+            if (now - _lastLandingFeedbackTime < 0.02f)
+            {
+                return;
+            }
+            _lastLandingFeedbackTime = now;
+
+            float fallHeight = Mathf.Max(0f, _airborneStartY - transform.position.y);
+            float impactSpeed = Mathf.Max(0f, -_minAirborneVelocityY);
+
+            bool hard = (fallHeight >= Mathf.Max(0f, HardLandingHeight))
+                        || (impactSpeed >= Mathf.Max(0f, HardLandingSpeed));
+
+            float min = Mathf.Min(LandingSpeedToIntensity.x, LandingSpeedToIntensity.y);
+            float max = Mathf.Max(LandingSpeedToIntensity.x, LandingSpeedToIntensity.y);
+            float intensity = max <= min ? 1f : Mathf.InverseLerp(min, max, impactSpeed);
+
+            if (hard)
+            {
+                HardLandingFeedbacks?.PlayFeedbacks(transform.position, intensity);
+            }
+            else
+            {
+                LandingFeedbacks?.PlayFeedbacks(transform.position, intensity);
             }
         }
 

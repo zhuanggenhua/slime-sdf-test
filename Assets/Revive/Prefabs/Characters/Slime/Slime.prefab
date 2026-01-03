@@ -511,10 +511,10 @@ MonoBehaviour:
   TouchTheGroundParticles: []
   TouchTheGroundSfx: []
   SlimePBF: {fileID: 0}
-  FootstepFeedbacks: {fileID: 173924116276134054}
-  StepTriggerMode: 1
-  StepIntervalSeconds: {x: 0.35, y: 0.5}
-  StepIntervalDistance: {x: 1, y: 1}
+  FootstepAudioSource: {fileID: 0}
+  FootstepClips: []
+  NextClipDelaySeconds: {x: 0, y: 0}
+  StopImmediatelyWhenNotWalking: 1
 --- !u!114 &1489706517887540671
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -547,6 +547,11 @@ MonoBehaviour:
   JumpStartFeedback: {fileID: 173924116276134054}
   JumpStopFeedback: {fileID: 0}
   JumpImpulse: 5
+  LandingFeedbacks: {fileID: 0}
+  HardLandingFeedbacks: {fileID: 0}
+  HardLandingHeight: 2.5
+  HardLandingSpeed: 3
+  LandingSpeedToIntensity: {x: 2, y: 12}
   _debugSceneLabel: 1
   _debugOnlyWhenPlaying: 1
   _debugWorldOffset: {x: 0, y: 2, z: 0}
@@ -640,7 +645,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d1dbb46c4fe7af244b5efa823decee93, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simToWorldScale: 0.15
+  simToWorldScale: 0.2
   viscosityStrength: 10
   concentration: 50
   baseSpeed: 1.5
@@ -704,15 +709,23 @@ MonoBehaviour:
   dropletSurfaceMat: {fileID: 2100000, guid: 867bea1fec47cae48a8ee180366037b1, type: 2}
   particleMat: {fileID: 2100000, guid: 8692fec3cd971cf4d8d8af04a82826ff, type: 2}
   bubblesMat: {fileID: 2100000, guid: d3ad7e9b0d79bbc4587fd6d464617cba, type: 2}
-  enableBubbles: 1
-  bubbleSpeed: 0.1
+  enableBubbles: 0
+  bubbleSpeed: 0.3
   trans: {fileID: 840677875511296776}
   _slimeVolume: {fileID: -8990146840772306320}
+  enableSpawnCoalesce: 0
+  spawnCoalesceInitialMainParticles: 32
+  spawnCoalesceParticlesPerBatch: 200
+  spawnCoalesceBatchInterval: 0.05
+  spawnCoalesceSpawnRadius: 3.5
   renderMode: 1
   showEyesOnSeparated: 0
   rearrangeInstancesIntervalFrames: 4
   nonControlledRaycastIntervalFrames: 6
   dropletMarchingCubesIntervalFrames: 1
+  mainMarchingCubesIntervalFrames: 1
+  mainMarchingCubesIntervalFramesWhenBacklog: 4
+  adaptiveMainSurfaceUpdateWhenBacklog: 1
   faceScale: 0.2
   faceScaleBaseParticles: 2048
   faceScaleCountFactorMin: 0.5
@@ -748,18 +761,15 @@ MonoBehaviour:
   dropletDynamicDragRadiusWorld: 1
   dropletEnableLiquidModeOnDynamicCollision: 0
   dropletLiquidSolverIterations: 1
-  dropletLiquidGravityY: -10
+  dropletLiquidGravityY: -5
   performanceProfilerEnabled: 1
+  adaptiveMainSimSubsteps: 1
+  mainSimSubstepsPerFixedUpdate: 2
+  mainSimSubstepsWhenBacklog: 1
   gridDebug: 0
   colliderCollectDebug: 0
   ccaDebug: 0
   recallAvoidanceGizmos: 1
-  dropletCenterDebugLog: 0
-  dropletCenterDebugLogIntervalFrames: 60
-  fallDeformDebugLog: 1
-  fallDeformDebugLogIntervalFrames: 1
-  fallDeformDebugStats: 1
-  fallDeformDebugStatsIntervalFrames: 1
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0

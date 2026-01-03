@@ -2,7 +2,7 @@ Shader "Hidden/Revive/SlimeStencilMask"
 {
     SubShader
     {
-        Tags { "RenderPipeline" = "UniversalRenderPipeline" "Queue" = "Transparent-1" "RenderType" = "Transparent" }
+        Tags { "RenderPipeline" = "UniversalRenderPipeline" "Queue" = "Transparent+2" "RenderType" = "Transparent" }
 
         Pass
         {

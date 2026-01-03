@@ -1,4 +1,4 @@
-using MoreMountains.Feedbacks;
+using System.Collections;
 using MoreMountains.TopDownEngine;
 using UnityEngine;
 
@@ -15,23 +15,14 @@ namespace Revive.Slime
         [Tooltip("Slime_PBF 组件，用于自动绑定 trans")]
         public Slime_PBF SlimePBF;
 
-        public enum StepTriggerModes
-        {
-            Time,
-            Distance,
-        }
-
         [Header("Footstep")]
-        public MMFeedbacks FootstepFeedbacks;
+        public AudioSource FootstepAudioSource;
+        public AudioClip[] FootstepClips;
+        public Vector2 NextClipDelaySeconds = Vector2.zero;
+        public bool StopImmediatelyWhenNotWalking = true;
 
-        public StepTriggerModes StepTriggerMode = StepTriggerModes.Distance;
-
-        public Vector2 StepIntervalSeconds = new Vector2(0.35f, 0.50f);
-        public Vector2 StepIntervalDistance = new Vector2(0.35f, 0.55f);
-
-        private float _footstepTimer;
-        private float _footstepDistance;
-        private float _nextFootstepInterval;
+        private Coroutine _footstepRoutine;
+        private int _lastFootstepClipIndex = -1;
 
         protected override void Initialization()
         {
@@ -53,7 +44,7 @@ namespace Revive.Slime
                 SlimePBF.trans = transform;
             }
 
-            ResetFootstepState();
+            EnsureFootstepAudioSource();
         }
 
         public override void ProcessAbility()
@@ -64,68 +55,168 @@ namespace Revive.Slime
                 || ((_condition.CurrentState != CharacterStates.CharacterConditions.Normal)
                     && (_condition.CurrentState != CharacterStates.CharacterConditions.ControlledMovement)))
             {
-                return;
-            }
-
-            if (FootstepFeedbacks == null)
-            {
+                StopFootstepLoop(true);
                 return;
             }
 
             if (_controller == null)
             {
+                StopFootstepLoop(true);
                 return;
             }
 
-            if (!_controller.Grounded
-                || (_movement == null)
-                || (_movement.CurrentState != CharacterStates.MovementStates.Walking)
-                || (_controller.CurrentMovement.magnitude <= IdleThreshold))
+            if (!ShouldPlayFootsteps())
             {
-                ResetFootstepState();
+                StopFootstepLoop(StopImmediatelyWhenNotWalking);
                 return;
             }
 
-            if (_nextFootstepInterval <= 0f)
+            StartFootstepLoopIfNeeded();
+        }
+
+        protected virtual void OnDisable()
+        {
+            StopFootstepLoop(true);
+        }
+
+        private bool ShouldPlayFootsteps()
+        {
+            return _controller.Grounded
+                   && (_movement != null)
+                   && (_movement.CurrentState == CharacterStates.MovementStates.Walking)
+                   && (_controller.CurrentMovement.magnitude > IdleThreshold)
+                   && (FootstepClips != null)
+                   && (FootstepClips.Length > 0);
+        }
+
+        private void EnsureFootstepAudioSource()
+        {
+            if (FootstepAudioSource != null)
             {
-                _nextFootstepInterval = GetNextFootstepInterval();
+                return;
             }
 
-            if (StepTriggerMode == StepTriggerModes.Time)
+            FootstepAudioSource = GetComponent<AudioSource>();
+            if (FootstepAudioSource == null)
             {
-                _footstepTimer += Time.deltaTime;
-                if (_footstepTimer >= _nextFootstepInterval)
+                FootstepAudioSource = gameObject.AddComponent<AudioSource>();
+            }
+        }
+
+        private void StartFootstepLoopIfNeeded()
+        {
+            EnsureFootstepAudioSource();
+
+            if (_footstepRoutine != null)
+            {
+                return;
+            }
+
+            if (!ShouldPlayFootsteps())
+            {
+                return;
+            }
+
+            _footstepRoutine = StartCoroutine(FootstepLoop());
+        }
+
+        private void StopFootstepLoop(bool stopAudioImmediately)
+        {
+            if (_footstepRoutine != null)
+            {
+                StopCoroutine(_footstepRoutine);
+                _footstepRoutine = null;
+            }
+
+            if (stopAudioImmediately && FootstepAudioSource != null)
+            {
+                FootstepAudioSource.Stop();
+            }
+        }
+
+        private IEnumerator FootstepLoop()
+        {
+            while (true)
+            {
+                if (!ShouldPlayFootsteps())
                 {
-                    _footstepTimer = 0f;
-                    _nextFootstepInterval = GetNextFootstepInterval();
-                    FootstepFeedbacks.PlayFeedbacks(transform.position);
+                    _footstepRoutine = null;
+                    yield break;
                 }
-            }
-            else
-            {
-                _footstepDistance += _controller.CurrentMovement.magnitude * Time.deltaTime;
-                if (_footstepDistance >= _nextFootstepInterval)
+
+                EnsureFootstepAudioSource();
+
+                int clipIndex = GetNextClipIndex();
+                AudioClip clip = FootstepClips[clipIndex];
+                _lastFootstepClipIndex = clipIndex;
+
+                if (clip == null)
                 {
-                    _footstepDistance = 0f;
-                    _nextFootstepInterval = GetNextFootstepInterval();
-                    FootstepFeedbacks.PlayFeedbacks(transform.position);
+                    yield return null;
+                    continue;
+                }
+
+                FootstepAudioSource.clip = clip;
+                FootstepAudioSource.Play();
+
+                while (FootstepAudioSource != null && FootstepAudioSource.isPlaying)
+                {
+                    if (!ShouldPlayFootsteps() && StopImmediatelyWhenNotWalking)
+                    {
+                        FootstepAudioSource.Stop();
+                        _footstepRoutine = null;
+                        yield break;
+                    }
+
+                    yield return null;
+                }
+
+                float delay = GetNextClipDelaySeconds();
+                if (delay > 0f)
+                {
+                    float t = 0f;
+                    while (t < delay)
+                    {
+                        if (!ShouldPlayFootsteps())
+                        {
+                            _footstepRoutine = null;
+                            yield break;
+                        }
+
+                        t += Time.deltaTime;
+                        yield return null;
+                    }
                 }
             }
         }
 
-        private void ResetFootstepState()
+        private int GetNextClipIndex()
         {
-            _footstepTimer = 0f;
-            _footstepDistance = 0f;
-            _nextFootstepInterval = 0f;
+            int length = FootstepClips.Length;
+            if (length <= 1)
+            {
+                return 0;
+            }
+
+            int index = Random.Range(0, length);
+            if (index == _lastFootstepClipIndex)
+            {
+                index = (index + 1) % length;
+            }
+
+            return index;
         }
 
-        private float GetNextFootstepInterval()
+        private float GetNextClipDelaySeconds()
         {
-            Vector2 range = StepTriggerMode == StepTriggerModes.Time ? StepIntervalSeconds : StepIntervalDistance;
-            float min = Mathf.Min(range.x, range.y);
-            float max = Mathf.Max(range.x, range.y);
-            return Random.Range(min, max);
+            float min = Mathf.Min(NextClipDelaySeconds.x, NextClipDelaySeconds.y);
+            float max = Mathf.Max(NextClipDelaySeconds.x, NextClipDelaySeconds.y);
+            if (max <= 0f)
+            {
+                return 0f;
+            }
+
+            return Random.Range(Mathf.Max(0f, min), max);
         }
     }
 }
