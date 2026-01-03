@@ -35,6 +35,33 @@ namespace Revive.GamePlay.Purification
         [Tooltip("完全绽放时的缩放")]
         public float BloomedScale = 1f;
         
+        [Header("蝴蝶特效设置")]
+        [Tooltip("蝴蝶特效配置资源（推荐）。如果设置，会使用配置资源的设置")]
+        public ButterflyEffectConfig ButterflyConfig;
+        
+        [Tooltip("是否使用本地覆盖配置（勾选后使用下方的本地设置，忽略配置资源）")]
+        public bool UseLocalOverride = false;
+        
+        [Header("本地覆盖配置（仅在UseLocalOverride时生效）")]
+        [Tooltip("蝴蝶预制体数组（随机选择一个生成）")]
+        public GameObject[] ButterflyPrefabs;
+        
+        [Tooltip("开花时生成蝴蝶的概率（0-1）")]
+        [Range(0f, 1f)]
+        public float ButterflySpawnChance = 0.3f;
+        
+        [Tooltip("蝴蝶生成位置偏移（相对于花朵）")]
+        public Vector3 ButterflySpawnOffset = new Vector3(0f, 1f, 0f);
+        
+        [Tooltip("蝴蝶生成位置随机半径")]
+        public float ButterflySpawnRandomRadius = 0.5f;
+        
+        [Tooltip("蝴蝶自动销毁时间（秒，0表示不自动销毁）")]
+        public float ButterflyLifetime = 0f;
+        
+        [Tooltip("花凋谢时是否移除蝴蝶")]
+        public bool RemoveButterflyOnWither = true;
+        
         [Header("监听者设置")]
         [Tooltip("监听者名称（用于调试）")]
         public string ListenerName = "Flower";
@@ -55,6 +82,7 @@ namespace Revive.GamePlay.Purification
         private bool _isRegistered = false;
         private Vector3 _initialScale;
         private Vector3 _initialPosition;
+        private GameObject _currentButterfly = null;
         
         /// <summary>
         /// 鲜花状态枚举
@@ -127,6 +155,9 @@ namespace Revive.GamePlay.Purification
             {
                 PurificationSystem.Instance.UnregisterListener(this);
             }
+            
+            // 清理蝴蝶
+            RemoveButterfly();
         }
         
         #region IPurificationListener 实现
@@ -210,7 +241,10 @@ namespace Revive.GamePlay.Purification
         {
             Debug.Log($"[{ListenerName}] 完全绽放！");
             
-            // 这里可以添加粒子效果、音效等
+            // 尝试生成蝴蝶特效
+            TrySpawnButterfly();
+            
+            // 这里可以添加其他粒子效果、音效等
             // 例如：播放绽放动画、发射花瓣粒子等
         }
         
@@ -221,7 +255,105 @@ namespace Revive.GamePlay.Purification
         {
             Debug.Log($"[{ListenerName}] 完全凋谢。");
             
+            // 移除蝴蝶（如果配置了）
+            bool shouldRemove = ShouldRemoveButterflyOnWither();
+            if (shouldRemove)
+            {
+                RemoveButterfly();
+            }
+            
             // 这里可以添加凋谢效果
+        }
+        
+        /// <summary>
+        /// 尝试生成蝴蝶特效
+        /// </summary>
+        private void TrySpawnButterfly()
+        {
+            // 检查是否已经有蝴蝶存在
+            if (_currentButterfly != null)
+            {
+                Debug.Log($"[{ListenerName}] 蝴蝶已存在，不重复生成");
+                return;
+            }
+            
+            // 获取有效配置
+            bool useConfig = !UseLocalOverride && ButterflyConfig != null && ButterflyConfig.IsValid();
+            
+            if (!useConfig)
+            {
+                // 使用本地配置
+                if (ButterflyPrefabs == null || ButterflyPrefabs.Length == 0)
+                {
+                    return;
+                }
+            }
+            
+            // 获取配置值
+            float spawnChance = useConfig ? ButterflyConfig.SpawnChance : ButterflySpawnChance;
+            GameObject[] prefabs = useConfig ? ButterflyConfig.ButterflyPrefabs : ButterflyPrefabs;
+            Vector3 spawnOffset = useConfig ? ButterflyConfig.SpawnOffset : ButterflySpawnOffset;
+            float randomRadius = useConfig ? ButterflyConfig.SpawnRandomRadius : ButterflySpawnRandomRadius;
+            float lifetime = useConfig ? ButterflyConfig.Lifetime : ButterflyLifetime;
+            
+            // 概率判定
+            float randomValue = Random.Range(0f, 1f);
+            if (randomValue > spawnChance)
+            {
+                Debug.Log($"[{ListenerName}] 蝴蝶生成概率判定失败: {randomValue:F2} > {spawnChance:F2}");
+                return;
+            }
+            
+            // 随机选择一个蝴蝶预制体
+            GameObject prefab = prefabs[Random.Range(0, prefabs.Length)];
+            if (prefab == null)
+            {
+                Debug.LogWarning($"[{ListenerName}] 选中的蝴蝶预制体为null");
+                return;
+            }
+            
+            // 计算生成位置（花朵位置 + 偏移 + 随机）
+            Vector3 spawnPosition = FlowerRoot.transform.position + spawnOffset;
+            if (randomRadius > 0f)
+            {
+                Vector2 randomCircle = Random.insideUnitCircle * randomRadius;
+                spawnPosition += new Vector3(randomCircle.x, 0f, randomCircle.y);
+            }
+            
+            // 生成蝴蝶
+            _currentButterfly = Instantiate(prefab, spawnPosition, Quaternion.identity);
+            _currentButterfly.name = $"{prefab.name}_From_{ListenerName}";
+            
+            string configSource = useConfig ? $"配置资源: {ButterflyConfig.name}" : "本地配置";
+            Debug.Log($"[{ListenerName}] 成功生成蝴蝶特效: {_currentButterfly.name} 在位置 {spawnPosition} (来源: {configSource})");
+            
+            // 如果设置了生命周期，自动销毁
+            if (lifetime > 0f)
+            {
+                Destroy(_currentButterfly, lifetime);
+            }
+        }
+        
+        /// <summary>
+        /// 判断凋谢时是否应该移除蝴蝶
+        /// </summary>
+        private bool ShouldRemoveButterflyOnWither()
+        {
+            bool useConfig = !UseLocalOverride && ButterflyConfig != null;
+            return useConfig ? ButterflyConfig.RemoveOnWither : RemoveButterflyOnWither;
+        }
+        
+        /// <summary>
+        /// 移除当前蝴蝶
+        /// </summary>
+        private void RemoveButterfly()
+        {
+            if (_currentButterfly != null)
+            {
+                Debug.Log($"[{ListenerName}] 移除蝴蝶: {_currentButterfly.name}");
+                Destroy(_currentButterfly);
+                _currentButterfly = null;
+            }
         }
         
         #endregion
@@ -290,6 +422,9 @@ namespace Revive.GamePlay.Purification
             {
                 FlowerRoot.transform.localScale = _initialScale * BloomedScale;
             }
+            
+            // 尝试生成蝴蝶
+            TrySpawnButterfly();
         }
         
         /// <summary>
@@ -302,6 +437,13 @@ namespace Revive.GamePlay.Purification
             if (FlowerRoot != null)
             {
                 FlowerRoot.transform.localScale = _initialScale * WitheredScale;
+            }
+            
+            // 移除蝴蝶
+            bool shouldRemove = ShouldRemoveButterflyOnWither();
+            if (shouldRemove)
+            {
+                RemoveButterfly();
             }
         }
         

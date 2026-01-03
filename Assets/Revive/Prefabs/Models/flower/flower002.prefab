@@ -71,5 +71,47 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 986430f7ac2523146845eef1bcbbd5ef,
+        type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -2975550945878489357}
   m_SourcePrefab: {fileID: 100100000, guid: 986430f7ac2523146845eef1bcbbd5ef, type: 3}
+--- !u!1 &7942435207883132264 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 986430f7ac2523146845eef1bcbbd5ef,
+    type: 3}
+  m_PrefabInstance: {fileID: 7131550530519904313}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &-2975550945878489357
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7942435207883132264}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 250e27526f57e21478de7aef6ae76d8a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  FlowerRoot: {fileID: 0}
+  AutoFindFlowerInChildren: 1
+  BloomThreshold: 0.5
+  WitherThreshold: 0.3
+  TransitionSpeed: 1
+  WitheredScale: 0.1
+  BloomedScale: 1
+  ButterflyConfig: {fileID: 0}
+  UseLocalOverride: 0
+  ButterflyPrefabs: []
+  ButterflySpawnChance: 0.3
+  ButterflySpawnOffset: {x: 0, y: 1, z: 0}
+  ButterflySpawnRandomRadius: 0.5
+  ButterflyLifetime: 0
+  RemoveButterflyOnWither: 1
+  ListenerName: Flower
+  AutoRegisterOnStart: 1
+  _currentPurificationLevel: 0
+  _currentState: 0
+  _growthProgress: 0
