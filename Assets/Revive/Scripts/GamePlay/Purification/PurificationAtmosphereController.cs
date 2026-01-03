@@ -1,3 +1,4 @@
+using System.Linq;
 using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
 using UnityEngine;
@@ -66,12 +67,30 @@ namespace Revive.GamePlay.Purification
         
         private void Start()
         {
+            if (PostProcessingVolume == null)
+            {
+                PostProcessingVolume = FindObjectsByType<Volume>(FindObjectsSortMode.None)
+                    .FirstOrDefault(v => 
+                        v.profile != null 
+                        && v.gameObject.activeSelf 
+                        && v.name.Contains("Dark")
+                        );
+            }
             
             if (PostProcessingVolume == null)
             {
                 Debug.LogWarning($"[{ListenerName}] 未找到Volume组件");
             }
-            
+
+            if (MainLight == null)
+            {
+                MainLight = FindObjectsByType<Light>(FindObjectsSortMode.None)
+                    .FirstOrDefault(l =>
+                        l.type == LightType.Directional
+                        && l.gameObject.activeSelf
+                    );
+            }
+
             if (MainLight == null)
             {
                 Debug.LogWarning($"[{ListenerName}] 未找到主光源组件");
