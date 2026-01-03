@@ -40,7 +40,7 @@ MonoBehaviour:
   active: 1
   postExposure:
     m_OverrideState: 1
-    m_Value: 2
+    m_Value: 0.3
   contrast:
     m_OverrideState: 1
     m_Value: -11.5
@@ -79,7 +79,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d7fd9488000d3734a9e00ee676215985, type: 3}
-  m_Name: DarkPoseProcessingProfile
+  m_Name: DarkPostProcessingProfile
   m_EditorClassIdentifier: 
   components:
   - {fileID: 4789737246618808588}
@@ -130,7 +130,7 @@ MonoBehaviour:
   active: 1
   temperature:
     m_OverrideState: 1
-    m_Value: 0
+    m_Value: 3.1
   tint:
     m_OverrideState: 0
     m_Value: 0
