@@ -16,22 +16,25 @@ namespace Revive.Environment
         public float CooldownSeconds = 1f;
 
         [ChineseHeader("生成范围")]
-        [ChineseLabel("圆环内半径(树中心)")]
-        [Min(0f), DefaultValue(1f)]
-        public float MinRingRadiusFromTree = 1f;
-
-        [ChineseLabel("圆环外半径(树中心)")]
-        [Min(0f), DefaultValue(4f)]
-        public float MaxRingRadiusFromTree = 4f;
-
-        [ChineseLabel("扇区角度(度)")]
-        [Range(0f, 360f), DefaultValue(60f)]
-        public float SectorAngleDegrees = 60f;
+        [ChineseLabel("生成触发器(盒子)")]
+        public BoxCollider[] SpawnBoxes;
 
         [ChineseHeader("落点")]
+        [ChineseLabel("地面射线层")]
+        public LayerMask GroundRaycastLayers = ~0;
+
+        [ChineseLabel("地面射线最大距离")]
+        [Min(0.01f), DefaultValue(200f)]
+        public float GroundRaycastMaxDistance = 200f;
+
         [ChineseLabel("生成高度")]
         [Min(0f), DefaultValue(3f)]
         public float SpawnHeightAboveGround = 3f;
+
+        [ChineseHeader("碰撞")]
+        [ChineseLabel("忽略与树的碰撞")]
+        [DefaultValue(true)]
+        public bool IgnoreCollisionWithTree = true;
 
         [ChineseHeader("反馈")]
         [ChineseLabel("掉落特效预制体(可选)")]
@@ -104,7 +107,7 @@ namespace Revive.Environment
             Vector3 treePos = transform.position;
             Vector3 playerPos = EstimatePlayerPosition(carryable, treePos);
 
-            if (TrySpawn(playerPos, treePos, carryable))
+            if (TrySpawn(playerPos))
             {
                 _nextAllowedTime = Time.time + Mathf.Max(0f, CooldownSeconds);
             }
@@ -127,49 +130,28 @@ namespace Revive.Environment
             return treePos;
         }
 
-        private bool TrySpawn(Vector3 playerPos, Vector3 treePos, SlimeCarryableObject carryable)
+        private bool TrySpawn(Vector3 playerPos)
         {
-            float maxRadius = Mathf.Max(0f, MaxRingRadiusFromTree);
-            float minRadius = Mathf.Clamp(MinRingRadiusFromTree, 0f, maxRadius);
-
-            Vector3 forward = playerPos - treePos;
-            forward.y = 0f;
-            if (forward.sqrMagnitude < 1e-4f)
+            var box = FindNearestSpawnBox(playerPos);
+            if (box == null)
             {
-                if (carryable != null && carryable.Rigidbody != null)
-                {
-                    Vector3 v = carryable.Rigidbody.linearVelocity;
-                    v.y = 0f;
-                    if (v.sqrMagnitude > 1e-4f)
-                    {
-                        forward = -v;
-                    }
-                }
+                return false;
             }
-            if (forward.sqrMagnitude < 1e-4f)
+
+            Vector3 spawnPos;
+            if (!TryGetSpawnPosOnGround(box, out spawnPos))
             {
-                forward = transform.forward;
-                forward.y = 0f;
+                spawnPos = RandomPointInBox(box);
             }
-            if (forward.sqrMagnitude < 1e-4f)
-            {
-                forward = Vector3.forward;
-            }
-            forward.Normalize();
-
-            float halfAngle = Mathf.Clamp(SectorAngleDegrees, 0f, 360f) * 0.5f;
-            float yaw = Random.Range(-halfAngle, halfAngle);
-            Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * forward;
-
-            float radius = maxRadius > 1e-4f ? Random.Range(minRadius, maxRadius) : 0f;
-            Vector3 basePos = treePos + dir * radius;
-
-            float height = Mathf.Max(0f, SpawnHeightAboveGround);
-            Vector3 spawnPos = new Vector3(basePos.x, treePos.y + height, basePos.z);
 
             var fruit = Instantiate(FruitPrefab, spawnPos, Quaternion.identity);
             if (fruit != null)
             {
+                if (IgnoreCollisionWithTree)
+                {
+                    ApplyIgnoreTreeCollisions(fruit);
+                }
+
                 var rb = fruit.GetComponent<Rigidbody>();
                 if (rb != null)
                 {
@@ -194,6 +176,163 @@ namespace Revive.Environment
             return true;
         }
 
+        private void ApplyIgnoreTreeCollisions(GameObject fruit)
+        {
+            if (fruit == null)
+            {
+                return;
+            }
+
+            var treeCols = GetComponentsInChildren<Collider>(true);
+            if (treeCols == null || treeCols.Length == 0)
+            {
+                return;
+            }
+
+            var fruitCols = fruit.GetComponentsInChildren<Collider>(true);
+            if (fruitCols == null || fruitCols.Length == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < fruitCols.Length; i++)
+            {
+                var fc = fruitCols[i];
+                if (fc == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < treeCols.Length; j++)
+                {
+                    var tc = treeCols[j];
+                    if (tc == null)
+                    {
+                        continue;
+                    }
+
+                    Physics.IgnoreCollision(fc, tc, true);
+                }
+            }
+        }
+
+        private bool TryGetSpawnPosOnGround(BoxCollider box, out Vector3 spawnPos)
+        {
+            spawnPos = default;
+
+            float height = Mathf.Max(0f, SpawnHeightAboveGround);
+            float rayDist = Mathf.Max(0.01f, GroundRaycastMaxDistance);
+            int mask = GroundRaycastLayers.value != 0 ? GroundRaycastLayers.value : ~0;
+
+            var treeCols = GetComponentsInChildren<Collider>(true);
+
+            Vector3 half = box.size * 0.5f;
+            Vector3 local = box.center + new Vector3(
+                Random.Range(-half.x, half.x),
+                0f,
+                Random.Range(-half.z, half.z)
+            );
+            Vector3 world = box.transform.TransformPoint(local);
+
+            Vector3 downOrigin = world + Vector3.up * rayDist;
+
+            RaycastHit[] hits = Physics.RaycastAll(downOrigin, Vector3.down, rayDist * 2f, mask, QueryTriggerInteraction.Ignore);
+            if (hits != null && hits.Length > 0)
+            {
+                bool found = false;
+                RaycastHit bestHit = default;
+                float bestDist = float.PositiveInfinity;
+
+                for (int i = 0; i < hits.Length; i++)
+                {
+                    var h = hits[i];
+                    var hc = h.collider;
+                    if (hc == null)
+                    {
+                        continue;
+                    }
+
+                    bool isSelf = false;
+                    if (treeCols != null)
+                    {
+                        for (int j = 0; j < treeCols.Length; j++)
+                        {
+                            if (treeCols[j] == hc)
+                            {
+                                isSelf = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (isSelf)
+                    {
+                        continue;
+                    }
+
+                    if (h.distance < bestDist)
+                    {
+                        bestDist = h.distance;
+                        bestHit = h;
+                        found = true;
+                    }
+                }
+
+                if (found)
+                {
+                    spawnPos = bestHit.point + Vector3.up * height;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private BoxCollider FindNearestSpawnBox(Vector3 playerPos)
+        {
+            if (SpawnBoxes == null || SpawnBoxes.Length == 0)
+            {
+                return null;
+            }
+
+            BoxCollider best = null;
+            float bestSqr = float.PositiveInfinity;
+
+            for (int i = 0; i < SpawnBoxes.Length; i++)
+            {
+                var box = SpawnBoxes[i];
+                if (box == null)
+                {
+                    continue;
+                }
+                if (!box.enabled || !box.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+
+                Vector3 p = box.ClosestPoint(playerPos);
+                float sqr = (playerPos - p).sqrMagnitude;
+                if (sqr < bestSqr)
+                {
+                    bestSqr = sqr;
+                    best = box;
+                }
+            }
+
+            return best;
+        }
+
+        private static Vector3 RandomPointInBox(BoxCollider box)
+        {
+            Vector3 half = box.size * 0.5f;
+            Vector3 local = box.center + new Vector3(
+                Random.Range(-half.x, half.x),
+                Random.Range(-half.y, half.y),
+                Random.Range(-half.z, half.z)
+            );
+            return box.transform.TransformPoint(local);
+        }
+
         private void OnDrawGizmos()
         {
             DrawSpawnRangeGizmos(false);
@@ -206,69 +345,35 @@ namespace Revive.Environment
 
         private void DrawSpawnRangeGizmos(bool selected)
         {
-            float maxRadius = Mathf.Max(0f, MaxRingRadiusFromTree);
-            float minRadius = Mathf.Clamp(MinRingRadiusFromTree, 0f, maxRadius);
-
-            Vector3 fwd = transform.forward;
-            fwd.y = 0f;
-            if (fwd.sqrMagnitude < 1e-4f)
+            if (SpawnBoxes == null || SpawnBoxes.Length == 0)
             {
-                fwd = Vector3.forward;
-            }
-            fwd.Normalize();
-
-            float height = Mathf.Max(0f, SpawnHeightAboveGround);
-            Vector3 treePos = transform.position;
-            Vector3 center = new Vector3(treePos.x, treePos.y + height, treePos.z);
-
-            float angle = Mathf.Clamp(SectorAngleDegrees, 0f, 360f);
-            float halfAngle = angle * 0.5f;
-            int steps = Mathf.Max(12, Mathf.CeilToInt(angle / 6f));
-            if (angle <= 1e-3f)
-            {
-                steps = 1;
+                return;
             }
 
             float alpha = selected ? 0.95f : 0.35f;
+            Color oldColor = Gizmos.color;
+            Matrix4x4 oldMatrix = Gizmos.matrix;
+
             Gizmos.color = new Color(1f, 0.9f, 0.2f, alpha);
 
-            if (selected)
+            for (int i = 0; i < SpawnBoxes.Length; i++)
             {
-                Gizmos.DrawSphere(center, 0.12f);
-                Gizmos.DrawLine(center, center + fwd * Mathf.Max(0.2f, maxRadius));
-            }
-
-            Vector3 innerPrev = Vector3.zero;
-            Vector3 outerPrev = Vector3.zero;
-
-            for (int i = 0; i <= steps; i++)
-            {
-                float t = steps > 0 ? (float)i / steps : 0f;
-                float yaw = Mathf.Lerp(-halfAngle, halfAngle, t);
-                Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * fwd;
-
-                Vector3 inner = center + dir * minRadius;
-                Vector3 outer = center + dir * maxRadius;
-
-                if (i > 0)
+                var box = SpawnBoxes[i];
+                if (box == null)
                 {
-                    Gizmos.DrawLine(innerPrev, inner);
-                    Gizmos.DrawLine(outerPrev, outer);
+                    continue;
+                }
+                if (!box.enabled || !box.gameObject.activeInHierarchy)
+                {
+                    continue;
                 }
 
-                if (i == 0 || i == steps)
-                {
-                    Gizmos.DrawLine(inner, outer);
-                    if (selected)
-                    {
-                        Gizmos.DrawSphere(inner, 0.08f);
-                        Gizmos.DrawSphere(outer, 0.08f);
-                    }
-                }
-
-                innerPrev = inner;
-                outerPrev = outer;
+                Gizmos.matrix = box.transform.localToWorldMatrix;
+                Gizmos.DrawWireCube(box.center, box.size);
             }
+
+            Gizmos.matrix = oldMatrix;
+            Gizmos.color = oldColor;
         }
     }
 }

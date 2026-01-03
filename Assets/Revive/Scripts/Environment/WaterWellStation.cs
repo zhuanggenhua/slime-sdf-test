@@ -16,8 +16,8 @@ namespace Revive.Environment
         #region 配置参数
 
         [ChineseHeader("水井标识")]
-        [ChineseLabel("水井ID")]
-        [Tooltip("用于生成唯一净化指示物名称，默认使用 GameObject 名称")]
+        [ChineseLabel("水井ID（自动生成）")]
+        [Tooltip("自动生成的唯一ID，用于净化指示物名称")]
         [SerializeField] private string wellId;
 
         [ChineseHeader("激活条件")]
@@ -29,6 +29,20 @@ namespace Revive.Environment
         [ChineseLabel("最大体积增加量")]
         [Min(0)]
         [SerializeField] private int maxVolumeIncrease = 300;
+
+        [ChineseLabel("升级时直接回满体积")]
+        [Tooltip("勾选后，升级时会生成足够的粒子直接恢复到满体积")]
+        [SerializeField] private bool restoreToFullOnUpgrade = true;
+
+        [ChineseLabel("每批生成粒子数")]
+        [Tooltip("分批生成时每批的粒子数量")]
+        [Min(50)]
+        [SerializeField] private int particlesPerBatch = 200;
+
+        [ChineseLabel("批次间隔(秒)")]
+        [Tooltip("分批生成时每批之间的时间间隔")]
+        [Min(0.05f)]
+        [SerializeField] private float batchInterval = 0.1f;
 
         [ChineseHeader("净化指示物")]
         [ChineseLabel("辐射半径(米)")]
@@ -45,7 +59,7 @@ namespace Revive.Environment
         [ChineseHeader("持续恢复")]
         [ChineseLabel("每秒恢复粒子数")]
         [Min(1)]
-        [SerializeField] private int restoreRatePerSecond = 100;
+        [SerializeField] private int restoreRatePerSecond = 50;
 
         [ChineseHeader("反馈效果")]
         [ChineseLabel("激活反馈")]
@@ -74,6 +88,10 @@ namespace Revive.Environment
         private bool _playerInTrigger;
         private float _restoreAccumulator;
 
+        // 分批生成状态
+        private int _pendingRestoreParticles;
+        private float _nextBatchTime;
+
         // 缓存的玩家组件引用
         private SlimeVolume _cachedSlimeVolume;
         private Slime_PBF _cachedSlimePBF;
@@ -84,9 +102,10 @@ namespace Revive.Environment
 
         private void Awake()
         {
+            // 自动生成唯一 WellId（基于 GameObject InstanceID）
             if (string.IsNullOrEmpty(wellId))
             {
-                wellId = gameObject.name;
+                wellId = $"{gameObject.name}_{gameObject.GetInstanceID()}";
             }
         }
 
@@ -110,7 +129,13 @@ namespace Revive.Environment
 
         private void Update()
         {
-            if (_playerInTrigger && _currentState != WellState.Inactive)
+            // 处理分批生成
+            if (_pendingRestoreParticles > 0 && _cachedSlimePBF != null)
+            {
+                ProcessBatchRestore();
+            }
+            // 分批生成完成后才进行持续恢复
+            else if (_playerInTrigger && _currentState == WellState.RewardClaimed)
             {
                 ProcessVolumeRestore();
             }
@@ -224,15 +249,49 @@ namespace Revive.Environment
                 Debug.Log($"[WaterWellStation] {wellId} 最大体积增加 {maxVolumeIncrease}，当前上限: {_cachedSlimeVolume.maxVolume}");
             }
 
-            // 2. 创建净化指示物（基于 WellId 生成唯一名称，避免重复）
+            // 2. 如果开启直接回满，计算需要恢复的粒子数并启动分批生成
+            if (restoreToFullOnUpgrade && _cachedSlimeVolume != null && _cachedSlimePBF != null)
+            {
+                int needToRestore = GetMaxRestoreAmountIncludingSeparatedEmitted();
+                if (needToRestore > 0)
+                {
+                    _pendingRestoreParticles = needToRestore;
+                    _nextBatchTime = Time.time; // 立即开始第一批
+                    Debug.Log($"[WaterWellStation] {wellId} 启动分批恢复，总计 {needToRestore} 粒子");
+                }
+            }
+
+            // 3. 创建净化指示物（基于 WellId 生成唯一名称，避免重复）
             CreatePurificationIndicator();
 
-            // 3. 播放奖励反馈
+            // 4. 播放奖励反馈
             rewardClaimFeedbacks?.PlayFeedbacks();
 
-            // 4. 状态转换
+            // 5. 状态转换
             _currentState = WellState.RewardClaimed;
             Debug.Log($"[WaterWellStation] {wellId} 奖励已领取！");
+        }
+
+        private void ProcessBatchRestore()
+        {
+            if (Time.time < _nextBatchTime)
+                return;
+
+            int thisBatch = Mathf.Min(_pendingRestoreParticles, particlesPerBatch);
+            if (thisBatch <= 0)
+            {
+                _pendingRestoreParticles = 0;
+                return;
+            }
+
+            int restored = _cachedSlimePBF.RestoreMainBodyParticles(thisBatch);
+            _pendingRestoreParticles -= restored;
+            _nextBatchTime = Time.time + batchInterval;
+
+            if (_pendingRestoreParticles <= 0)
+            {
+                Debug.Log($"[WaterWellStation] {wellId} 分批恢复完成");
+            }
         }
 
         private void CreatePurificationIndicator()
@@ -270,8 +329,8 @@ namespace Revive.Environment
             if (_cachedSlimeVolume == null || _cachedSlimePBF == null)
                 return;
 
-            // 检查是否需要恢复
-            if (!_cachedSlimeVolume.CanAbsorb())
+            int maxRestore = GetMaxRestoreAmountIncludingSeparatedEmitted();
+            if (maxRestore <= 0)
                 return;
 
             // 累积恢复量
@@ -281,9 +340,8 @@ namespace Revive.Environment
             int toRestore = Mathf.FloorToInt(_restoreAccumulator);
             if (toRestore > 0)
             {
-                // 限制不超过可吸收量
-                int maxAbsorb = _cachedSlimeVolume.GetMaxAbsorbAmount();
-                toRestore = Mathf.Min(toRestore, maxAbsorb);
+                // 限制不超过“真实可恢复量”（包含 Separated/Emitted 占用）
+                toRestore = Mathf.Min(toRestore, maxRestore);
 
                 if (toRestore > 0)
                 {
@@ -295,6 +353,21 @@ namespace Revive.Environment
                     _restoreAccumulator = 0f;
                 }
             }
+        }
+
+        private int GetMaxRestoreAmountIncludingSeparatedEmitted()
+        {
+            if (_cachedSlimeVolume == null || _cachedSlimePBF == null)
+                return 0;
+
+            _cachedSlimePBF.GetVolumeParticleCounts(out int mainBody, out int separated, out int emitted);
+
+            // SlimeVolume.currentVolume = mainBody + storedVolume
+            // => storedVolume = currentVolume - mainBody
+            int storedVolume = Mathf.Max(0, _cachedSlimeVolume.CurrentVolume - mainBody);
+
+            int occupied = mainBody + separated + emitted + storedVolume;
+            return Mathf.Max(0, _cachedSlimeVolume.MaxVolume - occupied);
         }
 
         #endregion

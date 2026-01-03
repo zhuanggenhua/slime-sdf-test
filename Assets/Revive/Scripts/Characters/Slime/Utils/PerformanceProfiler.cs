@@ -452,7 +452,9 @@ namespace Revive.Slime
             for (int i = 0; i < _counterKeys.Count; i++)
             {
                 string counterName = _counterKeys[i];
-                if (_counters.TryGetValue(counterName, out var data) && data.Current != 0)
+                bool alwaysPrintForWatering = isSlowFrame && counterName.StartsWith("Watering_", StringComparison.Ordinal);
+                bool alwaysPrintForSlime = isSlowFrame && counterName.StartsWith("Slime_", StringComparison.Ordinal);
+                if (_counters.TryGetValue(counterName, out var data) && (data.Current != 0 || alwaysPrintForWatering || alwaysPrintForSlime))
                 {
                     if (!hasAnyCounter)
                     {

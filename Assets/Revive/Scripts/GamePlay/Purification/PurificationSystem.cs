@@ -495,8 +495,8 @@ namespace Revive.GamePlay.Purification
                 Gizmos.color = IndicatorGizmosColor;
                 Gizmos.DrawSphere(indicator.Position, 0.3f);
                 
-                // 显示指示物名称、强度和辐射范围
-                string label = $"{indicator.Name}\n强度: {indicator.ContributionValue:F1}\n范围: {indicator.RadiationRadius:F1}m";
+                // 显示指示物名称、类型、强度和辐射范围
+                string label = $"{indicator.Name}\n类型: {indicator.IndicatorType}\n强度: {indicator.ContributionValue:F1}\n范围: {indicator.RadiationRadius:F1}m";
                 UnityEditor.Handles.Label(indicator.Position + Vector3.up * 0.5f, label);
             }
             

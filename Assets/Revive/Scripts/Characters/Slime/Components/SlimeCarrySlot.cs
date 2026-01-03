@@ -98,6 +98,9 @@ namespace Revive.Slime
         private Vector3 _heldAnchorSmoothedWorld;
         private bool _heldAnchorSmoothedWorldValid;
 
+        private Vector3 _heldCentroidOffsetSmoothedWorld;
+        private bool _heldCentroidOffsetSmoothedWorldValid;
+
         private Vector3 _prevFixedAnchorWorld;
         private bool _prevFixedAnchorWorldValid;
 
@@ -135,6 +138,7 @@ namespace Revive.Slime
                 _heldMoveBlockedThisFrame = false;
                 _heldMoveBlockedSeconds = 0f;
                 _heldAnchorSmoothedWorldValid = false;
+                _heldCentroidOffsetSmoothedWorldValid = false;
                 _prevFixedAnchorWorldValid = false;
                 _lastFixedAnchorWorldValid = false;
 
@@ -152,7 +156,7 @@ namespace Revive.Slime
                 ApplyCarrySpecIfNeeded();
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                int rbInterval = Input.GetKey(KeyCode.F8) ? 1 : 20;
+                int rbInterval = 1;
                 if (Time.frameCount - _dbgCarryLogFrame >= rbInterval)
                 {
                     _dbgCarryLogFrame = Time.frameCount;
@@ -220,7 +224,7 @@ namespace Revive.Slime
             ApplyCarrySpecIfNeeded();
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            int interval = 20;
+            int interval = 1;
             if (Time.frameCount - _dbgCarryLogFrame >= interval)
             {
                 _dbgCarryLogFrame = Time.frameCount;
@@ -395,13 +399,18 @@ namespace Revive.Slime
             {
                 _heldAnchorSmoothedWorld = raw;
                 _heldAnchorSmoothedWorldValid = true;
+                _heldCentroidOffsetSmoothedWorldValid = false;
                 return raw;
             }
 
-            if (!_heldAnchorSmoothedWorldValid)
+            Vector3 baseAnchor = CenterAnchor != null ? CenterAnchor.position : transform.position;
+            Vector3 baseHold = baseAnchor + HeldAnchorOffset;
+            Vector3 rawOffset = raw - baseHold;
+
+            if (!_heldCentroidOffsetSmoothedWorldValid)
             {
-                _heldAnchorSmoothedWorld = raw;
-                _heldAnchorSmoothedWorldValid = true;
+                _heldCentroidOffsetSmoothedWorld = rawOffset;
+                _heldCentroidOffsetSmoothedWorldValid = true;
                 return raw;
             }
 
@@ -409,19 +418,20 @@ namespace Revive.Slime
             float dt = Time.inFixedTimeStep ? Time.fixedDeltaTime : Time.deltaTime;
             float k = 60f;
             float alpha = dt > 1e-6f ? (1f - Mathf.Exp(-k * dt)) : 1f;
-            Vector3 next = Vector3.Lerp(_heldAnchorSmoothedWorld, raw, alpha);
-            Vector3 lag = raw - next;
+            Vector3 next = Vector3.Lerp(_heldCentroidOffsetSmoothedWorld, rawOffset, alpha);
+            Vector3 lag = rawOffset - next;
             float maxLagSqr = maxLagWorld * maxLagWorld;
             if (lag.sqrMagnitude > maxLagSqr)
             {
                 float lagMag = lag.magnitude;
                 if (lagMag > 1e-6f)
-                    next = raw - lag * (maxLagWorld / lagMag);
+                    next = rawOffset - lag * (maxLagWorld / lagMag);
                 else
-                    next = raw;
+                    next = rawOffset;
             }
-            _heldAnchorSmoothedWorld = next;
-            return next;
+
+            _heldCentroidOffsetSmoothedWorld = next;
+            return baseHold + next;
         }
 
         private Vector3 GetHoldAnchorWorldPositionStable()
@@ -585,6 +595,7 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
             _heldAnchorSmoothedWorldValid = false;
+            _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
 
             ApplyCarrySpecIfNeeded();
@@ -679,7 +690,7 @@ namespace Revive.Slime
 
             _heldRigidbody.isKinematic = true;
             _heldRigidbody.useGravity = false;
-            _heldRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+            _heldRigidbody.interpolation = RigidbodyInterpolation.None;
 
             _heldColliders = carryable.Colliders;
             CacheAndSetHeldColliderTriggerState(true);
@@ -695,6 +706,7 @@ namespace Revive.Slime
             CacheAndDisableHeldShadowState();
 
             _heldAnchorSmoothedWorldValid = false;
+            _heldCentroidOffsetSmoothedWorldValid = false;
             Vector3 targetPos = GetHoldAnchorWorldPositionStable();
             float trans = Mathf.Max(0f, PickupTransitionSeconds);
             if (trans <= 0f)
@@ -740,6 +752,7 @@ namespace Revive.Slime
                 _heldIndexIgnored = false;
                 _heldInterpolationCached = false;
                 _heldAnchorSmoothedWorldValid = false;
+                _heldCentroidOffsetSmoothedWorldValid = false;
                 _lastFixedAnchorWorldValid = false;
                 _heldRenderers = null;
                 _heldRendererReceiveShadows = null;
@@ -825,6 +838,7 @@ namespace Revive.Slime
             _heldIndexIgnored = false;
             _heldInterpolationCached = false;
             _heldAnchorSmoothedWorldValid = false;
+            _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
@@ -1037,6 +1051,7 @@ namespace Revive.Slime
             _heldMoveBlockedSeconds = 0f;
             _heldInterpolationCached = false;
             _heldAnchorSmoothedWorldValid = false;
+            _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
 
             ApplyCarrySpecIfNeeded();
@@ -1347,6 +1362,7 @@ namespace Revive.Slime
             _pickupInTransition = false;
             _heldInterpolationCached = false;
             _heldAnchorSmoothedWorldValid = false;
+            _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
         }
 

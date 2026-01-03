@@ -1151,11 +1151,6 @@ PrefabInstance:
       propertyPath: m_Name
       value: Vine
       objectReference: {fileID: 0}
-    - target: {fileID: 4744595163473563994, guid: f6c7158324929c94ba94753b0d1e8fd0,
-        type: 3}
-      propertyPath: m_Layer
-      value: 24
-      objectReference: {fileID: 0}
     - target: {fileID: 5289661096213482809, guid: f6c7158324929c94ba94753b0d1e8fd0,
         type: 3}
       propertyPath: m_LocalPosition.x
@@ -3408,10 +3403,7 @@ MonoBehaviour:
   FruitPrefab: {fileID: 343260996863026887, guid: 96c6abf22258c5840a09a6b30afa9786,
     type: 3}
   CooldownSeconds: 1
-  MinRingRadiusFromTree: 1
-  MaxRingRadiusFromTree: 4.68
-  SectorAngleDegrees: 60
-  SpawnHeightAboveGround: 3
+  SpawnBoxes: []
   DropVfxPrefab: {fileID: 0}
   DropFeedbacks: {fileID: 0}
 --- !u!1 &1980842747
@@ -3689,6 +3681,14 @@ MonoBehaviour:
   TransitionSpeed: 1
   WitheredScale: 0.1
   BloomedScale: 1
+  ButterflyConfig: {fileID: 0}
+  UseLocalOverride: 0
+  ButterflyPrefabs: []
+  ButterflySpawnChance: 0.3
+  ButterflySpawnOffset: {x: 0, y: 1, z: 0}
+  ButterflySpawnRandomRadius: 0.5
+  ButterflyLifetime: 0
+  RemoveButterflyOnWither: 1
   ListenerName: Flower
   AutoRegisterOnStart: 1
   _currentPurificationLevel: 0
@@ -3913,6 +3913,74 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 78faa285cd3657649b5451ef1b4ed5ed, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!1001 &1430656771594573242
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 7805798844718032023, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_Name
+      value: "\u6C34\u4E95"
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.55
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -3.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734864600689780875, guid: 470270dbae325894fade7c438df8df6f,
+        type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 470270dbae325894fade7c438df8df6f, type: 3}
 --- !u!1001 &4610488850710711977
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -4287,3 +4355,4 @@ SceneRoots:
   - {fileID: 524629805}
   - {fileID: 1912751687}
   - {fileID: 2021639984}
+  - {fileID: 1430656771594573242}

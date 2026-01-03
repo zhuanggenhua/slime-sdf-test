@@ -218,9 +218,11 @@ MonoBehaviour:
           ButtonText: Automatic Shaker Setup
         Owner: {fileID: 173924116276134054}
         DebugActive: 0
-        Sfx: {fileID: 8300000, guid: 9b17e8b4e6b80d24ead0f70bdc10b626, type: 3}
+        Sfx: {fileID: 0}
         RandomSfx:
-        - {fileID: 8300000, guid: 0b55e24b1974e0d46bcd7df750bf5308, type: 3}
+        - {fileID: 8300000, guid: f7d17df6340791b40827777abcf28842, type: 3}
+        - {fileID: 8300000, guid: 9b17e8b4e6b80d24ead0f70bdc10b626, type: 3}
+        - {fileID: 8300000, guid: 151b2cf0faad3634188b0fbfebac4109, type: 3}
         TestPlayButton:
           ButtonText: Debug Play Sound
         TestStopButton:
@@ -337,7 +339,7 @@ CharacterController:
   m_Enabled: 1
   serializedVersion: 3
   m_Height: 0.6
-  m_Radius: 0.15
+  m_Radius: 0.3
   m_SlopeLimit: 45
   m_StepOffset: 0.1
   m_SkinWidth: 0.02
@@ -512,7 +514,7 @@ MonoBehaviour:
   FootstepFeedbacks: {fileID: 173924116276134054}
   StepTriggerMode: 1
   StepIntervalSeconds: {x: 0.35, y: 0.5}
-  StepIntervalDistance: {x: 0.35, y: 0.55}
+  StepIntervalDistance: {x: 1, y: 1}
 --- !u!114 &1489706517887540671
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -548,7 +550,6 @@ MonoBehaviour:
   _debugSceneLabel: 1
   _debugOnlyWhenPlaying: 1
   _debugWorldOffset: {x: 0, y: 2, z: 0}
-  _debugLogIntervalFrames: 15
 --- !u!114 &8512902080114408108
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -645,7 +646,7 @@ MonoBehaviour:
   baseSpeed: 1.5
   maxDeformDistXZ: 1.5
   maxDeformDistY: 3
-  enableCollisionDeformLimit: 0
+  enableCollisionDeformLimit: 1
   enableVelocityConsistency: 1
   gravity: -5
   threshold: 2
@@ -755,6 +756,10 @@ MonoBehaviour:
   recallAvoidanceGizmos: 1
   dropletCenterDebugLog: 0
   dropletCenterDebugLogIntervalFrames: 60
+  fallDeformDebugLog: 1
+  fallDeformDebugLogIntervalFrames: 1
+  fallDeformDebugStats: 1
+  fallDeformDebugStatsIntervalFrames: 1
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0

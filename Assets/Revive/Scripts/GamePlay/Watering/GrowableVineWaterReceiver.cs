@@ -5,7 +5,11 @@ using UnityEngine;
 
 namespace Revive.Environment.Watering
 {
-    public class GrowableVineWaterReceiver : PbfWaterReceiver, IPbfWaterTarget
+    /// <summary>
+    /// 藤蔓浇水接收器 - 节点式生长
+    /// 每蓄满一次水量 → 推进一个生长节点 → 生成净化指示物
+    /// </summary>
+    public class GrowableVineWaterReceiver : PbfChargeWaterReceiver
     {
         [ChineseHeader("藤蔓")]
         [ChineseLabel("目标藤蔓")]
@@ -18,48 +22,26 @@ namespace Revive.Environment.Watering
         [ChineseLabel("网格生成器(可空)")]
         [SerializeField] private ProceduralVineGenerator vineGenerator;
 
-        [ChineseHeader("浇水=净化")]
-        [ChineseLabel("净化100%所需水量")]
-        [DefaultValue(25f)]
-        [SerializeField] private float waterRequiredToFullyPurify = 25f;
-
-        [ChineseLabel("累计水量(运行时)")]
-        [SerializeField] private float accumulatedWater;
-
-        [ChineseLabel("净化指示物名称")]
-        [DefaultValue("VineWater")]
-        [SerializeField] private string purificationIndicatorName = "VineWater";
+        [ChineseHeader("生长过渡")]
+        [ChineseLabel("节点生长过渡时间(秒)")]
+        [SerializeField, Min(0f), DefaultValue(1f)]
+        private float nodeGrowthTransitionSeconds = 1f;
 
         private bool _meshGenerated;
+        private Coroutine _growthTransitionRoutine;
+        private bool _completed;
 
-        private PurificationIndicator _indicator;
-
-        public override bool WantsWater
-        {
-            get
-            {
-                if (waterRequiredToFullyPurify <= 0f)
-                    return false;
-
-                return accumulatedWater < waterRequiredToFullyPurify;
-            }
-        }
+        public override bool WantsWater => !_completed;
 
         protected override void Awake()
         {
             base.Awake();
             ResolveReferencesIfNeeded();
-        }
 
-        protected override void OnDisable()
-        {
-            ClearIndicator();
-            base.OnDisable();
-        }
-
-        private void OnDestroy()
-        {
-            ClearIndicator();
+            if (targetVine != null && targetVine.GetGrowthProgress() >= 1f)
+            {
+                _completed = true;
+            }
         }
 
         protected override void OnValidate()
@@ -68,7 +50,7 @@ namespace Revive.Environment.Watering
             ResolveReferencesIfNeeded();
         }
 
-        public void ReceiveWater(WaterInput input)
+        protected override void OnChargeUpdated(WaterInput input)
         {
             ResolveReferencesIfNeeded();
 
@@ -76,21 +58,77 @@ namespace Revive.Environment.Watering
             {
                 EnsureMeshGenerated();
             }
+        }
 
-            accumulatedWater += Mathf.Max(0f, input.Amount);
-
-            float required = Mathf.Max(0.0001f, waterRequiredToFullyPurify);
-            float normalized = Mathf.Clamp01(accumulatedWater / required);
-
-            var system = GetPurificationSystemChecked();
-            if (system == null)
+        protected override void OnChargeCompleted(WaterInput input)
+        {
+            if (_completed)
                 return;
 
-            float contribution = normalized * system.TargetPurificationValue;
-            Vector3 pos = GetIndicatorPositionWorld(input.PositionWorld);
-            EnsurePurificationIndicator(ref _indicator, purificationIndicatorName, pos, contribution, PurificationIndicatorType);
+            _completed = true;
 
-            system.NotifyAllListeners();
+            // 推进藤蔓生长进度
+            if (targetVine != null)
+            {
+                SmoothSetGrowthProgress(1f);
+            }
+
+            // 生成净化指示物
+            var system = GetPurificationSystemChecked();
+            if (system != null)
+            {
+                string indicatorName = $"{gameObject.name}_Vine_{gameObject.GetInstanceID()}";
+                Vector3 pos = GetIndicatorPositionWorld(input.PositionWorld);
+                system.AddIndicator(indicatorName, pos, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
+            }
+        }
+
+        private void SmoothSetGrowthProgress(float targetProgress)
+        {
+            if (targetVine == null)
+                return;
+
+            float duration = Mathf.Max(0f, nodeGrowthTransitionSeconds);
+            if (duration <= 0f)
+            {
+                targetVine.SetGrowthProgress(targetProgress);
+                return;
+            }
+
+            if (_growthTransitionRoutine != null)
+            {
+                StopCoroutine(_growthTransitionRoutine);
+                _growthTransitionRoutine = null;
+            }
+
+            float from = targetVine.GetGrowthProgress();
+            _growthTransitionRoutine = StartCoroutine(GrowthTransitionRoutine(from, targetProgress, duration));
+        }
+
+        private System.Collections.IEnumerator GrowthTransitionRoutine(float from, float to, float duration)
+        {
+            float t = 0f;
+            while (t < duration)
+            {
+                if (targetVine == null)
+                {
+                    _growthTransitionRoutine = null;
+                    yield break;
+                }
+
+                t += Time.deltaTime;
+                float u = Mathf.Clamp01(t / duration);
+                float su = Mathf.SmoothStep(0f, 1f, u);
+                targetVine.SetGrowthProgress(Mathf.Lerp(from, to, su));
+                yield return null;
+            }
+
+            if (targetVine != null)
+            {
+                targetVine.SetGrowthProgress(to);
+            }
+
+            _growthTransitionRoutine = null;
         }
 
         private void ResolveReferencesIfNeeded()
@@ -111,11 +149,6 @@ namespace Revive.Environment.Watering
                 return transform.position;
 
             return fallback;
-        }
-
-        private void ClearIndicator()
-        {
-            RemovePurificationIndicator(ref _indicator);
         }
 
         private void EnsureMeshGenerated()

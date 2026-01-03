@@ -15,7 +15,15 @@
                 "RenderType" = "Transparent"
             }
             ZWrite Off
-            ZTest On
+            ZTest LEqual
+            Stencil
+            {
+                Ref 1
+                Comp Equal
+                Pass Keep
+                Fail Keep
+                ZFail Keep
+            }
             Blend SrcAlpha OneMinusSrcAlpha
             
             HLSLPROGRAM

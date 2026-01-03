@@ -47,7 +47,7 @@ BoxCollider:
     serializedVersion: 2
     m_Bits: 0
   m_LayerOverridePriority: 0
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
@@ -68,7 +68,7 @@ GameObject:
   - component: {fileID: 3472502132945677538}
   - component: {fileID: 6629463464707864298}
   - component: {fileID: 7783368421329890374}
-  m_Layer: 0
+  m_Layer: 24
   m_Name: Vine
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -222,6 +222,7 @@ MonoBehaviour:
   SurfaceFriction: 0.3
   ListenerName: Vine
   AutoRegisterOnStart: 1
+  EnablePurificationGrowth: 0
   _currentPurificationLevel: 0
   _currentState: 0
   _growthProgress: 0
@@ -280,10 +281,15 @@ MonoBehaviour:
   consumeEmitted: 1
   consumeSeparated: 1
   consumeDroplets: 1
+  purificationIndicatorType: Water
+  purificationContributionValue: 10
+  purificationRadiationRadius: 8
+  waterTickFeedbacks: {fileID: 0}
+  waterTickCooldownSeconds: 0.12
+  waterCompleteFeedbacks: {fileID: 0}
+  charge: 0
+  chargeRequired: 25
   targetVine: {fileID: 3472502132945677538}
   generateMeshOnFirstWater: 1
   vineGenerator: {fileID: 6629463464707864298}
-  waterRequiredToFullyPurify: 25
-  accumulatedWater: 0
-  purificationIndicatorType: Water
-  purificationIndicatorName: VineWater
+  nodeGrowthTransitionSeconds: 1
