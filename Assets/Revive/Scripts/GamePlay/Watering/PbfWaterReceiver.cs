@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Revive.GamePlay.Purification;
 using Revive.Slime;
 using UnityEngine;
 
@@ -62,6 +63,15 @@ namespace Revive.Environment.Watering
         [DefaultValue(true)]
         [SerializeField] private bool consumeDroplets = true;
 
+        [ChineseHeader("净化")]
+        [ChineseLabel("指示物类型")]
+        [DefaultValue("Water")]
+        [SerializeField] private string purificationIndicatorType = "Water";
+
+        [ChineseLabel("事件贡献值")]
+        [DefaultValue(10f)]
+        [SerializeField] private float purificationContributionValue = 10f;
+
         private bool _warnedMissingTriggerCollider;
         private bool _warnedTriggerColliderNotTrigger;
         private bool _warnedMissingTarget;
@@ -78,6 +88,9 @@ namespace Revive.Environment.Watering
         public bool ConsumeEmitted => consumeEmitted;
         public bool ConsumeSeparated => consumeSeparated;
         public bool ConsumeDroplets => consumeDroplets;
+
+        protected string PurificationIndicatorType => purificationIndicatorType;
+        protected float PurificationContributionValue => purificationContributionValue;
 
         public virtual bool WantsWater => true;
 
@@ -131,6 +144,8 @@ namespace Revive.Environment.Watering
 
             ValidateTriggerCollider();
             ResolveReferences();
+
+            AssertPurificationSystemPresent();
         }
 
         protected virtual void OnDisable()
@@ -252,6 +267,61 @@ namespace Revive.Environment.Watering
             }
 
             _warnedTriggerColliderNotTrigger = false;
+        }
+
+        private void AssertPurificationSystemPresent()
+        {
+            if (!Application.isPlaying)
+                return;
+
+            Debug.Assert(
+                FindFirstObjectByType<PurificationSystem>() != null,
+                $"[{nameof(PbfWaterReceiver)}] 场景中未放置 {nameof(PurificationSystem)}，水体净化功能将无法工作。对象：{name}",
+                this);
+        }
+
+        protected PurificationSystem GetPurificationSystemChecked()
+        {
+            PurificationSystem system = PurificationSystem.Instance;
+            Debug.Assert(system != null, $"[{nameof(PbfWaterReceiver)}] {nameof(PurificationSystem)}.Instance 为 null。对象：{name}", this);
+            return system;
+        }
+
+        protected PurificationIndicator EnsurePurificationIndicator(ref PurificationIndicator indicator, string indicatorName, Vector3 positionWorld, float contributionValue, string indicatorType)
+        {
+            PurificationSystem system = GetPurificationSystemChecked();
+            if (system == null)
+                return null;
+
+            if (indicator == null)
+            {
+                indicator = system.AddIndicator(indicatorName, positionWorld, contributionValue, indicatorType);
+                return indicator;
+            }
+
+            indicator.Name = indicatorName;
+            indicator.Position = positionWorld;
+            indicator.ContributionValue = contributionValue;
+            indicator.IndicatorType = indicatorType;
+            return indicator;
+        }
+
+        protected bool RemovePurificationIndicator(ref PurificationIndicator indicator)
+        {
+            if (indicator == null)
+                return false;
+
+            PurificationSystem system = GetPurificationSystemChecked();
+            if (system == null)
+            {
+                indicator = null;
+                return false;
+            }
+
+            bool removed = system.RemoveIndicator(indicator);
+            system.NotifyAllListeners();
+            indicator = null;
+            return removed;
         }
 
         private void OnDrawGizmosSelected()

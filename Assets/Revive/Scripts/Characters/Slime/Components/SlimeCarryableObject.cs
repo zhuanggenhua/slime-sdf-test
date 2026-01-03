@@ -85,6 +85,14 @@ namespace Revive.Slime
             _nextAllowedThrownImpactTime = Time.time;
         }
 
+        public void ArmImpactWindow(float startDelaySeconds = 0f)
+        {
+            LastThrowerTransform = null;
+            LastThrowerPositionWorld = Vector3.zero;
+            LastThrowTime = Time.time;
+            _nextAllowedThrownImpactTime = Time.time + Mathf.Max(0f, startDelaySeconds);
+        }
+
         private void OnEnable()
         {
             if (Colliders == null || Colliders.Length == 0)

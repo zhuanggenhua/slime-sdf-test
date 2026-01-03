@@ -1,4 +1,6 @@
 using MoreMountains.Feedbacks;
+using Revive.GamePlay.Purification;
+using Revive.Slime;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -40,6 +42,10 @@ namespace Revive.Environment.Watering
 
         [ChineseLabel("阶段提升反馈")]
         [SerializeField] private MMFeedbacks stageUpFeedbacks;
+
+        [ChineseLabel("指示物名称前缀")]
+        [DefaultValue("TreeStage")]
+        [SerializeField] private string purificationIndicatorNamePrefix = "TreeStage";
 
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
@@ -83,6 +89,11 @@ namespace Revive.Environment.Watering
             {
                 charge -= chargePerStage;
                 stage++;
+
+                string indicatorName = $"{gameObject.name}_{purificationIndicatorNamePrefix}_{stage}";
+                Vector3 pos = targetTransform != null ? targetTransform.position : transform.position;
+                PurificationSystem.Instance.AddIndicator(indicatorName, pos, PurificationContributionValue, PurificationIndicatorType);
+
                 ApplyStageScale();
                 stageUpFeedbacks?.PlayFeedbacks(input.PositionWorld);
             }

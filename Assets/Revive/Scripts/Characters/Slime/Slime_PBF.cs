@@ -1,15 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using Stopwatch = System.Diagnostics.Stopwatch;
+using System.Runtime.CompilerServices;
 using MoreMountains.TopDownEngine;
 using Unity.Collections;
 using Unity.Jobs;
-using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling; 
 using Revive.Environment;
 using Revive.Environment.Watering;
+
  
 namespace Revive.Slime
 {
@@ -1229,9 +1231,6 @@ namespace Revive.Slime
 
         [Min(1)]
         public int dropletCenterDebugLogIntervalFrames = 60;
-
-        [Min(1)]
-        public int collisionStatsDebugLogIntervalFrames = 30;
         
         #endregion
         
@@ -1278,10 +1277,6 @@ namespace Revive.Slime
         private Vector3 _dbgRecallSphereHitNormalW;
 
         private int _dbgDropletCenterLogFrame = -999999;
-
-        private const int CollisionStatsStride = 8;
-        private NativeArray<int> _dbgCollisionStats;
-        private int _dbgCollisionStatsLogFrame = -999999;
 
         private int _dbgEyeJitterLastLogFrame = -999999;
         private Vector3 _dbgEyeJitterPrevSampleEyeWorld;
@@ -1901,13 +1896,6 @@ namespace Revive.Slime
 
             _dropletColliderBuffer = new NativeArray<MyBoxCollider>(dropletColliderIndexQueryCacheCapacity, Allocator.Persistent);
             _currentDropletColliderCount = 0;
-
-            if (Application.isEditor)
-            {
-                int threadCount = JobsUtility.MaxJobThreadCount;
-                int dbgLen = math.max(1, threadCount) * CollisionStatsStride;
-                _dbgCollisionStats = new NativeArray<int>(dbgLen, Allocator.Persistent);
-            }
             
             // 初始控制器中心必须与粒子初始化时的 spawnCenter 一致
             float3 initialCenter = trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero;
@@ -2091,7 +2079,6 @@ namespace Revive.Slime
             if (_clampDelta.IsCreated) _clampDelta.Dispose();
             if (_velocityBuffer.IsCreated) _velocityBuffer.Dispose();
             if (_velocityTempBuffer.IsCreated) _velocityTempBuffer.Dispose();
-            if (_dbgCollisionStats.IsCreated) _dbgCollisionStats.Dispose();
 
             if (_mergeMainBodyLut.IsCreated) _mergeMainBodyLut.Dispose();
             if (_mergeAbsorbLut.IsCreated) _mergeAbsorbLut.Dispose();
@@ -2552,12 +2539,6 @@ namespace Revive.Slime
             PerformanceProfiler.Begin("UpdateSourceControllers");
             UpdateSourceControllers();
             PerformanceProfiler.End("UpdateSourceControllers");
-
-            if (Application.isEditor && _dbgCollisionStats.IsCreated)
-            {
-                for (int i = 0; i < _dbgCollisionStats.Length; i++)
-                    _dbgCollisionStats[i] = 0;
-            }
             
             // 不再移除场景水珠，让它们留在主粒子系统中以便渲染和交互
             
@@ -2598,36 +2579,6 @@ namespace Revive.Slime
                 Profiler.EndSample();
             }
 
-            if (Application.isEditor && _dbgCollisionStats.IsCreated)
-            {
-                int interval = math.max(1, collisionStatsDebugLogIntervalFrames);
-                if (Time.frameCount - _dbgCollisionStatsLogFrame >= interval)
-                {
-                    _dbgCollisionStatsLogFrame = Time.frameCount;
-                    int processed = 0;
-                    int sdf = 0;
-                    int terrain = 0;
-                    int obb = 0;
-                    int groundClamp = 0;
-                    int yAxis = 0;
-                    int dampY = 0;
-                    int aabb = 0;
-
-                    for (int t = 0; t < _dbgCollisionStats.Length; t += CollisionStatsStride)
-                    {
-                        processed += _dbgCollisionStats[t + 0];
-                        sdf += _dbgCollisionStats[t + 1];
-                        terrain += _dbgCollisionStats[t + 2];
-                        obb += _dbgCollisionStats[t + 3];
-                        groundClamp += _dbgCollisionStats[t + 4];
-                        yAxis += _dbgCollisionStats[t + 5];
-                        dampY += _dbgCollisionStats[t + 6];
-                        aabb += _dbgCollisionStats[t + 7];
-                    }
-
-                    Debug.Log($"[PbfCollStats] frame={Time.frameCount} active={activeParticles} s2w={SimToWorldScale:F3} processed={processed} sdf={sdf} terrain={terrain} obb={obb} aabb={aabb} groundClamp={groundClamp} yAxis={yAxis} dampY={dampY}");
-                }
-            }
             
             // 水珠独立模拟（独立分区，使用完整 PBF 物理 + 环境碰撞）
             Profiler.BeginSample("Simulate_Droplets");
@@ -3486,7 +3437,6 @@ namespace Revive.Slime
 
             PerformanceProfiler.Begin("Update_Job");
 			int useSdf = useStaticSdfThisFrame ? 1 : 0;
-			int enableCollStats = (Application.isEditor && _dbgCollisionStats.IsCreated) ? 1 : 0;
 			NativeArray<float> terrainHeights01 = _terrainHeights01.IsCreated ? _terrainHeights01 : _dummyTerrainHeights01;
 			int terrainResX = _terrainHeights01.IsCreated ? _terrainResX : 0;
 			int terrainResZ = _terrainHeights01.IsCreated ? _terrainResZ : 0;
@@ -3499,9 +3449,6 @@ namespace Revive.Slime
 				Controllers = _controllerBuffer, // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
 				BlobIdToControllerSlot = _blobIdToControllerSlot,
 				ColliderCount = _currentColliderCount,
-				EnableCollisionStats = enableCollStats,
-				CollisionStatsStride = CollisionStatsStride,
-				CollisionStats = _dbgCollisionStats,
 				UseStaticSdf = useStaticSdfThisFrame ? 1 : 0,
 				StaticSdf = useStaticSdfThisFrame ? _worldStaticSdf.Data : _dummyWorldSdfVolume,
 				StaticSdfQueryMul = SlimeWorldScaleFactor,

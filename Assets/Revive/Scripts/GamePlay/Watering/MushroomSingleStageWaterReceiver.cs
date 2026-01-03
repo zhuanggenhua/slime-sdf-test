@@ -1,4 +1,5 @@
 using MoreMountains.Feedbacks;
+using Revive.GamePlay.Purification;
 using UnityEngine;
 using Revive.Environment;
 using Revive.Slime;
@@ -41,6 +42,8 @@ namespace Revive.Environment.Watering
         [ChineseLabel("触发所需水量"), Tooltip("达到该水量后蘑菇恢复到原始缩放，并启用跳跳垫")]
         [DefaultValue(25f)]
         [SerializeField] private float chargeRequired = 25f;
+
+        private int _purificationIndicatorCounter;
 
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
@@ -104,6 +107,9 @@ namespace Revive.Environment.Watering
                 charge = 0f;
                 _activated = true;
                 EnsureJumpPad();
+
+                string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
+                PurificationSystem.Instance.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType);
 
                 waterCompleteFeedbacks?.PlayFeedbacks(input.PositionWorld);
 

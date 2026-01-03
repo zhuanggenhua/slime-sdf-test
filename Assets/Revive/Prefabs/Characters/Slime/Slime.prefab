@@ -479,6 +479,7 @@ MonoBehaviour:
   recallAvoidanceGizmos: 1
   dropletCenterDebugLog: 0
   dropletCenterDebugLogIntervalFrames: 60
+  collisionStatsDebugLogIntervalFrames: 30
 --- !u!114 &2494007224200162004
 MonoBehaviour:
   m_ObjectHideFlags: 0

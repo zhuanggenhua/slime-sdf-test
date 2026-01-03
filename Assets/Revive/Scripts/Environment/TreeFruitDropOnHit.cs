@@ -176,6 +176,12 @@ namespace Revive.Environment
                     rb.isKinematic = false;
                     rb.useGravity = true;
                 }
+
+                var spawnedCarryable = fruit.GetComponentInChildren<SlimeCarryableObject>();
+                if (spawnedCarryable != null)
+                {
+                    spawnedCarryable.ArmImpactWindow(0.1f);
+                }
             }
 
             if (DropVfxPrefab != null)

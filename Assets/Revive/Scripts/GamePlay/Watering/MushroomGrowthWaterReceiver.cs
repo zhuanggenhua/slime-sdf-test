@@ -1,5 +1,6 @@
 using System.Collections;
 using MoreMountains.Feedbacks;
+using Revive.GamePlay.Purification;
 using UnityEngine;
 using Revive.Environment;
 using Revive.Slime;
@@ -60,6 +61,8 @@ namespace Revive.Environment.Watering
         private bool _carryablePickupEnabledPrev;
         private bool _carryablePickupPrevCaptured;
 
+        private int _purificationIndicatorCounter;
+
         public override bool WantsWater => !_activated;
 
         protected override void Awake()
@@ -106,6 +109,9 @@ namespace Revive.Environment.Watering
                 _activated = true;
                 SetCarryablePickupEnabled(false);
                 EnsureJumpPad();
+
+                string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
+                PurificationSystem.Instance.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType);
 
                 waterCompleteFeedbacks?.PlayFeedbacks(input.PositionWorld);
 

@@ -91,6 +91,9 @@ namespace Revive.Environment
         
         [Tooltip("是否在Start时自动注册")]
         public bool AutoRegisterOnStart = true;
+
+        [Tooltip("是否响应净化系统驱动生长（关闭后不会因为净化度变化而生长/枯萎，仅接受外部手动驱动如 SetGrowthProgress）")]
+        public bool EnablePurificationGrowth = false;
         
         [Header("运行时信息")]
         [SerializeField, MMReadOnly]
@@ -210,7 +213,7 @@ namespace Revive.Environment
             }
             
             // 自动注册
-            if (AutoRegisterOnStart && PurificationSystem.HasInstance)
+            if (EnablePurificationGrowth && AutoRegisterOnStart && PurificationSystem.HasInstance)
             {
                 PurificationSystem.Instance.RegisterListener(this);
                 _isRegistered = true;
@@ -437,6 +440,9 @@ namespace Revive.Environment
         /// </summary>
         public void RegisterListener()
         {
+            if (!EnablePurificationGrowth)
+                return;
+
             if (!_isRegistered && PurificationSystem.HasInstance)
             {
                 PurificationSystem.Instance.RegisterListener(this);

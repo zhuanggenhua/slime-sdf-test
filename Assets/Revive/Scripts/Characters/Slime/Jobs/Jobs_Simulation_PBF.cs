@@ -5,7 +5,6 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
-using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 
 namespace Revive.Slime
@@ -1041,10 +1040,6 @@ namespace Revive.Slime
             [ReadOnly] public NativeList<ParticleController> Controllers; // 【新增】控制器数组，用于获取每个粒子对应的 GroundY
             [ReadOnly] public NativeArray<int> BlobIdToControllerSlot;
             public int ColliderCount;
-            public int EnableCollisionStats;
-            public int CollisionStatsStride;
-            [NativeDisableParallelForRestriction] public NativeArray<int> CollisionStats;
-            [NativeSetThreadIndex] public int ThreadIndex;
             public int UseStaticSdf;
             public WorldSdfRuntime.Volume StaticSdf;
             public float StaticSdfQueryMul;
@@ -1176,13 +1171,6 @@ namespace Revive.Slime
                     Ps[i] = p;
                     return;
                 }
-
-                int statsBase = -1;
-                if (EnableCollisionStats != 0 && CollisionStats.IsCreated)
-                {
-                    statsBase = ThreadIndex * CollisionStatsStride;
-                    CollisionStats[statsBase]++;
-                }
                 
                 // 所有粒子统一使用模拟坐标（内部坐标）
                 float3 simPos = p.Position;
@@ -1199,6 +1187,7 @@ namespace Revive.Slime
                 float sdfMul = math.max(StaticSdfQueryMul, 1e-6f);
                 float sdfInvMul = 1f / sdfMul;
                 float3 sdfPos = simPos;
+                float sdfPenetrationSim = 0f;
                 float3 sdfLocal = default;
                 int3 sdfI0 = default;
                 int3 sdfI1 = default;
@@ -1248,6 +1237,9 @@ namespace Revive.Slime
                                 ? StaticSdf.SampleDistanceDenseWithLocalAndIndices(sdfPos, out sdfLocal, out sdfI0, out sdfI1, out sdfF)
                                 : StaticSdf.SampleDistance(sdfPos);
                         }
+
+                        float penetrationSdf = math.max(0f, contactRadius - d);
+                        sdfPenetrationSim = penetrationSdf * sdfInvMul;
                     }
 
                     simPos = sdfPos * sdfInvMul;
@@ -1405,16 +1397,6 @@ namespace Revive.Slime
                         hadGroundClampCollision = true;
                     }
                 }
-
-                if (statsBase >= 0 && (statsBase + CollisionStatsStride - 1) < CollisionStats.Length)
-                {
-                    if (hadSdfCollision) CollisionStats[statsBase + 1]++;
-                    if (hadTerrainCollision) CollisionStats[statsBase + 2]++;
-                    if (hadObbCollision) CollisionStats[statsBase + 3]++;
-                    if (hadGroundClampCollision) CollisionStats[statsBase + 4]++;
-                    if (collisionAxes.y) CollisionStats[statsBase + 5]++;
-                    if (hadAabbCollision) CollisionStats[statsBase + 7]++;
-                }
                 
                 // 更新位置（模拟坐标）
                 p.Position = simPos;
@@ -1452,10 +1434,6 @@ namespace Revive.Slime
                 bool3 dampAxes = collisionAxes;
                 if (hadTerrainCollision)
                     dampAxes.y = false;
-                if (statsBase >= 0 && (statsBase + CollisionStatsStride - 1) < CollisionStats.Length)
-                {
-                    if (dampAxes.y) CollisionStats[statsBase + 6]++;
-                }
                 if (dampAxes.x) velCalc.x *= normalCollisionDamping;
                 if (dampAxes.y) velCalc.y *= normalCollisionDamping;
                 if (dampAxes.z) velCalc.z *= normalCollisionDamping;
@@ -1470,7 +1448,10 @@ namespace Revive.Slime
                     float3 vN = sdfNormal * vn;
                     float3 vT = velCalc - vN;
                     vN *= normalCollisionDamping;
-                    vT *= math.max(0f, 1f - StaticFriction);
+                    float frictionRate = 8f;
+                    float pen01 = math.saturate(sdfPenetrationSim / math.max(1e-5f, ParticleRadiusSim * 0.25f));
+                    float frictionFactor = math.exp(-StaticFriction * pen01 * DeltaTime * frictionRate);
+                    vT *= frictionFactor;
                     velCalc = vN + vT;
                 }
 
@@ -1502,7 +1483,9 @@ namespace Revive.Slime
                     float3 vN = obbNormal * vn;
                     float3 vT = vRel - vN;
                     vN *= normalCollisionDamping;
-                    vT *= math.max(0f, 1f - math.saturate(obbFriction));
+                    float frictionRate = 8f;
+                    float frictionFactor = math.exp(-math.saturate(obbFriction) * DeltaTime * frictionRate);
+                    vT *= frictionFactor;
                     velCalc = (vN + vT) + obbSurfaceVelocity;
                 }
                 

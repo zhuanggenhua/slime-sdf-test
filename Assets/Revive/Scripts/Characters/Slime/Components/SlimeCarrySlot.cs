@@ -174,7 +174,8 @@ namespace Revive.Slime
                 Vector3 raw = GetHoldAnchorWorldPosition(out rawUsedCentroid);
                 Vector3 rbPos = _heldRigidbody != null ? _heldRigidbody.position : _held.transform.position;
                 float err = (rbPos - targetPos).magnitude;
-                Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={rawUsedCentroid} raw=({raw.x:F3},{raw.y:F3},{raw.z:F3}) stable=({stablePos.x:F3},{stablePos.y:F3},{stablePos.z:F3}) off=({renderOffset.x:F3},{renderOffset.y:F3},{renderOffset.z:F3}) target=({targetPos.x:F3},{targetPos.y:F3},{targetPos.z:F3}) rb=({rbPos.x:F3},{rbPos.y:F3},{rbPos.z:F3}) err={err:F4} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition}");
+                Vector3 anchorNow = CenterAnchor != null ? CenterAnchor.position : transform.position;
+                Debug.Log($"[CarryDbg] frame={Time.frameCount} usedCentroid={rawUsedCentroid} raw=({raw.x:F4},{raw.y:F4},{raw.z:F4}) stable=({stablePos.x:F4},{stablePos.y:F4},{stablePos.z:F4}) off=({renderOffset.x:F6},{renderOffset.y:F6},{renderOffset.z:F6}) offMag={renderOffset.magnitude:F6} fixed=({_lastFixedAnchorWorld.x:F4},{_lastFixedAnchorWorld.y:F4},{_lastFixedAnchorWorld.z:F4}) anchor=({anchorNow.x:F4},{anchorNow.y:F4},{anchorNow.z:F4}) target=({targetPos.x:F4},{targetPos.y:F4},{targetPos.z:F4}) rb=({rbPos.x:F4},{rbPos.y:F4},{rbPos.z:F4}) err={err:F6} blocked={_heldMoveBlockedThisFrame} blockedSec={_heldMoveBlockedSeconds:F3} inTrans={_pickupInTransition}");
             }
 #endif
         }
@@ -232,14 +233,15 @@ namespace Revive.Slime
             }
 
             Vector3 delta = raw - _heldAnchorSmoothedWorld;
-            if (delta.sqrMagnitude > 25f)
+            const float maxLagWorld = 0.04f;
+            if (delta.sqrMagnitude > maxLagWorld * maxLagWorld)
             {
                 _heldAnchorSmoothedWorld = raw;
                 return raw;
             }
 
             float dt = Time.inFixedTimeStep ? Time.fixedDeltaTime : Time.deltaTime;
-            float k = 30f;
+            float k = 60f;
             float alpha = dt > 1e-6f ? (1f - Mathf.Exp(-k * dt)) : 1f;
             _heldAnchorSmoothedWorld = Vector3.Lerp(_heldAnchorSmoothedWorld, raw, alpha);
             return _heldAnchorSmoothedWorld;

@@ -107,7 +107,7 @@ namespace Revive.Environment
         public int RandomSeed = 0;
         
         // 生成的路径
-        private List<VinePath> _generatedPaths = new List<VinePath>();
+        [System.NonSerialized] private List<VinePath> _generatedPaths = new List<VinePath>();
         
         private void Awake()
         {

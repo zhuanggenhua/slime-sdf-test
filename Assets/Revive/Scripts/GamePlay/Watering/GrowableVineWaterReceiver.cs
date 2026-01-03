@@ -26,10 +26,6 @@ namespace Revive.Environment.Watering
         [ChineseLabel("累计水量(运行时)")]
         [SerializeField] private float accumulatedWater;
 
-        [ChineseLabel("净化指示物类型")]
-        [DefaultValue("Water")]
-        [SerializeField] private string purificationIndicatorType = "Water";
-
         [ChineseLabel("净化指示物名称")]
         [DefaultValue("VineWater")]
         [SerializeField] private string purificationIndicatorName = "VineWater";
@@ -81,23 +77,18 @@ namespace Revive.Environment.Watering
                 EnsureMeshGenerated();
             }
 
-            if (!PurificationSystem.HasInstance)
-                return;
-
             accumulatedWater += Mathf.Max(0f, input.Amount);
 
             float required = Mathf.Max(0.0001f, waterRequiredToFullyPurify);
             float normalized = Mathf.Clamp01(accumulatedWater / required);
 
-            var system = PurificationSystem.Instance;
-            float contribution = normalized * system.TargetPurificationValue;
+            var system = GetPurificationSystemChecked();
+            if (system == null)
+                return;
 
-            EnsureIndicator(system);
-            if (_indicator != null)
-            {
-                _indicator.Position = GetIndicatorPositionWorld(input.PositionWorld);
-                _indicator.ContributionValue = contribution;
-            }
+            float contribution = normalized * system.TargetPurificationValue;
+            Vector3 pos = GetIndicatorPositionWorld(input.PositionWorld);
+            EnsurePurificationIndicator(ref _indicator, purificationIndicatorName, pos, contribution, PurificationIndicatorType);
 
             system.NotifyAllListeners();
         }
@@ -122,28 +113,9 @@ namespace Revive.Environment.Watering
             return fallback;
         }
 
-        private void EnsureIndicator(PurificationSystem system)
-        {
-            if (_indicator != null)
-                return;
-
-            Vector3 pos = GetIndicatorPositionWorld(transform.position);
-            _indicator = system.AddIndicator(purificationIndicatorName, pos, 0f, purificationIndicatorType);
-        }
-
         private void ClearIndicator()
         {
-            if (_indicator == null)
-                return;
-
-            if (PurificationSystem.HasInstance)
-            {
-                var system = PurificationSystem.Instance;
-                system.RemoveIndicator(_indicator);
-                system.NotifyAllListeners();
-            }
-
-            _indicator = null;
+            RemovePurificationIndicator(ref _indicator);
         }
 
         private void EnsureMeshGenerated()
