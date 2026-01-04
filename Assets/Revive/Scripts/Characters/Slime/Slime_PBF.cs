@@ -5448,7 +5448,8 @@ namespace Revive.Slime
             double invFreqMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             float mergeScanMs = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - mergeScanT0) * invFreqMs);
             bool forceMergeScanLog = mergeScanMs > 10f;
-            if ((forceMergeScanLog || (mergeScanMs > 0.05f || dbgMainMaxChain > 64 || dbgAbsorbMaxChain > 64)) &&
+            if (PerformanceProfiler.VerboseMode &&
+                (forceMergeScanLog || (mergeScanMs > 0.05f || dbgMainMaxChain > 64 || dbgAbsorbMaxChain > 64)) &&
                 (forceMergeScanLog || (Time.frameCount - _lastMergeScanMainRangeLogFrame) > 30))
             {
                 _lastMergeScanMainRangeLogFrame = Time.frameCount;
@@ -5685,7 +5686,8 @@ namespace Revive.Slime
                 double invFreqMs2 = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 float mergeDropletScanMs = (float)((System.Diagnostics.Stopwatch.GetTimestamp() - mergeDropletScanT0) * invFreqMs2);
                 bool forceMergeDropletScanLog = mergeDropletScanMs > 10f;
-                if ((forceMergeDropletScanLog || mergeDropletScanMs > 0.05f) &&
+                if (PerformanceProfiler.VerboseMode &&
+                    (forceMergeDropletScanLog || mergeDropletScanMs > 0.05f) &&
                     (forceMergeDropletScanLog || (Time.frameCount - _lastMergeScanDropletPartitionLogFrame) > 30))
                 {
                     _lastMergeScanDropletPartitionLogFrame = Time.frameCount;
@@ -5737,6 +5739,11 @@ namespace Revive.Slime
             _lastMergeSfxUnscaledTime = now;
             _lastMergeSfxFixedSerial = _fixedUpdateSerial;
             MMSfxEvent.Trigger(mergeSfx, null, mergeSfxVolume, 1f);
+        }
+
+        public void PlayMergeSfx()
+        {
+            TryPlayMergeSfx();
         }
 
         public void PlayEmitSfx(bool isFirstEmitInSequence)
@@ -7099,6 +7106,28 @@ namespace Revive.Slime
 
                     float hitThreshold = radiusXZ + recallObstacleKeepDistanceMarginSim;
 
+                    float3 rayEnd = center + rayDir * checkDistSim;
+                    float3 segMin = math.min(center, rayEnd);
+                    float3 segMax = math.max(center, rayEnd);
+                    float y0 = center.y - halfHeight * 0.35f;
+                    float y1 = center.y + halfHeight * 0.35f;
+                    segMin.y = math.min(segMin.y, y0);
+                    segMax.y = math.max(segMax.y, y1);
+
+                    float3 expandedMin = v.AabbMinSim - new float3(hitThreshold);
+                    float3 expandedMax = v.AabbMaxSim + new float3(hitThreshold);
+                    bool mayHitSdf =
+                        !(segMax.x < expandedMin.x || segMin.x > expandedMax.x ||
+                          segMax.y < expandedMin.y || segMin.y > expandedMax.y ||
+                          segMax.z < expandedMin.z || segMin.z > expandedMax.z);
+
+                    if (!mayHitSdf)
+                    {
+                        useSdf = false;
+                    }
+                    else
+                    {
+
                     float3 p0 = center;
                     float3 p1 = center + new float3(0f, halfHeight * 0.35f, 0f);
                     float3 p2 = center - new float3(0f, halfHeight * 0.35f, 0f);
@@ -7205,6 +7234,7 @@ namespace Revive.Slime
                         if (adv < minStep) adv = minStep;
                         t += adv;
                     }
+                    }
                 }
 
                 perf.TicksSdf += System.Diagnostics.Stopwatch.GetTimestamp() - tSdf0;
@@ -7218,10 +7248,21 @@ namespace Revive.Slime
             float hitThresholdCollider = radiusXZ + recallObstacleKeepDistanceMarginSim;
 
             long tObb0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            float2 originXZ = new float2(center.x, center.z);
             for (int c = 0; c < _currentColliderCount; c++)
             {
                 MyBoxCollider box = _colliderBuffer[c];
                 if (useSdf && box.IsDynamic == 0)
+                    continue;
+
+                float2 boxXZ = new float2(box.Center.x, box.Center.z);
+                float proj = math.dot(boxXZ - originXZ, dirXZ);
+                proj = math.clamp(proj, 0f, checkDistSim);
+                float2 closestXZ = originXZ + dirXZ * proj;
+                float2 deltaXZ = boxXZ - closestXZ;
+                float dist2XZ = math.dot(deltaXZ, deltaXZ);
+                float gateR = math.length(box.Extent) + hitThresholdCollider;
+                if (dist2XZ > gateR * gateR)
                     continue;
 
                 perf.ObbChecked++;

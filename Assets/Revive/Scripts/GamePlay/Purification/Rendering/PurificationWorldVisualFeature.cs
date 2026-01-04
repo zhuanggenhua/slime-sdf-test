@@ -20,8 +20,6 @@ namespace Revive.GamePlay.Purification.Rendering
             public RenderPassEvent PassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
             public Shader Shader;
 
-            public LayerMask LockedMaskLayerMask;
-
             [Range(0f, 2f)]
             public float UnlockFadeSeconds;
 
@@ -45,11 +43,8 @@ namespace Revive.GamePlay.Purification.Rendering
         private static readonly int LockedMaskTexId = Shader.PropertyToID("_LockedMaskTex");
 
         private static readonly Dictionary<int, Renderer[]> LockedRendererGroups = new Dictionary<int, Renderer[]>(16);
-
-        private static LayerMask _currentLockedMaskLayerMask;
         private static float _currentUnlockFadeSeconds;
         private static float _currentUnlockFadeFeather01;
-        private static bool _warnedInvalidLockedMaskLayer;
 
         [SerializeField] private Settings settings = new Settings();
 
@@ -85,8 +80,6 @@ namespace Revive.GamePlay.Purification.Rendering
             {
                 settings.Shader = Shader.Find("Hidden/Revive/PurificationWorldVisual");
             }
-
-            _currentLockedMaskLayerMask = settings.LockedMaskLayerMask;
             _currentUnlockFadeSeconds = settings.UnlockFadeSeconds;
             _currentUnlockFadeFeather01 = settings.UnlockFadeFeather01;
 
@@ -130,8 +123,6 @@ namespace Revive.GamePlay.Purification.Rendering
             _material.SetFloat(RuinStrengthId, settings.RuinStrength);
             _material.SetFloat(DesaturateId, settings.Desaturate);
             _material.SetFloat(DarkenId, settings.Darken);
-            _pass.LockedMaskLayerMask = settings.LockedMaskLayerMask;
-            _currentLockedMaskLayerMask = settings.LockedMaskLayerMask;
             _currentUnlockFadeSeconds = settings.UnlockFadeSeconds;
             _currentUnlockFadeFeather01 = settings.UnlockFadeFeather01;
 
@@ -150,8 +141,6 @@ namespace Revive.GamePlay.Purification.Rendering
             private RTHandle _lockedMaskResolved;
 
             private static bool _warnedMissingDepth;
-
-            public LayerMask LockedMaskLayerMask { get; set; }
 
             public PurificationWorldVisualPass(Material material)
             {

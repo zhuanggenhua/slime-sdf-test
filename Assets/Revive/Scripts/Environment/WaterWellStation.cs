@@ -250,6 +250,11 @@ namespace Revive.Environment
             if (_currentState != WellState.Inactive)
             {
                 MMFeedbacksHelper.Play(restoringFeedbacks);
+
+                if (_cachedSlimePBF != null && GetMaxRestoreAmountIncludingSeparatedEmitted() > 0)
+                {
+                    _cachedSlimePBF.PlayMergeSfx();
+                }
             }
         }
 
@@ -302,8 +307,11 @@ namespace Revive.Environment
             if (_cachedSlimeVolume != null && maxVolumeIncrease > 0)
             {
                 _cachedSlimeVolume.maxVolume += maxVolumeIncrease;
+                _cachedSlimeVolume.ForceBroadcast();
                 Debug.Log($"[WaterWellStation] {wellId} 最大体积增加 {maxVolumeIncrease}，当前上限: {_cachedSlimeVolume.maxVolume}");
             }
+
+            _cachedSlimePBF?.PlayMergeSfx();
 
             // 2. 如果开启直接回满，计算需要恢复的粒子数并启动分批生成
             if (restoreToFullOnUpgrade && _cachedSlimeVolume != null && _cachedSlimePBF != null)
@@ -349,6 +357,11 @@ namespace Revive.Environment
             int restored = _cachedSlimePBF.RestoreMainBodyParticlesAtWorldCenter(thisBatch, coalesceCenterWorld, upgradeCoalesceSpawnRadius, upgradeCoalesceVerticalScale, upgradeCoalesceInwardVelocityScale);
             _pendingRestoreParticles -= restored;
             _nextBatchTime = Time.time + batchInterval;
+
+            if (restored > 0)
+            {
+                _cachedSlimePBF.PlayMergeSfx();
+            }
 
             if (_pendingRestoreParticles <= 0)
             {
@@ -410,6 +423,11 @@ namespace Revive.Environment
                 {
                     int restored = _cachedSlimePBF.RestoreMainBodyParticles(toRestore);
                     _restoreAccumulator -= restored;
+
+                    if (restored > 0)
+                    {
+                        _cachedSlimePBF.PlayMergeSfx();
+                    }
                 }
                 else
                 {

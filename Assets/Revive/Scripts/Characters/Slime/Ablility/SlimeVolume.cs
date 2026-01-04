@@ -107,5 +107,18 @@ namespace Revive.Slime
         public bool CanAbsorb() => currentVolume < maxVolume;
         public int GetMaxEmitAmount() => Mathf.Max(0, currentVolume - minVolume);
         public int GetMaxAbsorbAmount() => Mathf.Max(0, maxVolume - currentVolume);
+
+        public void ForceBroadcast()
+        {
+            currentVolume = Mathf.Clamp(currentVolume, 0, maxVolume);
+
+            if (maxVolume > minVolume)
+                volumePercent = Mathf.Clamp01((float)(currentVolume - minVolume) / (maxVolume - minVolume));
+            else
+                volumePercent = 0f;
+
+            _lastVolume = currentVolume;
+            SlimeVolumeChangeEvent.Trigger(this, currentVolume, minVolume, maxVolume, volumePercent);
+        }
     }
 }

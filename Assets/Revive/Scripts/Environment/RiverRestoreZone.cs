@@ -66,6 +66,11 @@ namespace Revive.Environment
 
             _playerInTrigger = true;
             MMFeedbacksHelper.Play(restoringFeedbacks);
+
+            if (GetMaxRestoreAmount() > 0)
+            {
+                _cachedSlimePBF.PlayMergeSfx();
+            }
         }
 
         private void OnTriggerExit(Collider other)
@@ -107,6 +112,11 @@ namespace Revive.Environment
                 {
                     int restored = _cachedSlimePBF.RestoreMainBodyParticles(toRestore);
                     _restoreAccumulator -= restored;
+
+                    if (restored > 0)
+                    {
+                        _cachedSlimePBF.PlayMergeSfx();
+                    }
                 }
                 else
                 {

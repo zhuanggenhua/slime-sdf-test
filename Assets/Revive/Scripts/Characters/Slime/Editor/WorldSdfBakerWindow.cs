@@ -24,6 +24,9 @@ namespace Revive.Slime.Editor
         [SerializeField] private bool autoEnableUnreadableMeshReadWrite;
         [SerializeField] private string outputDirectoryAssetPath = "Assets/MMData/SDFData";
 
+        private bool _loadedFromPrefs;
+        private static string[] _layerNames;
+
         private enum MeshSeedMode
         {
             Triangles = 0,
@@ -347,9 +350,38 @@ namespace Revive.Slime.Editor
             win.Focus();
         }
 
+        private void EnsureLoadedFromPrefs()
+        {
+            if (_loadedFromPrefs)
+            {
+                return;
+            }
+
+            LoadSettingsFromEditorPrefs();
+            _loadedFromPrefs = true;
+        }
+
+        private static string[] GetAllLayerNames()
+        {
+            if (_layerNames != null && _layerNames.Length == 32)
+            {
+                return _layerNames;
+            }
+
+            _layerNames = new string[32];
+            for (int i = 0; i < 32; i++)
+            {
+                string name = LayerMask.LayerToName(i);
+                _layerNames[i] = string.IsNullOrEmpty(name) ? $"Layer {i}" : name;
+            }
+            return _layerNames;
+        }
+
         private void OnGUI()
         {
-            LoadSettingsFromEditorPrefs();
+            EnsureLoadedFromPrefs();
+
+            EditorGUI.BeginChangeCheck();
 
             EditorGUILayout.HelpBox(
                 "说明：SDF 必须烘焙到一个有限的体积范围内（体积越大、体素越小，生成越慢、资源越大）。\n" +
@@ -362,9 +394,7 @@ namespace Revive.Slime.Editor
             maxDistanceWorld = EditorGUILayout.FloatField("最大距离(世界/米)", maxDistanceWorld);
             using (new EditorGUILayout.HorizontalScope())
             {
-                int concatenatedMask = InternalEditorUtility.LayerMaskToConcatenatedLayersMask(staticLayers);
-                concatenatedMask = EditorGUILayout.MaskField("参与烘焙的层(静态)", concatenatedMask, InternalEditorUtility.layers);
-                staticLayers = InternalEditorUtility.ConcatenatedLayersMaskToLayerMask(concatenatedMask);
+                staticLayers.value = EditorGUILayout.MaskField("参与烘焙的层(静态)", staticLayers.value, GetAllLayerNames());
 
                 if (GUILayout.Button("无", GUILayout.Width(36f)))
                 {
@@ -487,7 +517,10 @@ namespace Revive.Slime.Editor
                 }
             }
 
-            SaveSettingsToEditorPrefs();
+            if (EditorGUI.EndChangeCheck())
+            {
+                SaveSettingsToEditorPrefs();
+            }
         }
 
         private const string PrefKey_BoundsCenter = "WorldSdfBaker_BoundsCenter";

@@ -11,6 +11,9 @@ namespace Revive.Slime
     {
         [Header("【引用组件】")]
         
+        [Tooltip("只监听指定的 SlimeVolume（留空则监听所有）")]
+        [SerializeField] private SlimeVolume targetVolume;
+
         [Tooltip("MMProgressBar 进度条（推荐，复用 TopDown UI）")]
         [SerializeField] private MMProgressBar progressBar;
         
@@ -58,6 +61,10 @@ namespace Revive.Slime
         /// </summary>
         public void OnMMEvent(SlimeVolumeChangeEvent volumeEvent)
         {
+            if ((targetVolume != null) && (volumeEvent.AffectedVolume != targetVolume))
+            {
+                return;
+            }
             UpdateUI(volumeEvent.CurrentVolume, volumeEvent.MinVolume, volumeEvent.MaxVolume, volumeEvent.VolumePercent);
         }
 
