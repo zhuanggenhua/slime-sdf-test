@@ -101,7 +101,7 @@ MonoBehaviour:
   BloomThreshold: 0.2
   WitherThreshold: 0.3
   TransitionSpeed: 1
-  WitheredScale: 0.1
+  WitheredScale: 0
   BloomedScale: 1
   ButterflyConfig: {fileID: 11400000, guid: 353ba8120a9b71d4aac0a45626441353, type: 2}
   UseLocalOverride: 0
