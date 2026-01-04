@@ -95,8 +95,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 250e27526f57e21478de7aef6ae76d8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  FlowerRoot: {fileID: 7942435207883132264, guid: 991133724c57aec4b8b09648254ac308,
-    type: 3}
+  FlowerRoot: {fileID: 4761159909722518018}
   AutoFindFlowerInChildren: 1
   BloomThreshold: 0.2
   WitherThreshold: 0.3
