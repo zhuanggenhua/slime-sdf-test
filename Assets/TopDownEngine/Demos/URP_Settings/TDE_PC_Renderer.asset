@@ -137,7 +137,9 @@ MonoBehaviour:
     Shader: {fileID: 4800000, guid: 991d0bef8c9eb2b4b837f1bdacc5442e, type: 3}
     LockedMaskLayerMask:
       serializedVersion: 2
-      m_Bits: 0
+      m_Bits: 33554432
+    UnlockFadeSeconds: 0
+    UnlockFadeFeather01: 0.1
     RuinStrength: 1
     Desaturate: 1
     Darken: 0.6

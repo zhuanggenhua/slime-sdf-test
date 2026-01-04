@@ -98,7 +98,7 @@ MonoBehaviour:
   FlowerRoot: {fileID: 7942435207883132264, guid: 991133724c57aec4b8b09648254ac308,
     type: 3}
   AutoFindFlowerInChildren: 1
-  BloomThreshold: 0.5
+  BloomThreshold: 0.2
   WitherThreshold: 0.3
   TransitionSpeed: 1
   WitheredScale: 0.1
@@ -111,8 +111,14 @@ MonoBehaviour:
   ButterflySpawnRandomRadius: 0.5
   ButterflyLifetime: 0
   RemoveButterflyOnWither: 1
+  CreatePurificationIndicatorOnBloom: 1
+  PurificationIndicatorType: Flower
+  PurificationContributionValue: 10
+  PurificationRadiationRadius: 8
   ListenerName: Flower
   AutoRegisterOnStart: 1
   _currentPurificationLevel: 0
+  _debugToBloomThreshold: 0
+  _debugToWitherThreshold: 0
   _currentState: 0
   _growthProgress: 0
