@@ -220,9 +220,11 @@ MonoBehaviour:
         DebugActive: 0
         Sfx: {fileID: 0}
         RandomSfx:
-        - {fileID: 8300000, guid: f7d17df6340791b40827777abcf28842, type: 3}
         - {fileID: 8300000, guid: 9b17e8b4e6b80d24ead0f70bdc10b626, type: 3}
-        - {fileID: 8300000, guid: 151b2cf0faad3634188b0fbfebac4109, type: 3}
+        - {fileID: 8300000, guid: 0b55e24b1974e0d46bcd7df750bf5308, type: 3}
+        - {fileID: 8300000, guid: 9df777722f9fe49438a946569dee2175, type: 3}
+        - {fileID: 8300000, guid: 698534b42a51fef49b9e485f1dbb9905, type: 3}
+        - {fileID: 8300000, guid: f964c0d30b7210545a72c63eb3ac6165, type: 3}
         TestPlayButton:
           ButtonText: Debug Play Sound
         TestStopButton:
@@ -318,6 +320,7 @@ Transform:
   m_Children:
   - {fileID: 8792107974934219256}
   - {fileID: 3406919849630838563}
+  - {fileID: 6512966773977748317}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!143 &1931838449660933406
@@ -500,7 +503,7 @@ MonoBehaviour:
   InputAuthorized: 1
   AnalogInput: 0
   ScriptDrivenInput: 0
-  WalkSpeed: 2
+  WalkSpeed: 4
   ShouldSetMovement: 1
   IdleThreshold: 0.05
   Acceleration: 100
@@ -512,7 +515,12 @@ MonoBehaviour:
   TouchTheGroundSfx: []
   SlimePBF: {fileID: 0}
   FootstepAudioSource: {fileID: 0}
-  FootstepClips: []
+  FootstepClips:
+  - {fileID: 8300000, guid: 9b17e8b4e6b80d24ead0f70bdc10b626, type: 3}
+  - {fileID: 8300000, guid: 0b55e24b1974e0d46bcd7df750bf5308, type: 3}
+  - {fileID: 8300000, guid: 9df777722f9fe49438a946569dee2175, type: 3}
+  - {fileID: 8300000, guid: 698534b42a51fef49b9e485f1dbb9905, type: 3}
+  - {fileID: 8300000, guid: f964c0d30b7210545a72c63eb3ac6165, type: 3}
   NextClipDelaySeconds: {x: 0, y: 0}
   StopImmediatelyWhenNotWalking: 1
 --- !u!114 &1489706517887540671
@@ -546,7 +554,7 @@ MonoBehaviour:
   NumberOfJumpsLeft: 1
   JumpStartFeedback: {fileID: 173924116276134054}
   JumpStopFeedback: {fileID: 0}
-  JumpImpulse: 5
+  JumpImpulse: 7
   LandingFeedbacks: {fileID: 0}
   HardLandingFeedbacks: {fileID: 0}
   HardLandingHeight: 2.5
@@ -663,13 +671,18 @@ MonoBehaviour:
   faceHeightFactor: 0.2
   verticalOffset: 0.1
   dropletVerticalOffset: 0.1
-  emitSpeed: 1
+  emitSpeed: 2
   emitAngleThreshold: 0.7
-  emitCooldown: 0.2
+  emitCooldown: 0.5
   emitBatchSize: 50
   emitSpawnForwardRadiusFactor: 0.5
   emitSpawnUpRadiusFactor: 0.5
-  emitPitchDegrees: 35
+  emitPitchDegrees: 45
+  emitFirstSfx: {fileID: 8300000, guid: 971781e854d050c4e9d72618ba73da35, type: 3}
+  emitRepeatSfx: {fileID: 8300000, guid: 3afaf646b1b8f004290d01052a1c25a8, type: 3}
+  mergeSfx: {fileID: 8300000, guid: 03377fdad0e071f4f9eeaac1b80647a6, type: 3}
+  mergeSfxVolume: 1
+  mergeSfxCooldownSeconds: 0.15
   coreRadius: 20
   maxParticles: 16384
   activeParticles: 2504
@@ -706,6 +719,9 @@ MonoBehaviour:
   faceMat: {fileID: 2100000, guid: 24cdfa6d5af709a48bb6b12867e8e7d2, type: 2}
   mat: {fileID: 2100000, guid: 5e35cf563f1708d4686e402621db7f69, type: 2}
   particleMesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+  reduceDistortionWhenCarrying: 1
+  carryBlurStrength: 0
+  carryDistortionStrength: 0
   dropletSurfaceMat: {fileID: 2100000, guid: 867bea1fec47cae48a8ee180366037b1, type: 2}
   particleMat: {fileID: 2100000, guid: 8692fec3cd971cf4d8d8af04a82826ff, type: 2}
   bubblesMat: {fileID: 2100000, guid: d3ad7e9b0d79bbc4587fd6d464617cba, type: 2}
@@ -713,10 +729,14 @@ MonoBehaviour:
   bubbleSpeed: 0.3
   trans: {fileID: 840677875511296776}
   _slimeVolume: {fileID: -8990146840772306320}
-  enableSpawnCoalesce: 0
+  enableSpawnCoalesce: 1
   spawnCoalesceInitialMainParticles: 32
-  spawnCoalesceParticlesPerBatch: 200
-  spawnCoalesceBatchInterval: 0.05
+  spawnCoalesceParticlesPerBatch: 100
+  spawnCoalesceBatchInterval: 0.1
+  spawnCoalesceStartDelaySeconds: 0
+  spawnCoalesceHoverHeightWorld: 1.5
+  spawnCoalesceVerticalScale: 1
+  spawnCoalesceInwardVelocityScale: 0.5
   spawnCoalesceSpawnRadius: 3.5
   renderMode: 1
   showEyesOnSeparated: 0
@@ -743,7 +763,7 @@ MonoBehaviour:
   enableWatering: 1
   mainColliderIndexQueryCacheCapacity: 64
   mainColliderIndexQueryRadiusWorld: 20
-  enableGroundFallbackRaycast: 0
+  enableGroundFallbackRaycast: 1
   worldStaticColliderLayers:
     serializedVersion: 2
     m_Bits: 512
@@ -796,10 +816,13 @@ MonoBehaviour:
   PostThrowIgnorePlayerCollision: 1
   PostThrowIgnoreSlimeSimulation: 1
   PostThrowIgnoreDurationSeconds: 2
-  pickupFeedbacks: {fileID: 0}
-  throwFeedbacks: {fileID: 0}
+  pickupFeedbacks: {fileID: 6174945733581378328, guid: 0505c11aca630f345b3d8293c3753797,
+    type: 3}
+  throwFeedbacks: {fileID: 6174945733581378328, guid: 192129bbaaffce743b5158159c6b9638,
+    type: 3}
   autoDetachFeedbacks: {fileID: 0}
-  consumeFeedbacks: {fileID: 0}
+  consumeFeedbacks: {fileID: 5962880599129252215, guid: 702bb9ead2e119d41a20a0fb4da93bc1,
+    type: 3}
 --- !u!114 &4923431413906178474
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -862,7 +885,7 @@ MonoBehaviour:
   movementAbility: {fileID: 0}
   jumpAbility: {fileID: 0}
   controller3D: {fileID: 0}
-  tintTransitionSeconds: 0.5
+  tintTransitionSeconds: 1
 --- !u!114 &7812721431200277029
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -884,15 +907,289 @@ MonoBehaviour:
   BlockingMovementStates: 
   BlockingConditionStates: 
   BlockingWeaponStates: 
-  PurificationInterval: 3
-  ContributionValue: 10
-  RadiationRadius: 8
+  FootprintSpacing: 1.5
+  ContributionValue: 20
+  RadiationRadius: 3
+  SkipIfIndicatorExistsRadius: 1
   IndicatorType: SlimePuri
   EnablePurification: 1
-  RemoveIndicatorsOnDisable: 0
-  _timeSinceLastPurification: 0
+  _distanceAccumulator: 0
   _indicatorCounter: 0
   _totalIndicatorsCreated: 0
+--- !u!1 &9074117827891083774
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6512966773977748317}
+  - component: {fileID: 310892264626022627}
+  m_Layer: 10
+  m_Name: "\u79FB\u52A8\u58F0\u97F3 (1)"
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6512966773977748317
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9074117827891083774}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 840677875511296776}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &310892264626022627
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9074117827891083774}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6da43522623d4704e979466dc7650b65, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  Feedbacks: []
+  InitializationMode: 2
+  AutoInitialization: 1
+  SafeMode: 3
+  Direction: 0
+  AutoChangeDirectionOnEnd: 0
+  AutoPlayOnStart: 0
+  AutoPlayOnEnable: 0
+  ForceTimescaleMode: 0
+  ForcedTimescaleMode: 1
+  DurationMultiplier: 1
+  TimescaleMultiplier: 1
+  RandomizeDuration: 0
+  RandomDurationMultiplier: {x: 0.5, y: 1.5}
+  DisplayFullDurationDetails: 0
+  PlayerTimescaleMode: 1
+  OnlyPlayIfWithinRange: 0
+  RangeCenter: {fileID: 0}
+  RangeDistance: 5
+  UseRangeFalloff: 0
+  RangeFalloff:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  RemapRangeFalloff: {x: 0, y: 1}
+  IgnoreRangeEvents: 0
+  CooldownDuration: 0
+  InitialDelay: 0
+  CanPlay: 1
+  CanPlayWhileAlreadyPlaying: 1
+  ChanceToPlay: 100
+  FeedbacksIntensity: 1
+  Events:
+    TriggerMMFeedbacksEvents: 0
+    TriggerUnityEvents: 1
+    OnPlay:
+      m_PersistentCalls:
+        m_Calls: []
+    OnPause:
+      m_PersistentCalls:
+        m_Calls: []
+    OnStop:
+      m_PersistentCalls:
+        m_Calls: []
+    OnResume:
+      m_PersistentCalls:
+        m_Calls: []
+    OnChangeDirection:
+      m_PersistentCalls:
+        m_Calls: []
+    OnComplete:
+      m_PersistentCalls:
+        m_Calls: []
+    OnRestoreInitialValues:
+      m_PersistentCalls:
+        m_Calls: []
+    OnSkipToTheEnd:
+      m_PersistentCalls:
+        m_Calls: []
+    OnInitializationComplete:
+      m_PersistentCalls:
+        m_Calls: []
+    OnEnable:
+      m_PersistentCalls:
+        m_Calls: []
+    OnDisable:
+      m_PersistentCalls:
+        m_Calls: []
+  DebugActive: 0
+  InScriptDrivenPause: 0
+  FeedbacksList:
+  - rid: 8310990759098843218
+  KeepPlayModeChanges: 0
+  PerformanceMode: 0
+  RestoreInitialValuesOnDisable: 0
+  StopFeedbacksOnDisable: 0
+  PlayCount: 0
+  references:
+    version: 2
+    RefIds:
+    - rid: 8310990759098843218
+      type: {class: MMF_Sound, ns: MoreMountains.Feedbacks, asm: MoreMountains.Tools}
+      data:
+        Active: 1
+        UniqueID: 131283753
+        Label: Sound
+        OriginalLabel: Sound
+        ChannelMode: 0
+        Channel: 0
+        MMChannelDefinition: {fileID: 0}
+        Chance: 100
+        Timing:
+          TimescaleMode: 0
+          ExcludeFromHoldingPauses: 0
+          ContributeToTotalDuration: 1
+          InitialDelay: 0
+          CooldownDuration: 0
+          InterruptsOnStop: 1
+          NumberOfRepeats: 0
+          RepeatForever: 0
+          DelayBetweenRepeats: 1
+          PlayCount: 0
+          LimitPlayCount: 0
+          MaxPlayCount: 3
+          SetPlayCountToZeroOnReset: 0
+          MMFeedbacksDirectionCondition: 0
+          PlayDirection: 0
+          ConstantIntensity: 0
+          UseIntensityInterval: 0
+          IntensityIntervalMin: 0
+          IntensityIntervalMax: 0
+          Sequence: {fileID: 0}
+          TrackID: 0
+          Quantized: 0
+          TargetBPM: 120
+        AutomatedTargetAcquisition:
+          Mode: 0
+          ChildIndex: 0
+        RandomizeOutput: 0
+        RandomMultiplier: {x: 0.8, y: 1}
+        RandomizeDuration: 0
+        RandomDurationMultiplier: {x: 0.5, y: 2}
+        UseRange: 0
+        RangeDistance: 5
+        UseRangeFalloff: 0
+        RangeFalloff:
+          serializedVersion: 2
+          m_Curve:
+          - serializedVersion: 3
+            time: 0
+            value: 1
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+            weightedMode: 0
+            inWeight: 0
+            outWeight: 0
+          - serializedVersion: 3
+            time: 1
+            value: 0
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+            weightedMode: 0
+            inWeight: 0
+            outWeight: 0
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        RemapRangeFalloff: {x: 0, y: 1}
+        AutomaticShakerSetupButton:
+          ButtonText: Automatic Shaker Setup
+        Owner: {fileID: 310892264626022627}
+        DebugActive: 0
+        Sfx: {fileID: 0}
+        RandomSfx:
+        - {fileID: 8300000, guid: 9b17e8b4e6b80d24ead0f70bdc10b626, type: 3}
+        - {fileID: 8300000, guid: 0b55e24b1974e0d46bcd7df750bf5308, type: 3}
+        - {fileID: 8300000, guid: 9df777722f9fe49438a946569dee2175, type: 3}
+        - {fileID: 8300000, guid: 698534b42a51fef49b9e485f1dbb9905, type: 3}
+        - {fileID: 8300000, guid: f964c0d30b7210545a72c63eb3ac6165, type: 3}
+        TestPlayButton:
+          ButtonText: Debug Play Sound
+        TestStopButton:
+          ButtonText: Debug Stop Sound
+        PlayMethod: 0
+        PoolSize: 10
+        UseLegacyEventsMode: 0
+        StopSoundOnFeedbackStop: 1
+        MinVolume: 1
+        MaxVolume: 1
+        MinPitch: 1
+        MaxPitch: 1
+        SfxAudioMixerGroup: {fileID: 0}
+        Priority: 128
+        PanStereo: 0
+        SpatialBlend: 0
+        DopplerLevel: 1
+        Spread: 0
+        RolloffMode: 0
+        MinDistance: 1
+        MaxDistance: 500
+        UseCustomRolloffCurve: 0
+        CustomRolloffCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        UseSpatialBlendCurve: 0
+        SpatialBlendCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        UseReverbZoneMixCurve: 0
+        ReverbZoneMixCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        UseSpreadCurve: 0
+        SpreadCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
 --- !u!1001 &83669942733672266
 PrefabInstance:
   m_ObjectHideFlags: 0

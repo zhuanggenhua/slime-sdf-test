@@ -544,14 +544,7 @@ namespace Revive.Slime
                             {
                                 // 召回时使用更低的 lerpFactor，让粒子更跟随控制器
                                 lerpFactor = math.min(lerpFactor, 0.3f);
-                                float originalY = velocity.y;
                                 velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
-                                if (cl.Velocity.y > 0f)
-                                    velocity.y = math.max(originalY, cl.Velocity.y);
-                                else if (cl.Velocity.y < 0f)
-                                    velocity.y = math.min(originalY, cl.Velocity.y);
-                                else
-                                    velocity.y = originalY;
                             }
                             else if (isSeparated)
                             {
@@ -562,7 +555,11 @@ namespace Revive.Slime
                             }
                             else
                             {
+                                // MainBody：部分保留 Y（空中剪切效果 vs 地面稳定性的折中）
+                                // 保留比例 0.7：保留70%原始Y惯性，30%跟随控制器Y
+                                float originalY = velocity.y;
                                 velocity = math.lerp(cl.Velocity, velocity, lerpFactor);
+                                velocity.y = math.lerp(velocity.y, originalY, 0.7f);
                             }
                             
                             // 原版：向心力
@@ -1135,20 +1132,15 @@ namespace Revive.Slime
                 float h = math.lerp(h0, h1, tz);
                 heightSim = TerrainOriginSim.y + h * sizeY;
 
-                int xi = math.clamp((int)math.round(fx), 1, TerrainResX - 2);
-                int zi = math.clamp((int)math.round(fz), 1, TerrainResZ - 2);
-
-                int idxC = zi * TerrainResX + xi;
-                float hL = TerrainHeights01[idxC - 1];
-                float hR = TerrainHeights01[idxC + 1];
-                float hD = TerrainHeights01[idxC - TerrainResX];
-                float hU = TerrainHeights01[idxC + TerrainResX];
-
-                float dh01dx = (hR - hL) * 0.5f;
-                float dh01dz = (hU - hD) * 0.5f;
-
                 float cellX = sizeX / (TerrainResX - 1);
                 float cellZ = sizeZ / (TerrainResZ - 1);
+
+                // 使用双线性插值面的偏导数计算法线，避免 round 到最近格点导致的法线跳变
+                // h(tx,tz) = lerp(lerp(h00,h10,tx), lerp(h01,h11,tx), tz)
+                // dh/dx = ((h10-h00)*(1-tz) + (h11-h01)*tz) / cellX
+                // dh/dz = ((h01-h00)*(1-tx) + (h11-h10)*tx) / cellZ
+                float dh01dx = (h10 - h00) * (1f - tz) + (h11 - h01) * tz;
+                float dh01dz = (h01 - h00) * (1f - tx) + (h11 - h10) * tx;
 
                 float dhdx = (dh01dx * sizeY) / math.max(cellX, 1e-6f);
                 float dhdz = (dh01dz * sizeY) / math.max(cellZ, 1e-6f);
@@ -1249,7 +1241,6 @@ namespace Revive.Slime
                 // 记录碰撞轴，用于后续速度衰减
                 bool3 collisionAxes = false;
                 bool hadObbCollision = false;
-                bool hadAabbCollision = false;
                 float3 obbNormal = float3.zero;
                 float obbFriction = 0f;
                 float3 obbSurfaceVelocity = float3.zero;
@@ -1332,7 +1323,6 @@ namespace Revive.Slime
                                 if (remain.z < remain[axis]) axis = 2;
                                 simPos[axis] = box.Center[axis] + math.sign(dir[axis]) * box.Extent[axis];
                                 collisionAxes[axis] = true;
-                                hadAabbCollision = true;
                             }
                             break;
                         }
@@ -1386,7 +1376,6 @@ namespace Revive.Slime
                 
                 bool allowGroundClamp = PBF_Utils.AllowGroundClamp(UseStaticSdf, DisableStaticColliderFallback);
                 bool allowGroundClampForType = p.Type == ParticleType.MainBody || p.Type == ParticleType.Separated || p.Type == ParticleType.Emitted;
-                bool hadGroundClampCollision = false;
                 if (!terrainCovers && allowGroundClamp && allowGroundClampForType)
                 {
                     int controllerIndex = GetControllerIndex(p);
@@ -1394,7 +1383,6 @@ namespace Revive.Slime
                     if (PBF_Utils.ClampToGroundPlane(ref simPos, groundY, groundPoint, groundNormal))
                     {
                         collisionAxes.y = true;
-                        hadGroundClampCollision = true;
                     }
                 }
                 

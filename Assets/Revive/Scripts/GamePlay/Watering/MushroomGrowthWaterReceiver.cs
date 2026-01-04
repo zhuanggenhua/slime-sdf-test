@@ -1,8 +1,6 @@
-using System.Collections;
-using MoreMountains.Feedbacks;
-using Revive.GamePlay.Purification;
 using UnityEngine;
 using Revive.Environment;
+using Revive.GamePlay.Purification;
 using Revive.Slime;
 
 namespace Revive.Environment.Watering
@@ -31,70 +29,82 @@ namespace Revive.Environment.Watering
 
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
-        private bool _activated;
         private MushroomJumpPad3D _jumpPad;
-        private bool _resetQueued;
-        private bool _scaleResetQueued;
 
         private SlimeCarryableObject _carryable;
-        private bool _carryablePickupEnabledPrev;
-        private bool _carryablePickupPrevCaptured;
 
         private int _purificationIndicatorCounter;
-
-        public override bool WantsWater => !_activated;
 
         protected override void Awake()
         {
             base.Awake();
-            if (targetTransform == null)
-                targetTransform = transform;
-            EnsureBaseScale();
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
 
             if (_carryable == null)
                 _carryable = GetComponentInParent<SlimeCarryableObject>();
 
-            if (_activated)
+            if (!Completed)
+            {
+                DisableExistingJumpPadAtStartup();
+            }
+
+            if (Completed)
             {
                 ApplyActivatedScale();
                 SetCarryablePickupEnabled(false);
                 EnsureJumpPad();
                 if (_jumpPad != null)
                 {
+                    _jumpPad.enabled = true;
                     RefreshJumpPadAfterScaleChange();
                 }
             }
         }
 
-        protected override void OnChargeUpdated(WaterInput input)
+        private void DisableExistingJumpPadAtStartup()
         {
-            if (targetTransform == null)
-                targetTransform = transform;
-            EnsureBaseScale();
+            Transform host = jumpPadHost != null ? jumpPadHost : transform;
+            if (host == null)
+            {
+                return;
+            }
+
+            MushroomJumpPad3D[] pads = host.GetComponentsInChildren<MushroomJumpPad3D>(includeInactive: true);
+            for (int i = 0; i < pads.Length; i++)
+            {
+                MushroomJumpPad3D pad = pads[i];
+                if (pad == null)
+                    continue;
+                if (pad.enabled)
+                    pad.enabled = false;
+            }
         }
 
-        protected override void OnChargeCompleted(WaterInput input)
+        protected override void OnChargeUpdated(WaterInput input)
         {
-            if (_activated)
-                return;
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
+        }
 
-            if (targetTransform == null)
-                targetTransform = transform;
-            EnsureBaseScale();
+        protected override void OnRestoredByPurification(PurificationRestoreTrigger trigger, Vector3 positionWorld)
+        {
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
 
-            _activated = true;
             SetCarryablePickupEnabled(false);
             EnsureJumpPad();
-
-            string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
-            PurificationSystem system = GetPurificationSystemChecked();
-            system.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
+            if (_jumpPad != null)
+            {
+                _jumpPad.enabled = false;
+            }
 
             Vector3 targetScale = GetActivatedLocalScale();
             TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
             {
                 if (_jumpPad != null)
                 {
+                    _jumpPad.enabled = true;
                     RefreshJumpPadAfterScaleChange();
                 }
             });
@@ -106,13 +116,6 @@ namespace Revive.Environment.Watering
                 _carryable = GetComponentInParent<SlimeCarryableObject>();
             if (_carryable == null)
                 return;
-
-            if (!_carryablePickupPrevCaptured)
-            {
-                _carryablePickupPrevCaptured = true;
-                _carryablePickupEnabledPrev = _carryable.PickupEnabled;
-            }
-
             _carryable.PickupEnabled = enabled;
         }
 
@@ -125,63 +128,14 @@ namespace Revive.Environment.Watering
             _jumpPad = host.GetComponent<MushroomJumpPad3D>();
             if (_jumpPad == null)
             {
+                _jumpPad = host.GetComponentInChildren<MushroomJumpPad3D>(includeInactive: true);
+            }
+            if (_jumpPad == null)
+            {
                 _jumpPad = host.gameObject.AddComponent<MushroomJumpPad3D>();
             }
 
-            _jumpPad.OneShot = true;
-            _jumpPad.Bounced -= OnJumpPadBounced;
-            _jumpPad.Bounced += OnJumpPadBounced;
-        }
-
-        private void OnJumpPadBounced(MushroomJumpPad3D pad, MoreMountains.TopDownEngine.TopDownController3D controller)
-        {
-            if (pad == null || pad != _jumpPad)
-                return;
-
-            EnsureBaseScale();
-
-            if (!_scaleResetQueued)
-            {
-                _scaleResetQueued = true;
-                StartCoroutine(ResetScaleAfterBounceRoutine());
-            }
-
-            if (!_resetQueued)
-            {
-                _resetQueued = true;
-                StartCoroutine(ResetAfterBounceRoutine(pad.OneShotDestroyDelay));
-            }
-        }
-
-        private IEnumerator ResetScaleAfterBounceRoutine()
-        {
-            yield return new WaitForSeconds(0.5f);
-            EnsureBaseScale();
-            TweenLocalScale(targetTransform, _baseScale, scaleTransition);
-            _scaleResetQueued = false;
-        }
-
-        private IEnumerator ResetAfterBounceRoutine(float delay)
-        {
-            if (delay > 0f)
-                yield return new WaitForSeconds(delay);
-
-            _activated = false;
-            ResetCharge();
-            _resetQueued = false;
-            _scaleResetQueued = false;
-
-            if (_carryablePickupPrevCaptured)
-            {
-                SetCarryablePickupEnabled(_carryablePickupEnabledPrev);
-                _carryablePickupPrevCaptured = false;
-            }
-
-            if (_jumpPad != null)
-            {
-                _jumpPad.Bounced -= OnJumpPadBounced;
-                _jumpPad = null;
-            }
+            _jumpPad.OneShot = false;
         }
 
         private void ApplyActivatedScale()
@@ -203,7 +157,7 @@ namespace Revive.Environment.Watering
 
         private Vector3 GetActivatedLocalScale()
         {
-            EnsureBaseScale();
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
 
             float mul = 1f + yScalePerStage;
             if (uniformScale)
@@ -212,17 +166,6 @@ namespace Revive.Environment.Watering
             }
 
             return new Vector3(_baseScale.x, _baseScale.y * mul, _baseScale.z);
-        }
-
-        private void EnsureBaseScale()
-        {
-            if (_baseScaleInitialized)
-                return;
-            if (targetTransform == null)
-                return;
-
-            _baseScaleInitialized = true;
-            _baseScale = targetTransform.localScale;
         }
     }
 }

@@ -1,7 +1,6 @@
-using MoreMountains.Feedbacks;
-using Revive.GamePlay.Purification;
 using UnityEngine;
 using Revive.Environment;
+using Revive.GamePlay.Purification;
 using Revive.Slime;
 
 namespace Revive.Environment.Watering
@@ -28,21 +27,16 @@ namespace Revive.Environment.Watering
 
         private Vector3 _baseScale;
         private bool _baseScaleInitialized;
-        private bool _activated;
         private MushroomJumpPad3D _jumpPad;
-
-        public override bool WantsWater => !_activated;
 
         protected override void Awake()
         {
             base.Awake();
 
-            if (targetTransform == null)
-                targetTransform = transform;
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
 
-            EnsureBaseScale();
-
-            if (_activated)
+            if (Completed)
             {
                 ApplyActivatedScale();
                 EnsureJumpPad();
@@ -56,6 +50,7 @@ namespace Revive.Environment.Watering
             {
                 ApplyInitialScale();
                 EnsureJumpPad();
+                DisableAllJumpPadsAtStartup();
                 if (_jumpPad != null)
                 {
                     _jumpPad.enabled = false;
@@ -64,29 +59,34 @@ namespace Revive.Environment.Watering
             }
         }
 
-        protected override void OnChargeUpdated(WaterInput input)
+        private void DisableAllJumpPadsAtStartup()
         {
-            if (targetTransform == null)
-                targetTransform = transform;
-            EnsureBaseScale();
-        }
-
-        protected override void OnChargeCompleted(WaterInput input)
-        {
-            if (_activated)
+            Transform host = jumpPadHost != null ? jumpPadHost : transform;
+            if (host == null)
                 return;
 
-            if (targetTransform == null)
-                targetTransform = transform;
+            MushroomJumpPad3D[] pads = host.GetComponentsInChildren<MushroomJumpPad3D>(includeInactive: true);
+            for (int i = 0; i < pads.Length; i++)
+            {
+                MushroomJumpPad3D pad = pads[i];
+                if (pad == null)
+                    continue;
+                if (pad.enabled)
+                    pad.enabled = false;
+            }
+        }
 
-            EnsureBaseScale();
+        protected override void OnChargeUpdated(WaterInput input)
+        {
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
+        }
 
-            _activated = true;
+        protected override void OnRestoredByPurification(PurificationRestoreTrigger trigger, Vector3 positionWorld)
+        {
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
             EnsureJumpPad();
-
-            string indicatorName = $"{gameObject.name}_{PurificationIndicatorType}_{_purificationIndicatorCounter++}";
-            PurificationSystem system = GetPurificationSystemChecked();
-            system.AddIndicator(indicatorName, transform.position, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
 
             Vector3 targetScale = GetActivatedLocalScale();
             TweenLocalScale(targetTransform, targetScale, scaleTransition, () =>
@@ -107,6 +107,10 @@ namespace Revive.Environment.Watering
 
             Transform host = jumpPadHost != null ? jumpPadHost : transform;
             _jumpPad = host.GetComponent<MushroomJumpPad3D>();
+            if (_jumpPad == null)
+            {
+                _jumpPad = host.GetComponentInChildren<MushroomJumpPad3D>(includeInactive: true);
+            }
         }
 
         private void ApplyInitialScale()
@@ -114,7 +118,7 @@ namespace Revive.Environment.Watering
             if (targetTransform == null)
                 return;
 
-            EnsureBaseScale();
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
             targetTransform.localScale = new Vector3(
                 _baseScale.x * initialScaleMultiplier.x,
                 _baseScale.y * initialScaleMultiplier.y,
@@ -130,7 +134,7 @@ namespace Revive.Environment.Watering
 
         private Vector3 GetActivatedLocalScale()
         {
-            EnsureBaseScale();
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
             return _baseScale;
         }
 
@@ -143,15 +147,5 @@ namespace Revive.Environment.Watering
             _jumpPad.RefreshPlatformFeedbackBaseScale();
         }
 
-        private void EnsureBaseScale()
-        {
-            if (_baseScaleInitialized)
-                return;
-            if (targetTransform == null)
-                return;
-
-            _baseScaleInitialized = true;
-            _baseScale = targetTransform.localScale;
-        }
     }
 }

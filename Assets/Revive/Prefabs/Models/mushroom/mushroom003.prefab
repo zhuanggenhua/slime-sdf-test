@@ -200,8 +200,9 @@ MonoBehaviour:
   _sustainDuration: 1
   _rampUpDuration: 1
   _startJumpSpeed: 0.5
-  _bounceFeedback: {fileID: 0}
-  _platformFeedbackTarget: {fileID: 0}
+  _bounceFeedback: {fileID: 6174945733581378328, guid: 2bb82d2cf30f8dc48b948fc4aac0e897,
+    type: 3}
+  _platformFeedbackTarget: {fileID: 4799213824985100127}
   _platformPressYScale: 0.85
   _platformPressDuration: 0.06
   _platformReleaseDuration: 0.1
@@ -253,6 +254,16 @@ MonoBehaviour:
   consumeEmitted: 1
   consumeSeparated: 1
   consumeDroplets: 1
+  purificationIndicatorType: Water
+  purificationContributionValue: 10
+  purificationRadiationRadius: 8
+  waterTickFeedbacks: {fileID: 1055043618324555985, guid: fde08be48a58a154eb6d382c83526afb,
+    type: 3}
+  waterTickCooldownSeconds: 0.12
+  waterCompleteFeedbacks: {fileID: 0}
+  charge: 0
+  chargeRequired: 25
+  completed: 0
   targetTransform: {fileID: 4799213824985100127}
   jumpPadHost: {fileID: 4799213824985100127}
   initialScaleMultiplier: {x: 1, y: 0.5, z: 1}
@@ -300,8 +311,6 @@ MonoBehaviour:
       m_PreInfinity: 2
       m_PostInfinity: 2
       m_RotationOrder: 4
-  charge: 0
-  chargeRequired: 25
 --- !u!65 &3312662276050562645
 BoxCollider:
   m_ObjectHideFlags: 0

@@ -1,5 +1,10 @@
 Shader "Hidden/Revive/SlimeStencilMask"
 {
+    Properties
+    {
+        _StencilRef("Stencil Ref", Float) = 1
+    }
+
     SubShader
     {
         Tags { "RenderPipeline" = "UniversalRenderPipeline" "Queue" = "Transparent+2" "RenderType" = "Transparent" }
@@ -14,7 +19,7 @@ Shader "Hidden/Revive/SlimeStencilMask"
 
             Stencil
             {
-                Ref 1
+                Ref [_StencilRef]
                 Comp Always
                 Pass Replace
                 Fail Keep

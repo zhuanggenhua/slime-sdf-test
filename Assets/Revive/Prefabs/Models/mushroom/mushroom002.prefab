@@ -125,8 +125,9 @@ MonoBehaviour:
   _sustainDuration: 1
   _rampUpDuration: 1
   _startJumpSpeed: 0.5
-  _bounceFeedback: {fileID: 0}
-  _platformFeedbackTarget: {fileID: 0}
+  _bounceFeedback: {fileID: 6174945733581378328, guid: 2bb82d2cf30f8dc48b948fc4aac0e897,
+    type: 3}
+  _platformFeedbackTarget: {fileID: 4567093079383731666}
   _platformPressYScale: 0.85
   _platformPressDuration: 0.06
   _platformReleaseDuration: 0.1
@@ -160,3 +161,9 @@ MonoBehaviour:
   _triggerOverlapDown: 0.1
   _debugLogs: 1
   _debugSceneLabel: 1
+--- !u!4 &4567093079383731666 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: c6f956d4153d3084ab745d6455848435,
+    type: 3}
+  m_PrefabInstance: {fileID: 4101419749612882489}
+  m_PrefabAsset: {fileID: 0}

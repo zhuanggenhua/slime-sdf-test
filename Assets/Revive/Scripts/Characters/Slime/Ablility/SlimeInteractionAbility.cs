@@ -39,6 +39,9 @@ namespace Revive.Slime
 
         protected float _lastEmitTime;
 
+        private bool _emitPressedPrev;
+        private bool _emitSequenceHasEmitted;
+
         protected override void Initialization()
         {
             base.Initialization();
@@ -96,6 +99,18 @@ namespace Revive.Slime
             bool wantEmitOnce = shootState == MMInput.ButtonStates.ButtonDown;
             bool wantEmitRepeat = shootState == MMInput.ButtonStates.ButtonPressed;
 
+            bool emitPressedNow = wantEmitOnce || wantEmitRepeat;
+            bool emitReleasedNow = (shootState == MMInput.ButtonStates.ButtonUp) || (!emitPressedNow && _emitPressedPrev);
+            if (emitReleasedNow)
+            {
+                _emitPressedPrev = false;
+                _emitSequenceHasEmitted = false;
+            }
+            else
+            {
+                _emitPressedPrev = emitPressedNow;
+            }
+
             if (!wantEmitOnce && !wantEmitRepeat)
                 return;
 
@@ -112,7 +127,14 @@ namespace Revive.Slime
                 return;
 
             _lastEmitTime = Time.time;
-            SlimePBF.EmitParticles();
+
+            bool isFirstEmitInSequence = !_emitSequenceHasEmitted;
+            bool emitted = SlimePBF.EmitParticles();
+            if (emitted)
+            {
+                SlimePBF.PlayEmitSfx(isFirstEmitInSequence);
+                _emitSequenceHasEmitted = true;
+            }
         }
 
         protected virtual void HandleRecallInput()
@@ -154,20 +176,23 @@ namespace Revive.Slime
 
             if (SlimePBF != null && consumeSpec != null)
             {
-                SlimePBF.TriggerConsumeBubbleBurst(
-                    consumeSpec.ConsumeBubbleBurstCount,
-                    consumeSpec.ConsumeBubbleLifetimeSeconds,
-                    consumeSpec.ConsumeBubbleRadiusMultiplier,
-                    consumeSpec.ConsumeBubbleUpSpeedWorld
-                );
-
-                if (consumeSpec.ConsumeBubbleBoostSeconds > 0f)
+                if (consumeSpec.EnableConsumeBubbles)
                 {
-                    SlimePBF.TriggerConsumeBubbleBoost(
-                        consumeSpec.ConsumeBubbleBoostMultiplier,
-                        consumeSpec.ConsumeBubbleBoostSeconds,
-                        consumeSpec.ConsumeBubbleBoostSizeMultiplier
+                    SlimePBF.TriggerConsumeBubbleBurst(
+                        consumeSpec.ConsumeBubbleBurstCount,
+                        consumeSpec.ConsumeBubbleLifetimeSeconds,
+                        consumeSpec.ConsumeBubbleRadiusMultiplier,
+                        consumeSpec.ConsumeBubbleUpSpeedWorld
                     );
+
+                    if (consumeSpec.ConsumeBubbleBoostSeconds > 0f)
+                    {
+                        SlimePBF.TriggerConsumeBubbleBoost(
+                            consumeSpec.ConsumeBubbleBoostMultiplier,
+                            consumeSpec.ConsumeBubbleBoostSeconds,
+                            consumeSpec.ConsumeBubbleBoostSizeMultiplier
+                        );
+                    }
                 }
             }
 

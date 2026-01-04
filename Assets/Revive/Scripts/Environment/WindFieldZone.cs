@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using MoreMountains.Feedbacks;
 using MoreMountains.TopDownEngine;
-using UnityEngine;
 using Revive.Slime;
+using UnityEngine;
 
 namespace Revive.Environment
 {
@@ -153,11 +153,11 @@ namespace Revive.Environment
             bool wasEmpty = _activeTargetIds.Count == 0;
             if (_activeTargetIds.Add(id))
             {
-                enterFeedbacks?.PlayFeedbacks(pos);
+                MMFeedbacksHelper.Play(enterFeedbacks, pos);
 
                 if (wasEmpty)
                 {
-                    loopFeedbacks?.PlayFeedbacks(pos);
+                    MMFeedbacksHelper.Play(loopFeedbacks, pos);
                 }
             }
         }
@@ -169,11 +169,11 @@ namespace Revive.Environment
 
             if (_activeTargetIds.Remove(id))
             {
-                exitFeedbacks?.PlayFeedbacks(pos);
+                MMFeedbacksHelper.Play(exitFeedbacks, pos);
 
                 if (_activeTargetIds.Count == 0)
                 {
-                    loopFeedbacks?.StopFeedbacks();
+                    MMFeedbacksHelper.Stop(loopFeedbacks);
                 }
             }
         }

@@ -1,6 +1,6 @@
-using Revive.GamePlay.Purification;
 using UnityEngine;
 using Revive.Slime;
+using Revive.GamePlay.Purification;
 
 namespace Revive.Environment.Watering
 {
@@ -21,69 +21,36 @@ namespace Revive.Environment.Watering
         private bool _baseScaleInitialized;
         private Vector3 _baseScale;
 
-        private bool _matured;
-        private PurificationIndicator _sporeIndicator;
-
-        public override bool WantsWater => !_matured;
-
         protected override void Awake()
         {
             base.Awake();
 
-            if (targetTransform == null)
-                targetTransform = transform;
-
-            EnsureBaseScale();
-            ApplyScaleByCharge01(GetCharge01());
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
+            if (Completed)
+            {
+                targetTransform.localScale = _baseScale;
+            }
+            else
+            {
+                ApplyScaleByCharge01(0f);
+            }
 
             SetPurificationConfig("Spore", PurificationContributionValue);
         }
 
-        protected override void OnDisable()
-        {
-            base.OnDisable();
-            RemovePurificationIndicator(ref _sporeIndicator);
-        }
-
         protected override void OnChargeUpdated(WaterInput input)
         {
-            if (_matured)
+            if (Completed)
                 return;
-
-            if (targetTransform == null)
-                targetTransform = transform;
-
-            EnsureBaseScale();
-            ApplyScaleByCharge01(GetCharge01());
         }
 
-        protected override void OnChargeCompleted(WaterInput input)
+        protected override void OnRestoredByPurification(PurificationRestoreTrigger trigger, Vector3 positionWorld)
         {
-            if (_matured)
-                return;
-
-            if (targetTransform == null)
-                targetTransform = transform;
-
-            EnsureBaseScale();
-
-            _matured = true;
-
-            string sporeName = $"Spore_{gameObject.GetInstanceID()}";
-            EnsurePurificationIndicator(ref _sporeIndicator, sporeName, transform.position, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
+            ResolveTargetTransform(ref targetTransform);
+            EnsureBaseLocalScale(targetTransform, ref _baseScaleInitialized, ref _baseScale);
 
             TweenLocalScale(targetTransform, _baseScale, matureScaleTransition);
-        }
-
-        private void EnsureBaseScale()
-        {
-            if (_baseScaleInitialized)
-                return;
-            if (targetTransform == null)
-                return;
-
-            _baseScaleInitialized = true;
-            _baseScale = targetTransform.localScale;
         }
 
         private void ApplyScaleByCharge01(float charge01)

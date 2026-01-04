@@ -1,3 +1,4 @@
+using MoreMountains.Feedbacks;
 using Revive.Environment;
 using Revive.GamePlay.Purification;
 using Revive.Slime;
@@ -15,6 +16,10 @@ namespace Revive.Environment.Watering
         [ChineseLabel("目标藤蔓")]
         [SerializeField] private GrowableVine targetVine;
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("生长中反馈")]
+        [SerializeField] private MMFeedbacks growingFeedbacks;
+
         [ChineseLabel("首次浇水生成网格")]
         [DefaultValue(true)]
         [SerializeField] private bool generateMeshOnFirstWater = true;
@@ -29,18 +34,19 @@ namespace Revive.Environment.Watering
 
         private bool _meshGenerated;
         private Coroutine _growthTransitionRoutine;
-        private bool _completed;
 
-        public override bool WantsWater => !_completed;
 
         protected override void Awake()
         {
             base.Awake();
             ResolveReferencesIfNeeded();
 
-            if (targetVine != null && targetVine.GetGrowthProgress() >= 1f)
+            if (Completed)
             {
-                _completed = true;
+                if (targetVine != null)
+                {
+                    targetVine.SetGrowthProgress(1f);
+                }
             }
         }
 
@@ -48,6 +54,18 @@ namespace Revive.Environment.Watering
         {
             base.OnValidate();
             ResolveReferencesIfNeeded();
+        }
+
+        protected override void OnDisable()
+        {
+            base.OnDisable();
+            if (_growthTransitionRoutine != null)
+            {
+                StopCoroutine(_growthTransitionRoutine);
+                _growthTransitionRoutine = null;
+            }
+
+            StopGrowingFeedbacks();
         }
 
         protected override void OnChargeUpdated(WaterInput input)
@@ -60,27 +78,24 @@ namespace Revive.Environment.Watering
             }
         }
 
-        protected override void OnChargeCompleted(WaterInput input)
+        protected override void OnRestoredByPurification(PurificationRestoreTrigger trigger, Vector3 positionWorld)
         {
-            if (_completed)
-                return;
-
-            _completed = true;
-
-            // 推进藤蔓生长进度
+            ResolveReferencesIfNeeded();
             if (targetVine != null)
             {
                 SmoothSetGrowthProgress(1f);
             }
+        }
 
-            // 生成净化指示物
-            var system = GetPurificationSystemChecked();
-            if (system != null)
-            {
-                string indicatorName = $"{gameObject.name}_Vine_{gameObject.GetInstanceID()}";
-                Vector3 pos = GetIndicatorPositionWorld(input.PositionWorld);
-                system.AddIndicator(indicatorName, pos, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
-            }
+        public override bool TryGetUnlockIndicatorConfig(
+            PurificationRestoreTrigger trigger,
+            Vector3 unlockPositionWorld,
+            out string indicatorName,
+            out Vector3 indicatorPositionWorld)
+        {
+            indicatorName = string.Empty;
+            indicatorPositionWorld = GetIndicatorPositionWorld(unlockPositionWorld);
+            return true;
         }
 
         private void SmoothSetGrowthProgress(float targetProgress)
@@ -91,6 +106,7 @@ namespace Revive.Environment.Watering
             float duration = Mathf.Max(0f, nodeGrowthTransitionSeconds);
             if (duration <= 0f)
             {
+                StopGrowingFeedbacks();
                 targetVine.SetGrowthProgress(targetProgress);
                 return;
             }
@@ -101,8 +117,18 @@ namespace Revive.Environment.Watering
                 _growthTransitionRoutine = null;
             }
 
+            StopGrowingFeedbacks();
+
             float from = targetVine.GetGrowthProgress();
+
+            if (Mathf.Approximately(from, targetProgress))
+            {
+                targetVine.SetGrowthProgress(targetProgress);
+                return;
+            }
+
             _growthTransitionRoutine = StartCoroutine(GrowthTransitionRoutine(from, targetProgress, duration));
+            PlayGrowingFeedbacks();
         }
 
         private System.Collections.IEnumerator GrowthTransitionRoutine(float from, float to, float duration)
@@ -113,6 +139,7 @@ namespace Revive.Environment.Watering
                 if (targetVine == null)
                 {
                     _growthTransitionRoutine = null;
+                    StopGrowingFeedbacks();
                     yield break;
                 }
 
@@ -129,6 +156,21 @@ namespace Revive.Environment.Watering
             }
 
             _growthTransitionRoutine = null;
+            StopGrowingFeedbacks();
+        }
+
+        private void PlayGrowingFeedbacks()
+        {
+            if (growingFeedbacks == null)
+                return;
+
+            Vector3 pos = GetIndicatorPositionWorld(transform.position);
+            MMFeedbacksHelper.Play(growingFeedbacks, pos);
+        }
+
+        private void StopGrowingFeedbacks()
+        {
+            MMFeedbacksHelper.Stop(growingFeedbacks);
         }
 
         private void ResolveReferencesIfNeeded()

@@ -70,6 +70,9 @@ namespace Revive.Slime
         private bool _heldUsedGravity;
         private RigidbodyInterpolation _heldInterpolation;
         private bool _heldInterpolationCached;
+        private bool _heldDetectCollisions;
+        private bool _heldDetectCollisionsCached;
+        private bool _heldWorldCollisionDisabled;
         private Collider[] _heldColliders;
         private bool[] _heldColliderWasTrigger;
         private bool _heldIndexIgnored;
@@ -95,14 +98,8 @@ namespace Revive.Slime
         private float _heldMoveBlockedSeconds;
         private readonly Collider[] _releaseOverlapBuffer = new Collider[64];
 
-        private Vector3 _heldAnchorSmoothedWorld;
-        private bool _heldAnchorSmoothedWorldValid;
-
         private Vector3 _heldCentroidOffsetSmoothedWorld;
         private bool _heldCentroidOffsetSmoothedWorldValid;
-
-        private Vector3 _prevFixedAnchorWorld;
-        private bool _prevFixedAnchorWorldValid;
 
         private Vector3 _lastFixedAnchorWorld;
         private bool _lastFixedAnchorWorldValid;
@@ -137,9 +134,7 @@ namespace Revive.Slime
             {
                 _heldMoveBlockedThisFrame = false;
                 _heldMoveBlockedSeconds = 0f;
-                _heldAnchorSmoothedWorldValid = false;
                 _heldCentroidOffsetSmoothedWorldValid = false;
-                _prevFixedAnchorWorldValid = false;
                 _lastFixedAnchorWorldValid = false;
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -278,12 +273,6 @@ namespace Revive.Slime
             if (CenterAnchor == null)
                 return;
 
-            if (_lastFixedAnchorWorldValid)
-            {
-                _prevFixedAnchorWorld = _lastFixedAnchorWorld;
-                _prevFixedAnchorWorldValid = true;
-            }
-
             _lastFixedAnchorWorld = CenterAnchor.position;
             _lastFixedAnchorWorldValid = true;
 
@@ -397,8 +386,6 @@ namespace Revive.Slime
 
             if (!usedCentroid)
             {
-                _heldAnchorSmoothedWorld = raw;
-                _heldAnchorSmoothedWorldValid = true;
                 _heldCentroidOffsetSmoothedWorldValid = false;
                 return raw;
             }
@@ -561,7 +548,7 @@ namespace Revive.Slime
 
             if (consumed != null)
             {
-                consumeFeedbacks?.PlayFeedbacks(consumed.transform.position);
+                MMFeedbacksHelper.Play(consumeFeedbacks, consumed.transform.position);
             }
 
             if (restoreVisuals)
@@ -580,6 +567,7 @@ namespace Revive.Slime
             }
 
             RestoreHeldInterpolation();
+            RestoreHeldDetectCollisions();
             _held.IsHeld = false;
 
             _held = null;
@@ -587,6 +575,8 @@ namespace Revive.Slime
             _heldColliders = null;
             _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
+            _heldDetectCollisionsCached = false;
+            _heldWorldCollisionDisabled = false;
             _heldRenderers = null;
             _heldRendererReceiveShadows = null;
             _heldRendererShadowCastingModes = null;
@@ -594,7 +584,6 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsValues = null;
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
-            _heldAnchorSmoothedWorldValid = false;
             _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
 
@@ -611,6 +600,17 @@ namespace Revive.Slime
                 return;
             _heldRigidbody.interpolation = _heldInterpolation;
             _heldInterpolationCached = false;
+        }
+
+        private void RestoreHeldDetectCollisions()
+        {
+            if (!_heldDetectCollisionsCached)
+                return;
+            if (_heldRigidbody == null)
+                return;
+            _heldRigidbody.detectCollisions = _heldDetectCollisions;
+            _heldDetectCollisionsCached = false;
+            _heldWorldCollisionDisabled = false;
         }
 
         private void OnControllerColliderHit(ControllerColliderHit hit)
@@ -672,13 +672,15 @@ namespace Revive.Slime
             _held = carryable;
             _held.IsHeld = true;
 
-            pickupFeedbacks?.PlayFeedbacks(carryable.transform.position);
+            MMFeedbacksHelper.Play(pickupFeedbacks, carryable.transform.position);
 
             _heldRigidbody = carryable.Rigidbody;
             _heldWasKinematic = _heldRigidbody.isKinematic;
             _heldUsedGravity = _heldRigidbody.useGravity;
             _heldInterpolation = _heldRigidbody.interpolation;
             _heldInterpolationCached = true;
+            _heldDetectCollisions = _heldRigidbody.detectCollisions;
+            _heldDetectCollisionsCached = true;
             _heldMoveBlockedThisFrame = false;
             _heldMoveBlockedSeconds = 0f;
 
@@ -691,6 +693,8 @@ namespace Revive.Slime
             _heldRigidbody.isKinematic = true;
             _heldRigidbody.useGravity = false;
             _heldRigidbody.interpolation = RigidbodyInterpolation.None;
+            _heldRigidbody.detectCollisions = false;
+            _heldWorldCollisionDisabled = true;
 
             _heldColliders = carryable.Colliders;
             CacheAndSetHeldColliderTriggerState(true);
@@ -705,7 +709,6 @@ namespace Revive.Slime
 
             CacheAndDisableHeldShadowState();
 
-            _heldAnchorSmoothedWorldValid = false;
             _heldCentroidOffsetSmoothedWorldValid = false;
             Vector3 targetPos = GetHoldAnchorWorldPositionStable();
             float trans = Mathf.Max(0f, PickupTransitionSeconds);
@@ -742,6 +745,8 @@ namespace Revive.Slime
                     }
 
                     _heldIndexIgnored = false;
+                    _heldDetectCollisionsCached = false;
+                    _heldWorldCollisionDisabled = false;
                     _held.IsHeld = false;
                 }
 
@@ -750,8 +755,9 @@ namespace Revive.Slime
                 _heldColliders = null;
                 _heldColliderWasTrigger = null;
                 _heldIndexIgnored = false;
+                _heldDetectCollisionsCached = false;
+                _heldWorldCollisionDisabled = false;
                 _heldInterpolationCached = false;
-                _heldAnchorSmoothedWorldValid = false;
                 _heldCentroidOffsetSmoothedWorldValid = false;
                 _lastFixedAnchorWorldValid = false;
                 _heldRenderers = null;
@@ -771,9 +777,18 @@ namespace Revive.Slime
             var rb = _heldRigidbody;
             var objectColliders = _heldColliders;
 
+            RestoreHeldDetectCollisions();
+
             RestoreHeldColliderTriggerState();
 
             RestoreHeldShadowState();
+
+            Vector3 releasePos = rb.position;
+            if (objectColliders != null)
+            {
+                releasePos = ResolveReleasePositionByPenetration(carryable.transform.position, releasePos, objectColliders);
+            }
+            rb.position = releasePos;
 
             if (objectColliders != null)
             {
@@ -811,7 +826,7 @@ namespace Revive.Slime
             Vector3 impulse = ComputeThrowImpulse(carryable, rb);
             rb.AddForce(impulse, ForceMode.Impulse);
 
-            throwFeedbacks?.PlayFeedbacks(rb.position);
+            MMFeedbacksHelper.Play(throwFeedbacks, rb.position);
 
             if (objectColliders != null)
             {
@@ -836,8 +851,9 @@ namespace Revive.Slime
             _heldColliders = null;
             _heldColliderWasTrigger = null;
             _heldIndexIgnored = false;
+            _heldDetectCollisionsCached = false;
+            _heldWorldCollisionDisabled = false;
             _heldInterpolationCached = false;
-            _heldAnchorSmoothedWorldValid = false;
             _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
             _heldRenderers = null;
@@ -935,6 +951,15 @@ namespace Revive.Slime
                 return;
             _heldMoveBlockedThisFrame = false;
 
+            if (_heldWorldCollisionDisabled)
+            {
+                if (Time.inFixedTimeStep)
+                    _heldRigidbody.MovePosition(targetWorldPos);
+                else
+                    _heldRigidbody.position = targetWorldPos;
+                return;
+            }
+
             Vector3 start = _heldRigidbody.position;
             Vector3 delta = targetWorldPos - start;
             float dist = delta.magnitude;
@@ -987,7 +1012,7 @@ namespace Revive.Slime
             if (_held == null)
                 return;
 
-            autoDetachFeedbacks?.PlayFeedbacks(_held.transform.position);
+            MMFeedbacksHelper.Play(autoDetachFeedbacks, _held.transform.position);
 
             var carryable = _held;
             var rb = _heldRigidbody;
@@ -1050,7 +1075,8 @@ namespace Revive.Slime
             _heldMoveBlockedThisFrame = false;
             _heldMoveBlockedSeconds = 0f;
             _heldInterpolationCached = false;
-            _heldAnchorSmoothedWorldValid = false;
+            _heldDetectCollisionsCached = false;
+            _heldWorldCollisionDisabled = false;
             _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
 
@@ -1229,8 +1255,14 @@ namespace Revive.Slime
                 return false;
             }
 
+            Vector3 mp = Input.mousePosition;
+            if (mp.sqrMagnitude <= 1f)
+                return false;
+            if (mp.x < 0f || mp.y < 0f || mp.x > Screen.width || mp.y > Screen.height)
+                return false;
+
             float rayDist = Mathf.Max(0.01f, GroundRaycastMaxDistance);
-            Ray ray = mainCam.ScreenPointToRay(Input.mousePosition);
+            Ray ray = mainCam.ScreenPointToRay(mp);
             if (Physics.Raycast(ray, out RaycastHit hit, rayDist, GroundRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 hitWorldPos = hit.point;
@@ -1326,6 +1358,7 @@ namespace Revive.Slime
                 _heldRigidbody.isKinematic = _heldWasKinematic;
                 _heldRigidbody.useGravity = _heldUsedGravity;
                 RestoreHeldInterpolation();
+                RestoreHeldDetectCollisions();
             }
 
             if (_restoreCollisionCoroutine != null)
@@ -1361,7 +1394,8 @@ namespace Revive.Slime
             _heldMaterialReceiveShadowsKeywordOff = null;
             _pickupInTransition = false;
             _heldInterpolationCached = false;
-            _heldAnchorSmoothedWorldValid = false;
+            _heldDetectCollisionsCached = false;
+            _heldWorldCollisionDisabled = false;
             _heldCentroidOffsetSmoothedWorldValid = false;
             _lastFixedAnchorWorldValid = false;
         }

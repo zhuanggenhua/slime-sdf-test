@@ -61,6 +61,19 @@ namespace Revive.GamePlay.Purification
         
         [Tooltip("花凋谢时是否移除蝴蝶")]
         public bool RemoveButterflyOnWither = true;
+
+        [Header("净化指示物设置")]
+        [Tooltip("完全绽放时是否生成净化指示物")]
+        public bool CreatePurificationIndicatorOnBloom = true;
+
+        [Tooltip("指示物类型")]
+        public string PurificationIndicatorType = "Flower";
+
+        [Tooltip("事件贡献值")]
+        public float PurificationContributionValue = 10f;
+
+        [Tooltip("辐射范围(米)")]
+        public float PurificationRadiationRadius = 8f;
         
         [Header("监听者设置")]
         [Tooltip("监听者名称（用于调试）")]
@@ -72,6 +85,12 @@ namespace Revive.GamePlay.Purification
         [Header("运行时信息")]
         [SerializeField, MMReadOnly]
         private float _currentPurificationLevel = 0f;
+
+        [SerializeField, MMReadOnly]
+        private float _debugToBloomThreshold;
+
+        [SerializeField, MMReadOnly]
+        private float _debugToWitherThreshold;
         
         [SerializeField, MMReadOnly]
         private FlowerState _currentState = FlowerState.Withered;
@@ -83,6 +102,7 @@ namespace Revive.GamePlay.Purification
         private Vector3 _initialScale;
         private Vector3 _initialPosition;
         private GameObject _currentButterfly = null;
+        private bool _purificationIndicatorCreated = false;
         
         /// <summary>
         /// 鲜花状态枚举
@@ -165,6 +185,8 @@ namespace Revive.GamePlay.Purification
         public void OnPurificationChanged(float purificationLevel, Vector3 position)
         {
             _currentPurificationLevel = purificationLevel;
+            _debugToBloomThreshold = BloomThreshold - purificationLevel;
+            _debugToWitherThreshold = WitherThreshold - purificationLevel;
             
             // 根据净化度更新状态
             if (purificationLevel >= BloomThreshold)
@@ -243,6 +265,8 @@ namespace Revive.GamePlay.Purification
             
             // 尝试生成蝴蝶特效
             TrySpawnButterfly();
+
+            TryCreatePurificationIndicator();
             
             // 这里可以添加其他粒子效果、音效等
             // 例如：播放绽放动画、发射花瓣粒子等
@@ -425,6 +449,42 @@ namespace Revive.GamePlay.Purification
             
             // 尝试生成蝴蝶
             TrySpawnButterfly();
+
+            TryCreatePurificationIndicator();
+        }
+
+        private void TryCreatePurificationIndicator()
+        {
+            if (!CreatePurificationIndicatorOnBloom)
+                return;
+
+            if (_purificationIndicatorCreated)
+                return;
+
+            if (!PurificationSystem.HasInstance)
+                return;
+
+            string indicatorName = $"FlowerBloom_{ListenerName}_{gameObject.GetInstanceID()}";
+
+            var existingIndicators = PurificationSystem.Instance.GetAllIndicators();
+            for (int i = 0; i < existingIndicators.Count; i++)
+            {
+                var indicator = existingIndicators[i];
+                if (indicator != null && indicator.Name == indicatorName)
+                {
+                    _purificationIndicatorCreated = true;
+                    return;
+                }
+            }
+
+            PurificationSystem.Instance.AddIndicator(
+                indicatorName,
+                _initialPosition,
+                PurificationContributionValue,
+                PurificationIndicatorType,
+                PurificationRadiationRadius);
+
+            _purificationIndicatorCreated = true;
         }
         
         /// <summary>

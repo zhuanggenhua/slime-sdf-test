@@ -47,8 +47,8 @@ namespace Revive.Slime
 
         [ChineseHeader("携带 Buff")]
         [ChineseLabel("启用")]
-        [DefaultValue(true)]
-        public bool EnableCarry = true;
+        [DefaultValue(false)]
+        public bool EnableCarry = false;
 
         [ChineseLabel("携带时效果")]
         public BuffModifiers Carry = BuffModifiers.Default;
@@ -80,6 +80,10 @@ namespace Revive.Slime
 
         [ChineseLabel("溶解材质(可选)")]
         public Material ConsumeDissolveMaterial;
+
+        [ChineseLabel("启用溶解气泡")]
+        [DefaultValue(false)]
+        public bool EnableConsumeBubbles = false;
 
         [ChineseLabel("气泡爆发数量")]
         [Min(0), DefaultValue(60)]

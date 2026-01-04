@@ -16,7 +16,44 @@ namespace Revive.Slime.Editor
         {
             var chineseLabel = attribute as ChineseLabelAttribute;
             string displayText = chineseLabel != null ? chineseLabel.Label : property.displayName;
-            return new PropertyField(property, displayText);
+
+            var container = new VisualElement();
+            container.style.flexDirection = FlexDirection.Row;
+            container.style.alignItems = Align.FlexStart;
+
+            var leftLabel = new Label(displayText);
+            leftLabel.tooltip = displayText;
+            leftLabel.style.whiteSpace = WhiteSpace.NoWrap;
+            leftLabel.style.textOverflow = TextOverflow.Ellipsis;
+            leftLabel.style.overflow = Overflow.Hidden;
+            leftLabel.style.flexShrink = 0;
+            leftLabel.style.minWidth = Mathf.Max(140f, EditorGUIUtility.labelWidth);
+            leftLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+            leftLabel.style.marginRight = 4;
+            container.Add(leftLabel);
+
+            var field = new PropertyField(property, string.Empty);
+            field.style.flexGrow = 1;
+            field.style.minWidth = 0;
+            container.Add(field);
+
+            field.RegisterCallback<AttachToPanelEvent>(_ =>
+            {
+                void HideInternalLabel()
+                {
+                    var internalLabel = field.Q<TextElement>(className: "unity-property-field__label");
+                    if (internalLabel != null)
+                    {
+                        internalLabel.style.display = DisplayStyle.None;
+                        return;
+                    }
+                    field.schedule.Execute(HideInternalLabel).ExecuteLater(0);
+                }
+
+                field.schedule.Execute(HideInternalLabel).ExecuteLater(0);
+            });
+
+            return container;
         }
 
         public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)

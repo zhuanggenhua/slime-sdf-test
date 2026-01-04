@@ -68,6 +68,7 @@ GameObject:
   - component: {fileID: 3472502132945677538}
   - component: {fileID: 6629463464707864298}
   - component: {fileID: 7783368421329890374}
+  - component: {fileID: 6301311519897954580}
   m_Layer: 24
   m_Name: Vine
   m_TagString: Untagged
@@ -281,15 +282,63 @@ MonoBehaviour:
   consumeEmitted: 1
   consumeSeparated: 1
   consumeDroplets: 1
-  purificationIndicatorType: Water
-  purificationContributionValue: 10
-  purificationRadiationRadius: 8
-  waterTickFeedbacks: {fileID: 0}
+  waterTickFeedbacks: {fileID: 1055043618324555985, guid: fde08be48a58a154eb6d382c83526afb,
+    type: 3}
   waterTickCooldownSeconds: 0.12
   waterCompleteFeedbacks: {fileID: 0}
+  purificationIndicatorType: Water
+  completed: 0
+  restoreGate: {fileID: 6301311519897954580}
+  autoFindRestoreGateOnSelf: 1
+  purificationContributionValue: 10
+  purificationRadiationRadius: 8
+  debugPollIntervalSeconds: 0.25
+  debugGateUnlocked: 0
+  debugGateBaseThreshold: 0
+  debugGateEffectiveThreshold: 0
+  debugGateThresholdDeltaAccumulated: 0
+  debugGateWaterProgress01: 0
+  debugGatePurificationLevel: 0
+  debugGateToThreshold: 0
   charge: 0
   chargeRequired: 25
+  debugLastReceivedWaterAmount: 0
+  debugLastReceivedParticleCount: 0
+  debugLastReceivedTime: 0
   targetVine: {fileID: 3472502132945677538}
+  growingFeedbacks: {fileID: 6174945733581378328, guid: 95a8a8bcd9941164ba2fbafd71788ae3,
+    type: 3}
   generateMeshOnFirstWater: 1
   vineGenerator: {fileID: 6629463464707864298}
   nodeGrowthTransitionSeconds: 1
+--- !u!114 &6301311519897954580
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4744595163473563994}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6b6e39099ce92524792a95ef452ae9ef, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  unlockWhenPurificationFull: 1
+  fullThreshold: 0.99
+  thresholdDeltaPerWater: 0.04
+  thresholdDeltaAccumulated: 0
+  listenPoint: {fileID: 0}
+  pollIntervalSeconds: 0
+  unregisterAfterUnlocked: 1
+  enableGameObjects: []
+  disableGameObjects: []
+  enableBehaviours: []
+  disableBehaviours: []
+  lockVisualRenderer: {fileID: 0}
+  restoreTargets: []
+  autoCollectRestoreTargetsOnSelf: 1
+  unlocked: 0
+  debugCurrentPurificationLevel: 0
+  debugEffectiveThreshold: 0
+  debugToThreshold: 0
+  debugWaterProgress01: 0

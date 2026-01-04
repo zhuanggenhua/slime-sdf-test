@@ -1,22 +1,11 @@
-using MoreMountains.Feedbacks;
 using UnityEngine;
+using Revive.GamePlay.Purification;
 using Revive.Slime;
 
 namespace Revive.Environment.Watering
 {
     public abstract class PbfChargeWaterReceiver : PbfWaterReceiver, IPbfWaterTarget
     {
-        [ChineseHeader("反馈")]
-        [ChineseLabel("浇水命中反馈")]
-        [SerializeField] private MMFeedbacks waterTickFeedbacks;
-
-        [ChineseLabel("浇水命中节流(秒)")]
-        [SerializeField, Min(0f), DefaultValue(0.12f)]
-        private float waterTickCooldownSeconds = 0.12f;
-
-        [ChineseLabel("完成反馈")]
-        [SerializeField] private MMFeedbacks waterCompleteFeedbacks;
-
         [ChineseHeader("浇水参数")]
         [ChineseLabel("当前蓄水量(运行时)")]
         [SerializeField] private float charge;
@@ -25,7 +14,15 @@ namespace Revive.Environment.Watering
         [DefaultValue(25f)]
         [SerializeField] private float chargeRequired = 25f;
 
-        private float _nextAllowedWaterTickTime;
+        [ChineseHeader("调试")]
+        [ChineseLabel("最近一次收到水量(运行时)")]
+        [SerializeField, MoreMountains.Tools.MMReadOnly] private float debugLastReceivedWaterAmount;
+
+        [ChineseLabel("最近一次消耗粒子数(运行时)")]
+        [SerializeField, MoreMountains.Tools.MMReadOnly] private int debugLastReceivedParticleCount;
+
+        [ChineseLabel("最近一次收到水时间(运行时)")]
+        [SerializeField, MoreMountains.Tools.MMReadOnly] private float debugLastReceivedTime;
 
         protected float Charge => charge;
         protected float ChargeRequired => chargeRequired;
@@ -42,32 +39,42 @@ namespace Revive.Environment.Watering
             charge = 0f;
         }
 
+        public override void OnPurificationRestored(PurificationRestoreTrigger trigger, Vector3 positionWorld)
+        {
+            if (Completed)
+                return;
+
+            ResetCharge();
+            base.OnPurificationRestored(trigger, positionWorld);
+        }
+
         public virtual void ReceiveWater(WaterInput input)
         {
             if (!WantsWater)
                 return;
 
-            if (Time.time >= _nextAllowedWaterTickTime)
+            debugLastReceivedWaterAmount = input.Amount;
+            debugLastReceivedParticleCount = input.ParticleCount;
+            debugLastReceivedTime = Time.time;
+
+            TryPlayWaterTickFeedbacks(input.PositionWorld);
+
+            float maxCharge = Mathf.Max(0f, chargeRequired);
+            if (maxCharge > 0f)
             {
-                waterTickFeedbacks?.PlayFeedbacks(input.PositionWorld);
-                _nextAllowedWaterTickTime = Time.time + Mathf.Max(0f, waterTickCooldownSeconds);
+                charge = Mathf.Min(maxCharge, charge + input.Amount);
+            }
+            else
+            {
+                charge += input.Amount;
             }
 
-            charge += input.Amount;
+            NotifyRestoreGateWaterAdded(input.Amount, input.PositionWorld);
             OnChargeUpdated(input);
-
-            if (chargeRequired > 0f && charge >= chargeRequired)
-            {
-                charge = 0f;
-                OnChargeCompleted(input);
-                waterCompleteFeedbacks?.PlayFeedbacks(input.PositionWorld);
-            }
         }
 
         protected virtual void OnChargeUpdated(WaterInput input)
         {
         }
-
-        protected abstract void OnChargeCompleted(WaterInput input);
     }
 }

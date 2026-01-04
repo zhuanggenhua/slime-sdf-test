@@ -1,4 +1,5 @@
 using MoreMountains.Feedbacks;
+using MoreMountains.Tools;
 using MoreMountains.TopDownEngine;
 using Revive.GamePlay.Purification;
 using Revive.Slime;
@@ -23,12 +24,25 @@ namespace Revive.Environment
         [ChineseHeader("激活条件")]
         [ChineseLabel("激活净化度阈值")]
         [Range(0f, 1f)]
-        [SerializeField] private float activationThreshold = 0.6f;
+        [SerializeField] private float activationThreshold = 1f;
 
         [ChineseHeader("一次性奖励")]
         [ChineseLabel("最大体积增加量")]
         [Min(0)]
         [SerializeField] private int maxVolumeIncrease = 300;
+
+        [ChineseHeader("升级汇聚效果")]
+        [ChineseLabel("升级悬空高度(米)")]
+        [SerializeField, Min(0f), DefaultValue(1.5f)] private float upgradeCoalesceHoverHeightWorld = 1.5f;
+
+        [ChineseLabel("升级生成范围倍率")]
+        [SerializeField, Range(1f, 20f), DefaultValue(3.5f)] private float upgradeCoalesceSpawnRadius = 3.5f;
+
+        [ChineseLabel("升级垂直分布倍率")]
+        [SerializeField, Range(0.1f, 2f), DefaultValue(1f)] private float upgradeCoalesceVerticalScale = 1f;
+
+        [ChineseLabel("升级向心速度倍率")]
+        [SerializeField, Range(0f, 2f), DefaultValue(0.5f)] private float upgradeCoalesceInwardVelocityScale = 0.5f;
 
         [ChineseLabel("升级时直接回满体积")]
         [Tooltip("勾选后，升级时会生成足够的粒子直接恢复到满体积")]
@@ -83,7 +97,17 @@ namespace Revive.Environment
         }
 
         private WellState _currentState = WellState.Inactive;
-        private float _currentPurificationLevel;
+
+        [ChineseHeader("调试")]
+        [ChineseLabel("当前位置净化度(运行时)")]
+        [SerializeField, MMReadOnly] private float _currentPurificationLevel;
+
+        [ChineseLabel("激活阈值(运行时)")]
+        [SerializeField, MMReadOnly] private float _debugActivationThreshold;
+
+        [ChineseLabel("距离激活阈值(运行时)")]
+        [SerializeField, MMReadOnly] private float _debugToActivationThreshold;
+
         private bool _isRegistered;
         private bool _playerInTrigger;
         private float _restoreAccumulator;
@@ -112,11 +136,7 @@ namespace Revive.Environment
         private void Start()
         {
             // 自动注册到净化系统
-            if (PurificationSystem.HasInstance)
-            {
-                PurificationSystem.Instance.RegisterListener(this);
-                _isRegistered = true;
-            }
+            TryRegister();
         }
 
         private void OnDestroy()
@@ -129,6 +149,8 @@ namespace Revive.Environment
 
         private void Update()
         {
+            TryRegister();
+
             // 处理分批生成
             if (_pendingRestoreParticles > 0 && _cachedSlimePBF != null)
             {
@@ -148,9 +170,34 @@ namespace Revive.Environment
         public void OnPurificationChanged(float purificationLevel, Vector3 position)
         {
             _currentPurificationLevel = purificationLevel;
+            _debugActivationThreshold = activationThreshold;
+            _debugToActivationThreshold = activationThreshold - _currentPurificationLevel;
 
             // 检查激活条件
             if (_currentState == WellState.Inactive && purificationLevel >= activationThreshold)
+            {
+                ActivateWell();
+            }
+        }
+
+        private void TryRegister()
+        {
+            if (_isRegistered)
+                return;
+            if (!Application.isPlaying)
+                return;
+            if (!PurificationSystem.HasInstance)
+                return;
+
+            PurificationSystem.Instance.RegisterListener(this);
+            _isRegistered = true;
+
+            _debugActivationThreshold = activationThreshold;
+
+            float level = PurificationSystem.Instance.GetPurificationLevel(GetListenerPosition());
+            _currentPurificationLevel = level;
+            _debugToActivationThreshold = activationThreshold - _currentPurificationLevel;
+            if (_currentState == WellState.Inactive && level >= activationThreshold)
             {
                 ActivateWell();
             }
@@ -172,9 +219,6 @@ namespace Revive.Environment
 
         private void OnTriggerEnter(Collider other)
         {
-            if (_currentState == WellState.Inactive)
-                return;
-
             // 检测玩家
             var controller = other.GetComponentInParent<TopDownController3D>();
             if (controller == null)
@@ -203,7 +247,10 @@ namespace Revive.Environment
             }
 
             // 开始恢复反馈
-            restoringFeedbacks?.PlayFeedbacks();
+            if (_currentState != WellState.Inactive)
+            {
+                MMFeedbacksHelper.Play(restoringFeedbacks);
+            }
         }
 
         private void OnTriggerExit(Collider other)
@@ -218,11 +265,14 @@ namespace Revive.Environment
 
             _playerInTrigger = false;
             _restoreAccumulator = 0f;
+            _pendingRestoreParticles = 0;
+            _nextBatchTime = 0f;
+            _cachedSlimePBF?.EndExternalCoalesceLock();
             _cachedSlimeVolume = null;
             _cachedSlimePBF = null;
 
             // 停止恢复反馈
-            restoringFeedbacks?.StopFeedbacks();
+            MMFeedbacksHelper.Stop(restoringFeedbacks);
         }
 
         #endregion
@@ -234,7 +284,13 @@ namespace Revive.Environment
             _currentState = WellState.Active;
             Debug.Log($"[WaterWellStation] {wellId} 已激活！净化度: {_currentPurificationLevel:F2}");
 
-            activationFeedbacks?.PlayFeedbacks();
+            MMFeedbacksHelper.Play(activationFeedbacks);
+
+            if (_playerInTrigger && _cachedSlimeVolume != null && _cachedSlimePBF != null)
+            {
+                ClaimReward();
+                MMFeedbacksHelper.Play(restoringFeedbacks);
+            }
         }
 
         private void ClaimReward()
@@ -255,9 +311,14 @@ namespace Revive.Environment
                 int needToRestore = GetMaxRestoreAmountIncludingSeparatedEmitted();
                 if (needToRestore > 0)
                 {
-                    _pendingRestoreParticles = needToRestore;
-                    _nextBatchTime = Time.time; // 立即开始第一批
-                    Debug.Log($"[WaterWellStation] {wellId} 启动分批恢复，总计 {needToRestore} 粒子");
+                    Vector3 anchorWorld = transform.position;
+                    bool locked = _cachedSlimePBF.BeginExternalCoalesceLockAtWorld(anchorWorld, upgradeCoalesceHoverHeightWorld);
+                    if (locked)
+                    {
+                        _pendingRestoreParticles = needToRestore;
+                        _nextBatchTime = Time.time; // 立即开始第一批
+                        Debug.Log($"[WaterWellStation] {wellId} 启动分批恢复，总计 {needToRestore} 粒子");
+                    }
                 }
             }
 
@@ -265,7 +326,7 @@ namespace Revive.Environment
             CreatePurificationIndicator();
 
             // 4. 播放奖励反馈
-            rewardClaimFeedbacks?.PlayFeedbacks();
+            MMFeedbacksHelper.Play(rewardClaimFeedbacks);
 
             // 5. 状态转换
             _currentState = WellState.RewardClaimed;
@@ -284,12 +345,14 @@ namespace Revive.Environment
                 return;
             }
 
-            int restored = _cachedSlimePBF.RestoreMainBodyParticles(thisBatch);
+            Vector3 coalesceCenterWorld = transform.position + Vector3.up * Mathf.Max(0f, upgradeCoalesceHoverHeightWorld);
+            int restored = _cachedSlimePBF.RestoreMainBodyParticlesAtWorldCenter(thisBatch, coalesceCenterWorld, upgradeCoalesceSpawnRadius, upgradeCoalesceVerticalScale, upgradeCoalesceInwardVelocityScale);
             _pendingRestoreParticles -= restored;
             _nextBatchTime = Time.time + batchInterval;
 
             if (_pendingRestoreParticles <= 0)
             {
+                _cachedSlimePBF.EndExternalCoalesceLock();
                 Debug.Log($"[WaterWellStation] {wellId} 分批恢复完成");
             }
         }

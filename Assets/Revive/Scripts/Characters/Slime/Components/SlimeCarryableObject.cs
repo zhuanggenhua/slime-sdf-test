@@ -1,4 +1,5 @@
 using MoreMountains.Feedbacks;
+using Revive.Environment;
 using UnityEngine;
 
 namespace Revive.Slime
@@ -33,8 +34,11 @@ namespace Revive.Slime
         public float MaxThrowRange = 10f;
 
         [ChineseHeader("反馈")]
-        [ChineseLabel("投掷后碰撞反馈")]
+        [ChineseLabel("投掷后碰撞反馈(落地)")]
         [SerializeField] private MMFeedbacks thrownImpactFeedbacks;
+
+        [ChineseLabel("砸树反馈")]
+        [SerializeField] private MMFeedbacks hitTreeFeedbacks;
 
         [ChineseLabel("投掷碰撞节流(秒)")]
         [SerializeField, Min(0f), DefaultValue(0.08f)]
@@ -149,7 +153,12 @@ namespace Revive.Slime
                 return;
 
             Vector3 pos = collision.contactCount > 0 ? collision.GetContact(0).point : transform.position;
-            thrownImpactFeedbacks?.PlayFeedbacks(pos);
+            
+            // 检查是否砸到树
+            bool hitTree = collision.gameObject.GetComponentInParent<TreeFruitDropOnHit>() != null;
+            MMFeedbacks feedbackToPlay = (hitTree && hitTreeFeedbacks != null) ? hitTreeFeedbacks : thrownImpactFeedbacks;
+            
+            MMFeedbacksHelper.Play(feedbackToPlay, pos);
             _thrownImpactPlayed = true;
 
             _nextAllowedThrownImpactTime = Time.time + Mathf.Max(0f, thrownImpactCooldownSeconds);

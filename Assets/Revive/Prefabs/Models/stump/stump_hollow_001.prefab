@@ -395,7 +395,7 @@ MonoBehaviour:
   _container: {fileID: 7564784362179354958}
   _collisionIgnoreRootOverride: {fileID: 7757925596467552466}
   _splineIndex: 0
-  _defaultSpeed: 4
+  _defaultSpeed: 8
   _speedRampSeconds: 0.5
   _closedLoop: 0
   _rotationModeDefault: 0

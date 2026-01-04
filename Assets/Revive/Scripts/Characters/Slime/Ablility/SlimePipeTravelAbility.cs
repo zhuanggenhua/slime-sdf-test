@@ -544,7 +544,7 @@ namespace Revive.Slime
                 return;
             }
 
-            exitPushFeedbacks?.PlayFeedbacks(transform.position);
+            MMFeedbacksHelper.Play(exitPushFeedbacks, transform.position);
 
             Vector3 tangent = _path.EvaluateTangent(_t);
             if (_reverse)

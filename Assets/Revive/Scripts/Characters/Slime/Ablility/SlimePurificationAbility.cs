@@ -13,9 +13,9 @@ namespace Revive.Slime
     public class SlimePurificationAbility : CharacterAbility
     {
         [Header("净化设置")]
-        [Tooltip("净化间隔（秒）")]
-        [ChineseLabel("净化间隔")]
-        public float PurificationInterval = 3f;
+        [Tooltip("净化采样间距（米）")]
+        [ChineseLabel("净化间距")]
+        public float FootprintSpacing = 1f;
         
         [Tooltip("每次净化的贡献值")]
         [ChineseLabel("贡献值")]
@@ -24,31 +24,35 @@ namespace Revive.Slime
         [Tooltip("辐射范围（米）")]
         [ChineseLabel("辐射范围")]
         public float RadiationRadius = 8f;
+
+        [Tooltip("如果该范围内已存在同类型指示物，则跳过生成（米）。<=0 表示不启用")]
+        [ChineseLabel("附近已存在则跳过")]
+        [DefaultValue(0.9f)]
+        public float SkipIfIndicatorExistsRadius = 0.9f;
         
         [Tooltip("指示物类型标识")]
         [ChineseLabel("类型标识")]
         public string IndicatorType = "SlimePuri";
-        
+
         [Header("能力控制")]
         [Tooltip("是否启用自动净化")]
         [ChineseLabel("启用净化")]
         public bool EnablePurification = true;
         
-        [Tooltip("是否在禁用时移除已创建的指示物")]
-        [ChineseLabel("禁用时清理")]
-        public bool RemoveIndicatorsOnDisable = false;
-        
         [Header("运行时信息")]
         [SerializeField, MMReadOnly]
-        private float _timeSinceLastPurification = 0f;
+        private float _distanceAccumulator = 0f;
         
         [SerializeField, MMReadOnly]
         private int _indicatorCounter = 0;
         
         [SerializeField, MMReadOnly]
         private int _totalIndicatorsCreated = 0;
-        
+
         private bool _isInitialized = false;
+
+        private bool _hasLastFramePosition;
+        private Vector3 _lastFramePositionWorld;
         
         protected override void Initialization()
         {
@@ -60,18 +64,18 @@ namespace Revive.Slime
             }
             
             _isInitialized = true;
-            _timeSinceLastPurification = 0f;
+            _distanceAccumulator = 0f;
             _indicatorCounter = 0;
             _totalIndicatorsCreated = 0;
+            _hasLastFramePosition = false;
             
             // 角色初始化时添加一个指示物，贡献值为100
-            PurificationSystem.Instance.AddIndicator(
-                "InitPuri",
-                transform.position,
-                100,
-                IndicatorType,
-                RadiationRadius
-            );
+            if (PurificationSystem.HasInstance)
+            {
+                int id = gameObject != null ? gameObject.GetInstanceID() : 0;
+                string name = $"{IndicatorType}_{id}_Init";
+                PurificationSystem.Instance.AddIndicator(name, transform.position, 100f, IndicatorType, RadiationRadius);
+            }
         }
         
         public override void ProcessAbility()
@@ -80,37 +84,71 @@ namespace Revive.Slime
             
             if (!_isInitialized || !EnablePurification || !PurificationSystem.HasInstance)
                 return;
-            
-            // 累积时间
-            _timeSinceLastPurification += Time.deltaTime;
-            
-            // 达到间隔时间，添加净化指示物
-            if (_timeSinceLastPurification >= PurificationInterval)
+
+            AccumulateDistanceAndStamp();
+        }
+
+        private void AccumulateDistanceAndStamp()
+        {
+            Vector3 pos = transform.position;
+            if (!_hasLastFramePosition)
             {
-                AddPurificationIndicator();
-                _timeSinceLastPurification = 0f;
+                _hasLastFramePosition = true;
+                _lastFramePositionWorld = pos;
+                return;
             }
+
+            float spacing = Mathf.Max(0.01f, FootprintSpacing);
+
+            Vector3 a = _lastFramePositionWorld;
+            Vector3 b = pos;
+            Vector3 ab = b - a;
+            float segLen = ab.magnitude;
+            if (segLen <= 1e-6f)
+                return;
+
+            Vector3 dir = ab / segLen;
+
+            float remaining = segLen;
+            Vector3 cursor = a;
+            while (remaining > 1e-6f)
+            {
+                float need = spacing - _distanceAccumulator;
+                if (need <= 1e-6f)
+                    need = spacing;
+
+                if (remaining < need)
+                {
+                    _distanceAccumulator += remaining;
+                    break;
+                }
+
+                cursor += dir * need;
+                remaining -= need;
+                _distanceAccumulator = 0f;
+
+                AddPurificationIndicatorAt(cursor);
+            }
+
+            _lastFramePositionWorld = pos;
         }
         
         /// <summary>
         /// 添加净化指示物
         /// </summary>
-        protected virtual void AddPurificationIndicator()
+        protected virtual void AddPurificationIndicatorAt(Vector3 position)
         {
             if (!PurificationSystem.HasInstance)
                 return;
+
+            float checkRadius = Mathf.Max(0f, SkipIfIndicatorExistsRadius);
+            if (checkRadius > 0f && PurificationSystem.Instance.HasIndicatorInRange(position, checkRadius, IndicatorType))
+                return;
             
-            // 生成指示物名称
-            string indicatorName = $"{gameObject.name}_{IndicatorType}_{_indicatorCounter++}";
-            
-            // 添加到净化系统
-            PurificationSystem.Instance.AddIndicator(
-                indicatorName,
-                transform.position,
-                ContributionValue,
-                IndicatorType,
-                RadiationRadius
-            );
+            int id = gameObject != null ? gameObject.GetInstanceID() : 0;
+            _indicatorCounter++;
+            string name = $"{IndicatorType}_{id}_{_indicatorCounter}";
+            PurificationSystem.Instance.AddIndicator(name, position, ContributionValue, IndicatorType, RadiationRadius);
             
             _totalIndicatorsCreated++;
             
@@ -125,14 +163,15 @@ namespace Revive.Slime
         {
             // 子类可以在这里添加粒子效果、音效等
         }
-        
+
         /// <summary>
         /// 启用净化能力
         /// </summary>
         public virtual void EnablePurificationAbility()
         {
             EnablePurification = true;
-            _timeSinceLastPurification = 0f;
+            _distanceAccumulator = 0f;
+            _hasLastFramePosition = false;
         }
         
         /// <summary>
@@ -150,7 +189,8 @@ namespace Revive.Slime
         {
             _indicatorCounter = 0;
             _totalIndicatorsCreated = 0;
-            _timeSinceLastPurification = 0f;
+            _distanceAccumulator = 0f;
+            _hasLastFramePosition = false;
         }
         
         /// <summary>
@@ -160,21 +200,7 @@ namespace Revive.Slime
         {
             if (PurificationSystem.HasInstance)
             {
-                AddPurificationIndicator();
-            }
-        }
-        
-        protected override void OnDisable()
-        {
-            base.OnDisable();
-            
-            // 如果设置了禁用时清理，移除该Ability创建的所有指示物
-            if (RemoveIndicatorsOnDisable && PurificationSystem.HasInstance)
-            {
-                // 注意：这会移除所有相同类型的指示物，不仅仅是这个Ability创建的
-                // 如果需要更精确的控制，可以在Ability中维护一个创建的指示物列表
-                int removed = PurificationSystem.Instance.RemoveIndicatorsByType(IndicatorType);
-                Debug.Log($"[SlimePurificationAbility] 禁用时移除了 {removed} 个 {IndicatorType} 类型的指示物");
+                AddPurificationIndicatorAt(transform.position);
             }
         }
         
@@ -187,15 +213,13 @@ namespace Revive.Slime
             if (!Application.isPlaying || !EnablePurification)
                 return;
             
-            // 显示下次净化的倒计时
-            float timeUntilNext = PurificationInterval - _timeSinceLastPurification;
-            string info = $"净化倒计时: {timeUntilNext:F1}s\n" +
+            string info = $"净化间距: {FootprintSpacing:F2}m\n" +
                          $"已创建: {_totalIndicatorsCreated} 个指示物";
             
             UnityEditor.Handles.Label(transform.position + Vector3.up * 2.5f, info);
             
             // 绘制一个进度环
-            float progress = _timeSinceLastPurification / PurificationInterval;
+            float progress = 1f;
             Gizmos.color = new Color(0.3f, 1f, 0.3f, 0.5f);
             DrawProgressCircle(transform.position + Vector3.up * 0.1f, 0.5f, progress);
         }

@@ -12,14 +12,36 @@ namespace Revive.GamePlay.Purification
     /// </summary>
     public class PurificationSystem : MMPersistentSingleton<PurificationSystem>
     {
-        [Header("净化系统配置")]
+        private static readonly int PurificationFieldTexId = Shader.PropertyToID("_PurificationFieldTex");
+        private static readonly int PurificationFieldParamsId = Shader.PropertyToID("_PurificationFieldParams");
+        private static readonly int PurificationFieldResId = Shader.PropertyToID("_PurificationFieldRes");
+
+        [ChineseHeader("净化系统配置")]
         [Tooltip("识别半径（米），在此半径内的指示物会被计入净化度")]
         public float DetectionRadius = 10f;
         
         [Tooltip("目标净化值，达到此值时净化度为1.0")]
         public float TargetPurificationValue = 100f;
+
+        [ChineseHeader("净化空间场")]
+        [Tooltip("优先从 Terrain 自动推导净化场范围")]
+        public bool AutoFieldBoundsFromTerrain = true;
+
+        [Tooltip("无法从 Terrain 推导时使用的净化场锚点（中心）")]
+        public Transform FieldAnchor;
+
+        [Tooltip("净化场尺寸（米），当未找到 Terrain 时使用")]
+        public Vector2 FieldSizeWorld = new(250f, 250f);
+
+        [Tooltip("净化场分辨率（单边格子数）")]
+        [Min(8)]
+        public int FieldResolution = 1024;
+
+        [ChineseHeader("净化采样")]
+        [Tooltip("查询净化度时是否使用空间场（O(1)）")]
+        public bool UseSpatialField = true;
         
-        [Header("调试设置")]
+        [ChineseHeader("调试设置")]
         [Tooltip("是否显示调试Gizmos")]
         public bool ShowDebugGizmos = true;
         
@@ -39,18 +61,49 @@ namespace Revive.GamePlay.Purification
         
         public event Action<PurificationIndicator> IndicatorAdded;
         public event Action<PurificationIndicator> IndicatorRemoved;
+
+        public event Action<Vector3, float, float, string> StampAdded;
         
         // 统计信息（用于Inspector显示）
-        [Header("运行时统计")]
+        [ChineseHeader("运行时统计")]
         [SerializeField, MMReadOnly]
         private int _indicatorCount = 0;
         
         [SerializeField, MMReadOnly]
         private int _listenerCount = 0;
+
+        [SerializeField, MMReadOnly]
+        private bool _fieldInitialized = false;
+
+        [SerializeField, MMReadOnly]
+        private Vector3 _fieldOriginWorld;
+
+        [SerializeField, MMReadOnly]
+        private Vector2 _fieldSizeWorldRuntime;
+
+        [SerializeField, MMReadOnly]
+        private int _fieldResolutionRuntime;
+
+        private float[] _contributionField;
+        private float _cellSizeX;
+        private float _cellSizeZ;
+
+        private Texture2D _fieldTexture;
+        private float[] _fieldTextureData;
+        private bool _fieldTextureDirty;
         
         protected override void Awake()
         {
             base.Awake();
+        }
+
+        private void OnDestroy()
+        {
+            if (_fieldTexture != null)
+            {
+                Destroy(_fieldTexture);
+                _fieldTexture = null;
+            }
         }
         
         private void Update()
@@ -58,6 +111,11 @@ namespace Revive.GamePlay.Purification
             // 更新统计信息
             _indicatorCount = _indicators.Count;
             _listenerCount = _listeners.Count;
+
+            if (UseSpatialField)
+            {
+                UploadFieldTextureIfDirty();
+            }
         }
         
         #region 指示物管理
@@ -73,6 +131,13 @@ namespace Revive.GamePlay.Purification
         /// <returns>创建的指示物实例</returns>
         public PurificationIndicator AddIndicator(string pName, Vector3 position, float contributionValue, string indicatorType, float radiationRadius = 8f)
         {
+            if (UseSpatialField)
+            {
+                EnsureContributionFieldInitialized();
+                StampContribution(position, contributionValue, radiationRadius);
+                StampAdded?.Invoke(position, contributionValue, radiationRadius, indicatorType);
+            }
+
             PurificationIndicator indicator = new PurificationIndicator(pName, position, contributionValue, indicatorType, radiationRadius);
             _indicators.Add(indicator);
             
@@ -83,6 +148,18 @@ namespace Revive.GamePlay.Purification
             NotifyListenersInRange(position);
             
             return indicator;
+        }
+
+        public void AddStamp(Vector3 position, float contributionValue, string indicatorType, float radiationRadius = 8f)
+        {
+            if (UseSpatialField)
+            {
+                EnsureContributionFieldInitialized();
+                StampContribution(position, contributionValue, radiationRadius);
+                StampAdded?.Invoke(position, contributionValue, radiationRadius, indicatorType);
+            }
+
+            NotifyListenersInRange(position);
         }
         
         /// <summary>
@@ -162,6 +239,13 @@ namespace Revive.GamePlay.Purification
                 IndicatorRemoved?.Invoke(indicator);
             }
             Debug.Log($"[PurificationSystem] 清空了 {count} 个指示物");
+
+            if (UseSpatialField)
+            {
+                EnsureContributionFieldInitialized();
+                ClearContributionField();
+            }
+
             NotifyAllListeners();
         }
         
@@ -180,7 +264,291 @@ namespace Revive.GamePlay.Purification
         {
             return _indicators.Where(i => i.IsInRange(position, radius)).ToList();
         }
+
+        public bool HasIndicatorInRange(Vector3 position, float radius, string indicatorType)
+        {
+            float r = Mathf.Max(0f, radius);
+            if (r <= 0f)
+                return false;
+
+            float r2 = r * r;
+            bool filterType = !string.IsNullOrEmpty(indicatorType);
+
+            for (int i = 0; i < _indicators.Count; i++)
+            {
+                PurificationIndicator indicator = _indicators[i];
+                if (indicator == null)
+                    continue;
+
+                if (filterType && !string.Equals(indicator.IndicatorType, indicatorType, StringComparison.Ordinal))
+                    continue;
+
+                Vector3 d = indicator.Position - position;
+                if (d.sqrMagnitude <= r2)
+                    return true;
+            }
+
+            return false;
+        }
         
+        #endregion
+
+        #region 空间场
+
+        private void EnsureContributionFieldInitialized()
+        {
+            int res = Mathf.Max(8, FieldResolution);
+            bool needRecreate = !_fieldInitialized || _contributionField == null || _fieldResolutionRuntime != res;
+
+            if (!needRecreate)
+                return;
+
+            if (!TryResolveFieldBounds(out Vector3 originWorld, out Vector2 sizeWorld))
+            {
+                Vector3 center = FieldAnchor != null ? FieldAnchor.position : transform.position;
+                originWorld = new Vector3(center.x - FieldSizeWorld.x * 0.5f, 0f, center.z - FieldSizeWorld.y * 0.5f);
+                sizeWorld = new Vector2(FieldSizeWorld.x, FieldSizeWorld.y);
+            }
+
+            sizeWorld.x = Mathf.Max(0.01f, sizeWorld.x);
+            sizeWorld.y = Mathf.Max(0.01f, sizeWorld.y);
+
+            _fieldOriginWorld = originWorld;
+            _fieldSizeWorldRuntime = sizeWorld;
+            _fieldResolutionRuntime = res;
+
+            _cellSizeX = sizeWorld.x / (res - 1);
+            _cellSizeZ = sizeWorld.y / (res - 1);
+
+            _contributionField = new float[res * res];
+            _fieldTextureData = new float[res * res];
+            EnsureFieldTextureInitialized(res);
+            _fieldTextureDirty = true;
+            _fieldInitialized = true;
+        }
+
+        private void EnsureFieldTextureInitialized(int res)
+        {
+            if (_fieldTexture != null && _fieldTexture.width == res && _fieldTexture.height == res)
+                return;
+
+            if (_fieldTexture != null)
+            {
+                Destroy(_fieldTexture);
+                _fieldTexture = null;
+            }
+
+            _fieldTexture = new Texture2D(res, res, TextureFormat.RFloat, false, true)
+            {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+                name = "PurificationFieldTex"
+            };
+
+            Shader.SetGlobalTexture(PurificationFieldTexId, _fieldTexture);
+        }
+
+        private bool TryResolveFieldBounds(out Vector3 originWorld, out Vector2 sizeWorld)
+        {
+            originWorld = default;
+            sizeWorld = default;
+
+            if (AutoFieldBoundsFromTerrain && TryGetTerrainBoundsWorld(out Bounds b))
+            {
+                originWorld = new Vector3(b.min.x, 0f, b.min.z);
+                sizeWorld = new Vector2(b.size.x, b.size.z);
+                return true;
+            }
+
+            if (FieldAnchor != null)
+            {
+                Vector3 center = FieldAnchor.position;
+                originWorld = new Vector3(center.x - FieldSizeWorld.x * 0.5f, 0f, center.z - FieldSizeWorld.y * 0.5f);
+                sizeWorld = new Vector2(FieldSizeWorld.x, FieldSizeWorld.y);
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryGetTerrainBoundsWorld(out Bounds bounds)
+        {
+            bounds = default;
+
+            Terrain[] terrains = Terrain.activeTerrains;
+            if (terrains == null || terrains.Length == 0)
+            {
+                terrains = FindObjectsByType<Terrain>(FindObjectsSortMode.None);
+            }
+
+            bool hasAny = false;
+            for (int i = 0; i < terrains.Length; i++)
+            {
+                Terrain t = terrains[i];
+                if (t == null || t.terrainData == null)
+                    continue;
+
+                Vector3 pos = t.GetPosition();
+                Vector3 size = t.terrainData.size;
+                Bounds tb = new Bounds(pos + size * 0.5f, size);
+                if (!hasAny)
+                {
+                    bounds = tb;
+                    hasAny = true;
+                }
+                else
+                {
+                    bounds.Encapsulate(tb.min);
+                    bounds.Encapsulate(tb.max);
+                }
+            }
+
+            return hasAny;
+        }
+
+        private void ClearContributionField()
+        {
+            if (_contributionField == null)
+                return;
+            Array.Clear(_contributionField, 0, _contributionField.Length);
+
+            _fieldTextureDirty = true;
+        }
+
+        private void RebuildContributionFieldFromIndicators()
+        {
+            ClearContributionField();
+            for (int i = 0; i < _indicators.Count; i++)
+            {
+                PurificationIndicator indicator = _indicators[i];
+                if (indicator == null)
+                    continue;
+                StampContribution(indicator.Position, indicator.ContributionValue, indicator.RadiationRadius);
+            }
+
+            _fieldTextureDirty = true;
+        }
+
+        private void StampContribution(Vector3 centerWorld, float contributionValue, float radiusWorld)
+        {
+            if (_contributionField == null)
+                return;
+            if (radiusWorld <= 0f || contributionValue <= 0f)
+                return;
+
+            int res = _fieldResolutionRuntime;
+            float sizeX = _fieldSizeWorldRuntime.x;
+            float sizeZ = _fieldSizeWorldRuntime.y;
+            if (sizeX <= 0f || sizeZ <= 0f)
+                return;
+
+            float relX = centerWorld.x - _fieldOriginWorld.x;
+            float relZ = centerWorld.z - _fieldOriginWorld.z;
+            if (relX < -radiusWorld || relZ < -radiusWorld || relX > sizeX + radiusWorld || relZ > sizeZ + radiusWorld)
+                return;
+
+            float invCellX = _cellSizeX > 0f ? 1f / _cellSizeX : 0f;
+            float invCellZ = _cellSizeZ > 0f ? 1f / _cellSizeZ : 0f;
+            int minX = Mathf.Clamp(Mathf.FloorToInt((relX - radiusWorld) * invCellX), 0, res - 1);
+            int maxX = Mathf.Clamp(Mathf.CeilToInt((relX + radiusWorld) * invCellX), 0, res - 1);
+            int minZ = Mathf.Clamp(Mathf.FloorToInt((relZ - radiusWorld) * invCellZ), 0, res - 1);
+            int maxZ = Mathf.Clamp(Mathf.CeilToInt((relZ + radiusWorld) * invCellZ), 0, res - 1);
+
+            float targetMax = Mathf.Max(0f, TargetPurificationValue);
+
+            for (int z = minZ; z <= maxZ; z++)
+            {
+                float cz = _fieldOriginWorld.z + z * _cellSizeZ;
+                float dz = cz - centerWorld.z;
+                for (int x = minX; x <= maxX; x++)
+                {
+                    float cx = _fieldOriginWorld.x + x * _cellSizeX;
+                    float dx = cx - centerWorld.x;
+                    float d = Mathf.Sqrt(dx * dx + dz * dz);
+                    if (d >= radiusWorld)
+                        continue;
+
+                    float w = 1f - (d / radiusWorld);
+                    if (w <= 0f)
+                        continue;
+
+                    int idx = z * res + x;
+                    float next = _contributionField[idx] + contributionValue * w;
+                    _contributionField[idx] = targetMax > 0f ? Mathf.Min(targetMax, next) : next;
+                }
+            }
+
+            _fieldTextureDirty = true;
+        }
+
+        private float SampleContribution(Vector3 positionWorld)
+        {
+            if (_contributionField == null)
+                return 0f;
+
+            float sizeX = _fieldSizeWorldRuntime.x;
+            float sizeZ = _fieldSizeWorldRuntime.y;
+            if (sizeX <= 0f || sizeZ <= 0f)
+                return 0f;
+
+            float relX = positionWorld.x - _fieldOriginWorld.x;
+            float relZ = positionWorld.z - _fieldOriginWorld.z;
+            if (relX < 0f || relZ < 0f || relX > sizeX || relZ > sizeZ)
+                return 0f;
+
+            int res = _fieldResolutionRuntime;
+            float u = relX / sizeX;
+            float v = relZ / sizeZ;
+
+            float fx = u * (res - 1);
+            float fz = v * (res - 1);
+
+            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, res - 1);
+            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, res - 1);
+            int x1 = Mathf.Clamp(x0 + 1, 0, res - 1);
+            int z1 = Mathf.Clamp(z0 + 1, 0, res - 1);
+
+            float tx = fx - x0;
+            float tz = fz - z0;
+
+            float c00 = _contributionField[z0 * res + x0];
+            float c10 = _contributionField[z0 * res + x1];
+            float c01 = _contributionField[z1 * res + x0];
+            float c11 = _contributionField[z1 * res + x1];
+
+            float cx0 = Mathf.Lerp(c00, c10, tx);
+            float cx1 = Mathf.Lerp(c01, c11, tx);
+            return Mathf.Lerp(cx0, cx1, tz);
+        }
+
+        private void UploadFieldTextureIfDirty()
+        {
+            if (!_fieldInitialized || _contributionField == null)
+                return;
+            if (!_fieldTextureDirty)
+                return;
+
+            int res = _fieldResolutionRuntime;
+            EnsureFieldTextureInitialized(res);
+
+            float invTarget = TargetPurificationValue > 0f ? 1f / TargetPurificationValue : 0f;
+
+            for (int i = 0; i < _contributionField.Length; i++)
+            {
+                _fieldTextureData[i] = _contributionField[i] * invTarget;
+            }
+
+            _fieldTexture.SetPixelData(_fieldTextureData, 0);
+            _fieldTexture.Apply(false, false);
+
+            Shader.SetGlobalVector(
+                PurificationFieldParamsId,
+                new Vector4(_fieldOriginWorld.x, _fieldOriginWorld.z, _fieldSizeWorldRuntime.x, _fieldSizeWorldRuntime.y));
+            Shader.SetGlobalFloat(PurificationFieldResId, _fieldResolutionRuntime);
+
+            _fieldTextureDirty = false;
+        }
+
         #endregion
         
         #region 净化度查询
@@ -193,27 +561,30 @@ namespace Revive.GamePlay.Purification
         /// <returns>净化度 (0-1)</returns>
         public float GetPurificationLevel(Vector3 position, float radius = -1f)
         {
+            if (UseSpatialField)
+            {
+                EnsureContributionFieldInitialized();
+                float totalContribution = SampleContribution(position);
+                return Mathf.Min(1f, totalContribution / TargetPurificationValue);
+            }
+
             if (radius < 0)
             {
                 radius = DetectionRadius;
             }
-            
-            // 计算范围内所有指示物的加权贡献值
-            float totalContribution = 0f;
+
+            float totalContributionLegacy = 0f;
             foreach (var indicator in _indicators)
             {
-                // 使用球体相交计算权重
                 float weight = indicator.CalculateIntersectionWeight(position, radius);
                 if (weight > 0f)
                 {
-                    totalContribution += indicator.ContributionValue * weight;
+                    totalContributionLegacy += indicator.ContributionValue * weight;
                 }
             }
-            
-            // 计算净化度 (0-1)
-            float purificationLevel = Mathf.Min(1f, totalContribution / TargetPurificationValue);
-            
-            return purificationLevel;
+
+            float purificationLevelLegacy = Mathf.Min(1f, totalContributionLegacy / TargetPurificationValue);
+            return purificationLevelLegacy;
         }
         
         /// <summary>
@@ -226,17 +597,24 @@ namespace Revive.GamePlay.Purification
         /// <returns>净化度 (0-1)</returns>
         public float GetPurificationLevelDetailed(Vector3 position, float radius, out float totalContribution, out int indicatorCount)
         {
+            if (UseSpatialField)
+            {
+                EnsureContributionFieldInitialized();
+                totalContribution = SampleContribution(position);
+                indicatorCount = 0;
+                return Mathf.Min(1f, totalContribution / TargetPurificationValue);
+            }
+
             if (radius < 0)
             {
                 radius = DetectionRadius;
             }
-            
+
             totalContribution = 0f;
             indicatorCount = 0;
-            
+
             foreach (var indicator in _indicators)
             {
-                // 使用球体相交计算权重
                 float weight = indicator.CalculateIntersectionWeight(position, radius);
                 if (weight > 0f)
                 {
@@ -244,9 +622,8 @@ namespace Revive.GamePlay.Purification
                     indicatorCount++;
                 }
             }
-            
+
             float purificationLevel = Mathf.Min(1f, totalContribution / TargetPurificationValue);
-            
             return purificationLevel;
         }
         
@@ -430,6 +807,12 @@ namespace Revive.GamePlay.Purification
                     foreach (var indicator in _indicators)
                     {
                         IndicatorAdded?.Invoke(indicator);
+                    }
+
+                    if (UseSpatialField)
+                    {
+                        EnsureContributionFieldInitialized();
+                        RebuildContributionFieldFromIndicators();
                     }
                     
                     // 通知所有监听者

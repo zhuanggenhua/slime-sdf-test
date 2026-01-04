@@ -83,7 +83,7 @@ namespace Revive.Slime
 
             _movement.ChangeState(CharacterStates.MovementStates.Jumping);
             MMCharacterEvent.Trigger(_character, MMCharacterEventTypes.Jump);
-            JumpStartFeedback?.PlayFeedbacks(this.transform.position);
+            MMFeedbacksHelper.Play(JumpStartFeedback, this.transform.position);
             _jumpOrigin = this.transform.position;
             _jumpStopped = false;
             _jumpStartedAt = Time.time;
@@ -269,11 +269,11 @@ namespace Revive.Slime
 
             if (hard)
             {
-                HardLandingFeedbacks?.PlayFeedbacks(transform.position, intensity);
+                MMFeedbacksHelper.Play(HardLandingFeedbacks, transform.position, intensity);
             }
             else
             {
-                LandingFeedbacks?.PlayFeedbacks(transform.position, intensity);
+                MMFeedbacksHelper.Play(LandingFeedbacks, transform.position, intensity);
             }
         }
 
@@ -288,7 +288,7 @@ namespace Revive.Slime
             StopAbilityUsedSfx();
             StopStartFeedbacks();
             PlayAbilityStopFeedbacks();
-            JumpStopFeedback?.PlayFeedbacks(this.transform.position);
+            MMFeedbacksHelper.Play(JumpStopFeedback, this.transform.position);
         }
 
 #if UNITY_EDITOR

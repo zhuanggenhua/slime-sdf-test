@@ -65,7 +65,7 @@ namespace Revive.Environment
             }
 
             _playerInTrigger = true;
-            restoringFeedbacks?.PlayFeedbacks();
+            MMFeedbacksHelper.Play(restoringFeedbacks);
         }
 
         private void OnTriggerExit(Collider other)
@@ -83,7 +83,7 @@ namespace Revive.Environment
             _cachedSlimeVolume = null;
             _cachedSlimePBF = null;
 
-            restoringFeedbacks?.StopFeedbacks();
+            MMFeedbacksHelper.Stop(restoringFeedbacks);
         }
 
         #endregion

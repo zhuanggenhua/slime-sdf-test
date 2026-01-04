@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using MoreMountains.Feedbacks;
+using MoreMountains.Tools;
 using Revive.GamePlay.Purification;
 using Revive.Slime;
 using UnityEngine;
@@ -14,7 +16,7 @@ namespace Revive.Environment.Watering
     ///
     /// 说明：PBF 粒子不走 Unity 逐粒子物理回调，我们通过 Slime_PBF 的空间哈希做批量查询。
     /// </summary>
-    public class PbfWaterReceiver : MonoBehaviour
+    public class PbfWaterReceiver : MonoBehaviour, IPurificationRestoreTarget, IPurificationUnlockIndicatorProvider
     {
         private static readonly List<PbfWaterReceiver> _instances = new List<PbfWaterReceiver>(64);
 
@@ -63,10 +65,33 @@ namespace Revive.Environment.Watering
         [DefaultValue(true)]
         [SerializeField] private bool consumeDroplets = true;
 
+        [ChineseHeader("反馈")]
+        [ChineseLabel("浇水命中反馈")]
+        [SerializeField] private MMFeedbacks waterTickFeedbacks;
+
+        [ChineseLabel("浇水命中节流(秒)")]
+        [SerializeField, Min(0f), DefaultValue(0.12f)]
+        private float waterTickCooldownSeconds = 0.12f;
+
+        [ChineseLabel("完成反馈")]
+        [SerializeField] private MMFeedbacks waterCompleteFeedbacks;
+
         [ChineseHeader("净化")]
         [ChineseLabel("指示物类型")]
         [DefaultValue("Water")]
         [SerializeField] private string purificationIndicatorType = "Water";
+
+        [ChineseHeader("完成")]
+        [ChineseLabel("已完成(运行时)")]
+        [SerializeField] private bool completed;
+
+        [ChineseHeader("恢复")]
+        [ChineseLabel("恢复闸门(可空)")]
+        [SerializeField] private PurificationRestoreGate restoreGate;
+
+        [ChineseLabel("自动获取闸门(同物体)")]
+        [DefaultValue(true)]
+        [SerializeField] private bool autoFindRestoreGateOnSelf = true;
 
         [ChineseLabel("事件贡献值")]
         [DefaultValue(10f)]
@@ -76,9 +101,38 @@ namespace Revive.Environment.Watering
         [DefaultValue(8f)]
         [SerializeField] private float purificationRadiationRadius = 8f;
 
+        [ChineseHeader("调试")]
+        [ChineseLabel("调试刷新间隔(秒)")]
+        [SerializeField, Min(0f), DefaultValue(0.25f)]
+        private float debugPollIntervalSeconds = 0.25f;
+
+        [ChineseLabel("闸门已解锁(运行时)")]
+        [SerializeField, MMReadOnly] private bool debugGateUnlocked;
+
+        [ChineseLabel("闸门基础阈值(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGateBaseThreshold;
+
+        [ChineseLabel("闸门有效阈值(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGateEffectiveThreshold;
+
+        [ChineseLabel("闸门累计阈值降低(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGateThresholdDeltaAccumulated;
+
+        [ChineseLabel("闸门浇水进度(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGateWaterProgress01;
+
+        [ChineseLabel("闸门位置净化度(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGatePurificationLevel;
+
+        [ChineseLabel("距离闸门阈值(运行时)")]
+        [SerializeField, MMReadOnly] private float debugGateToThreshold;
+
         private bool _warnedMissingTriggerCollider;
         private bool _warnedTriggerColliderNotTrigger;
         private bool _warnedMissingTarget;
+
+        private float _nextAllowedWaterTickTime;
+        private float _nextDebugPollTime;
 
         private IPbfWaterTarget _target;
 
@@ -97,15 +151,56 @@ namespace Revive.Environment.Watering
         protected float PurificationContributionValue => purificationContributionValue;
         protected float PurificationRadiationRadius => purificationRadiationRadius;
 
+        public bool Completed => completed;
+
+        protected void SetCompleted(bool value)
+        {
+            completed = value;
+        }
+
         protected void SetPurificationConfig(string indicatorType, float contributionValue)
         {
             purificationIndicatorType = indicatorType;
             purificationContributionValue = contributionValue;
         }
 
-        public virtual bool WantsWater => true;
+        public virtual bool WantsWater => !completed;
 
         private Coroutine _localScaleTransitionRoutine;
+
+        protected void ResolveTargetTransform(ref Transform targetTransform)
+        {
+            if (targetTransform == null)
+                targetTransform = transform;
+        }
+
+        protected void EnsureBaseLocalScale(Transform targetTransform, ref bool baseScaleInitialized, ref Vector3 baseLocalScale)
+        {
+            if (baseScaleInitialized)
+                return;
+            if (targetTransform == null)
+                return;
+
+            baseScaleInitialized = true;
+            baseLocalScale = targetTransform.localScale;
+        }
+
+        protected void TryPlayWaterTickFeedbacks(Vector3 positionWorld)
+        {
+            if (waterTickFeedbacks == null)
+                return;
+
+            if (Time.time < _nextAllowedWaterTickTime)
+                return;
+
+            MMFeedbacksHelper.Play(waterTickFeedbacks, positionWorld);
+            _nextAllowedWaterTickTime = Time.time + Mathf.Max(0f, waterTickCooldownSeconds);
+        }
+
+        protected void PlayWaterCompleteFeedbacks(Vector3 positionWorld)
+        {
+            MMFeedbacksHelper.Play(waterCompleteFeedbacks, positionWorld);
+        }
 
         public bool ContainsPointWorld(Vector3 pointWorld)
         {
@@ -147,6 +242,38 @@ namespace Revive.Environment.Watering
         {
             ValidateTriggerCollider();
             ResolveReferences();
+            EnsureRestoreGateReference();
+        }
+
+        private void Update()
+        {
+            if (!Application.isPlaying)
+                return;
+
+            float interval = Mathf.Max(0f, debugPollIntervalSeconds);
+            if (interval <= 0f)
+                return;
+            if (Time.time < _nextDebugPollTime)
+                return;
+
+            _nextDebugPollTime = Time.time + interval;
+
+            EnsureRestoreGateReference();
+            if (restoreGate == null)
+                return;
+
+            debugGateUnlocked = restoreGate.Unlocked;
+            debugGateBaseThreshold = restoreGate.FullThreshold;
+            debugGateThresholdDeltaAccumulated = restoreGate.ThresholdDeltaAccumulated;
+            debugGateEffectiveThreshold = restoreGate.GetEffectiveFullThreshold();
+            debugGateWaterProgress01 = restoreGate.GetWaterProgress01();
+
+            if (PurificationSystem.HasInstance)
+            {
+                Vector3 pos = restoreGate.GetListenerPosition();
+                debugGatePurificationLevel = PurificationSystem.Instance.GetPurificationLevel(pos);
+                debugGateToThreshold = debugGateEffectiveThreshold - debugGatePurificationLevel;
+            }
         }
 
         protected virtual void OnEnable()
@@ -155,6 +282,7 @@ namespace Revive.Environment.Watering
 
             ValidateTriggerCollider();
             ResolveReferences();
+            EnsureRestoreGateReference();
 
             AssertPurificationSystemPresent();
         }
@@ -175,6 +303,56 @@ namespace Revive.Environment.Watering
             ValidateTriggerCollider();
 
             ResolveReferences();
+            EnsureRestoreGateReference();
+        }
+
+        public virtual void OnPurificationRestored(PurificationRestoreTrigger trigger, Vector3 positionWorld)
+        {
+            if (completed)
+                return;
+
+            completed = true;
+            PlayWaterCompleteFeedbacks(positionWorld);
+            OnRestoredByPurification(trigger, positionWorld);
+        }
+
+        public virtual bool TryGetUnlockIndicatorConfig(
+            PurificationRestoreTrigger trigger,
+            Vector3 unlockPositionWorld,
+            out string indicatorName,
+            out Vector3 indicatorPositionWorld)
+        {
+            indicatorPositionWorld = transform.position;
+            indicatorName = string.Empty;
+            return true;
+        }
+
+        protected virtual void OnRestoredByPurification(PurificationRestoreTrigger trigger, Vector3 positionWorld)
+        {
+        }
+
+        protected void NotifyRestoreGateWaterAdded(float waterAmount, Vector3 positionWorld)
+        {
+            EnsureRestoreGateReference();
+            if (restoreGate == null)
+                return;
+
+            restoreGate.NotifyWaterAdded(waterAmount, positionWorld);
+        }
+
+        private void EnsureRestoreGateReference()
+        {
+            if (restoreGate != null)
+                return;
+
+            if (!autoFindRestoreGateOnSelf)
+                return;
+
+            restoreGate = GetComponent<PurificationRestoreGate>();
+            if (restoreGate == null)
+            {
+                restoreGate = GetComponentInParent<PurificationRestoreGate>();
+            }
         }
 
         protected void TweenLocalScale(Transform target, Vector3 targetLocalScale, LocalScaleTransition transition, Action onComplete = null)
@@ -298,6 +476,15 @@ namespace Revive.Environment.Watering
             return system;
         }
 
+        protected PurificationIndicator AddPurificationIndicator(string indicatorName, Vector3 positionWorld)
+        {
+            PurificationSystem system = GetPurificationSystemChecked();
+            if (system == null)
+                return null;
+
+            return system.AddIndicator(indicatorName, positionWorld, PurificationContributionValue, PurificationIndicatorType, PurificationRadiationRadius);
+        }
+
         protected PurificationIndicator EnsurePurificationIndicator(ref PurificationIndicator indicator, string indicatorName, Vector3 positionWorld, float contributionValue, string indicatorType, float radiationRadius = 8f)
         {
             PurificationSystem system = GetPurificationSystemChecked();
@@ -310,11 +497,23 @@ namespace Revive.Environment.Watering
                 return indicator;
             }
 
+            float prevContribution = indicator.ContributionValue;
+
             indicator.Name = indicatorName;
             indicator.Position = positionWorld;
             indicator.ContributionValue = contributionValue;
             indicator.IndicatorType = indicatorType;
             indicator.RadiationRadius = radiationRadius;
+
+            if (system.UseSpatialField)
+            {
+                float delta = contributionValue - prevContribution;
+                if (delta > 0f)
+                {
+                    system.AddStamp(positionWorld, delta, indicatorType, radiationRadius);
+                }
+            }
+
             return indicator;
         }
 

@@ -4,6 +4,7 @@ using System.ComponentModel;
 using Stopwatch = System.Diagnostics.Stopwatch;
 using System.Runtime.CompilerServices;
 using MoreMountains.TopDownEngine;
+using MoreMountains.Tools;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -188,6 +189,39 @@ namespace Revive.Slime
         public int EmitBatchSize => emitBatchSize;
         
         #endregion
+
+        #region 【发射音效】
+
+        [ChineseHeader("发射音效")]
+        [ChineseLabel("首次发射音效")]
+        [SerializeField]
+        private AudioClip emitFirstSfx;
+
+        [ChineseLabel("连续发射音效")]
+        [SerializeField]
+        private AudioClip emitRepeatSfx;
+
+        #endregion
+
+        #region 【融合音效】
+
+        [ChineseHeader("融合音效")]
+        [ChineseLabel("融合音效"), Tooltip("分离粒子/水珠融合回主体时播放")]
+        [SerializeField]
+        private AudioClip mergeSfx;
+
+        [ChineseLabel("融合音效音量")]
+        [SerializeField, Range(0f, 1f), DefaultValue(1f)]
+        private float mergeSfxVolume = 1f;
+
+        [ChineseLabel("融合音效冷却(秒)")]
+        [SerializeField, Range(0f, 1f), DefaultValue(0.15f)]
+        private float mergeSfxCooldownSeconds = 0.15f;
+
+        private float _lastMergeSfxUnscaledTime = -999f;
+        private int _lastMergeSfxFixedSerial = -999999;
+
+        #endregion
         
         #region 【控制器参数】
         
@@ -357,8 +391,26 @@ namespace Revive.Slime
         [SerializeField] private Mesh particleMesh;
 
         private static readonly int _surfaceColorId = Shader.PropertyToID("_Color");
+        private static readonly int _slimeBlurStrengthId = Shader.PropertyToID("_BlurStrength");
+        private static readonly int _slimeDistortionStrengthId = Shader.PropertyToID("_DistortionStrength");
         private MaterialPropertyBlock _surfaceTintBlock;
         private bool _surfaceTintEnabled;
+        private Color _surfaceTintColor = Color.white;
+
+        private SlimeCarrySlot _carrySlot;
+
+        [ChineseHeader("携带物显示")]
+        [ChineseLabel("携带物时降低主体模糊/扭曲")]
+        [SerializeField, DefaultValue(false)]
+        private bool reduceDistortionWhenCarrying;
+
+        [ChineseLabel("携带物时模糊强度")]
+        [SerializeField, Range(0f, 5f), DefaultValue(0f)]
+        private float carryBlurStrength;
+
+        [ChineseLabel("携带物时扭曲强度")]
+        [SerializeField, Range(0f, 50f), DefaultValue(0f)]
+        private float carryDistortionStrength;
 
         [ChineseHeader("水珠渲染")]
         [ChineseLabel("水珠表面材质(可选)"), Tooltip("Surface模式下水珠网格使用的材质；为空则复用主体材质")]
@@ -404,6 +456,7 @@ namespace Revive.Slime
         public void SetSurfaceTint(Color tint, bool enabled)
         {
             _surfaceTintEnabled = enabled;
+            _surfaceTintColor = tint;
             if (!_surfaceTintEnabled)
             {
                 return;
@@ -415,6 +468,17 @@ namespace Revive.Slime
             }
 
             _surfaceTintBlock.SetColor(_surfaceColorId, tint);
+        }
+
+        private bool ShouldReduceDistortionForCarry()
+        {
+            if (!reduceDistortionWhenCarrying)
+                return false;
+
+            if (_carrySlot == null)
+                _carrySlot = GetComponentInChildren<SlimeCarrySlot>(true);
+
+            return _carrySlot != null && _carrySlot.HasHeldObject;
         }
 
         public bool TryGetSurfaceBaseColor(out Color color)
@@ -624,6 +688,7 @@ namespace Revive.Slime
         [Tooltip("体积组件 - 管理史莱姆资源状态")]
         [SerializeField] private SlimeVolume _slimeVolume;
 
+       
         [ChineseHeader("出生凝聚")]
         [ChineseLabel("出生凝聚特效")]
         [SerializeField, DefaultValue(false)]
@@ -641,8 +706,24 @@ namespace Revive.Slime
         [SerializeField, Range(0f, 1f), DefaultValue(0.05f)]
         private float spawnCoalesceBatchInterval = 0.05f;
 
+        [ChineseLabel("出生开始延迟(秒)")]
+        [SerializeField, Min(0f), DefaultValue(1f)]
+        private float spawnCoalesceStartDelaySeconds = 1f;
+
+        [ChineseLabel("出生悬空高度(米)")]
+        [SerializeField, Min(0f), DefaultValue(1.5f)]
+        private float spawnCoalesceHoverHeightWorld = 1.5f;
+
+        [ChineseLabel("出生垂直分布倍率")]
+        [SerializeField, Range(0.1f, 2f), DefaultValue(1f)]
+        private float spawnCoalesceVerticalScale = 1f;
+
+        [ChineseLabel("出生向心速度倍率")]
+        [SerializeField, Range(0f, 2f), DefaultValue(0.5f)]
+        private float spawnCoalesceInwardVelocityScale = 0.5f;
+
         [ChineseLabel("出生生成范围倍率")]
-        [SerializeField, Range(1f, 6f), DefaultValue(3.5f)]
+        [SerializeField, Range(1f, 20f), DefaultValue(3.5f)]
         private float spawnCoalesceSpawnRadius = 3.5f;
         
         [Tooltip("渲染模式 - Particles显示粒子，Surface显示表面")]
@@ -864,7 +945,7 @@ namespace Revive.Slime
         /// <param name="count">要恢复的粒子数量</param>
         /// <param name="spawnRadius">生成范围半径倍数（相对于主体半径，默认2.5倍）</param>
         /// <returns>实际恢复的粒子数量</returns>
-        public int RestoreMainBodyParticles(int count, float spawnRadius = 2.5f)
+        public int RestoreMainBodyParticles(int count, float spawnRadius = 2.5f, float verticalScale = 0.6f, float inwardVelocityScale = 0.5f)
         {
             if (!_runtimeInitialized || !_particles.IsCreated || !_velocityBuffer.IsCreated)
                 return 0;
@@ -872,23 +953,84 @@ namespace Revive.Slime
             if (count <= 0)
                 return 0;
 
-            // 计算可恢复的最大数量（不能超过主体分区上限）
+            float3 mainCenterSim = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
+                ? _controllerBuffer[0].Center
+                : (trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero);
+
+            return RestoreMainBodyParticlesInternal(count, mainCenterSim, spawnRadius, verticalScale, inwardVelocityScale);
+        }
+
+        public int RestoreMainBodyParticlesAtWorldCenter(int count, Vector3 worldCenter, float spawnRadius = 2.5f, float verticalScale = 1f, float inwardVelocityScale = 0.5f)
+        {
+            if (!_runtimeInitialized || !_particles.IsCreated || !_velocityBuffer.IsCreated)
+                return 0;
+
+            if (count <= 0)
+                return 0;
+
+            float3 centerSim = (float3)(worldCenter * WorldToSimScale);
+            return RestoreMainBodyParticlesInternal(count, centerSim, spawnRadius, verticalScale, inwardVelocityScale);
+        }
+
+        public bool BeginExternalCoalesceLockAtWorld(Vector3 anchorWorld, float hoverHeightWorld)
+        {
+            if (_externalCoalesceLockActive)
+                return true;
+            if (_spawnCoalesceLockActive)
+                return false;
+
+            _externalCoalesceLockActive = true;
+
+            Vector3 pos = anchorWorld + Vector3.up * Mathf.Max(0f, hoverHeightWorld);
+            Transform root = _topDownController3D != null ? _topDownController3D.transform : trans;
+            if (root == null)
+                root = transform;
+            root.position = pos;
+
+            _externalCoalesceOriginalSlimeGravity = gravity;
+            gravity = 0f;
+
+            if (_topDownController3D != null)
+            {
+                _externalCoalesceOriginalControllerGravityActive = _topDownController3D.GravityActive;
+                _externalCoalesceOriginalFreeMovement = _topDownController3D.FreeMovement;
+                _topDownController3D.GravityActive = false;
+                _topDownController3D.FreeMovement = false;
+            }
+
+            _externalCoalesceCharacter = GetComponentInParent<Character>();
+            _externalCoalesceCharacter?.Freeze();
+            return true;
+        }
+
+        public void EndExternalCoalesceLock()
+        {
+            if (!_externalCoalesceLockActive)
+                return;
+            _externalCoalesceLockActive = false;
+
+            gravity = _externalCoalesceOriginalSlimeGravity;
+            _externalCoalesceCharacter?.UnFreeze();
+            if (_topDownController3D != null)
+            {
+                _topDownController3D.GravityActive = _externalCoalesceOriginalControllerGravityActive;
+                _topDownController3D.FreeMovement = _externalCoalesceOriginalFreeMovement;
+            }
+            _externalCoalesceCharacter = null;
+        }
+
+        private int RestoreMainBodyParticlesInternal(int count, float3 centerSim, float spawnRadius, float verticalScale, float inwardVelocityScale)
+        {
             int maxRestorable = MainBodyMaxParticles - activeParticles;
             if (maxRestorable <= 0)
                 return 0;
 
             int toRestore = math.min(count, maxRestorable);
 
-            // 获取主体中心位置用于生成新粒子
-            float3 mainCenter = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
-                ? _controllerBuffer[0].Center
-                : (trans != null ? (float3)(trans.position * WorldToSimScale) : float3.zero);
-
             float mainRadius = (_controllerBuffer.IsCreated && _controllerBuffer.Length > 0)
                 ? _controllerBuffer[0].Radius
                 : coreRadius;
 
-            // 生成范围：主体半径的 spawnRadius 倍，形成一个环形区域
             float innerRadius = mainRadius * 1.2f;
             float outerRadius = mainRadius * spawnRadius;
 
@@ -899,25 +1041,23 @@ namespace Revive.Slime
                 if (newIdx >= MainBodyMaxParticles || newIdx >= _particles.Length)
                     break;
 
-                // 在主体周围的环形区域随机生成位置（球壳分布）
                 float radius = UnityEngine.Random.Range(innerRadius, outerRadius);
                 float theta = UnityEngine.Random.value * 2f * math.PI;
                 float phi = math.acos(2f * UnityEngine.Random.value - 1f);
-                
+
                 float3 randomOffset = new float3(
                     radius * math.sin(phi) * math.cos(theta),
-                    radius * math.cos(phi) * 0.6f, // Y方向压缩，避免生成太高
+                    radius * math.cos(phi) * verticalScale,
                     radius * math.sin(phi) * math.sin(theta)
                 );
 
-                // 计算指向主体中心的初速度，帮助粒子更快融合
                 float3 toCenter = -math.normalize(randomOffset);
-                float3 initialVelocity = toCenter * mainRadius * 0.5f;
+                float3 initialVelocity = toCenter * mainRadius * inwardVelocityScale;
 
                 var newParticle = new Particle
                 {
-                    Position = mainCenter + randomOffset,
-                    Type = ParticleType.Separated, // 生成为分离体，会被自动融合
+                    Position = centerSim + randomOffset,
+                    Type = ParticleType.Separated,
                     ControllerSlot = 0,
                     BlobId = 0,
                     FreeFrames = 0,
@@ -1477,6 +1617,9 @@ namespace Revive.Slime
         private NativeArray<float3> _velocityBuffer;
         private NativeArray<float3> _velocityTempBuffer;
         private NativeArray<int2> _renderHashesBuffer;
+
+        private NativeArray<float3> _freeParticleCentroidTemp;
+        private NativeArray<int> _freeParticleCountTemp;
         
         // PBF物理系统（封装了_lut, _hashes, _posPredict, _lambdaBuffer等缓冲区）
         private PBFSystem _pbfSystem;
@@ -1499,9 +1642,6 @@ namespace Revive.Slime
         private bool _dbgRecallSphereHitFromSdf;
         private Vector3 _dbgRecallSphereHitPointW;
         private Vector3 _dbgRecallSphereHitNormalW;
-
-        private int _dbgFixedUpdateCountFrame = -999999;
-        private int _dbgFixedUpdateCountThisFrame;
         private bool _dbgEyeJitterCallFromRearrange;
 
         private readonly HashSet<int> _colliderInstanceIds = new HashSet<int>(1024);
@@ -1568,7 +1708,6 @@ namespace Revive.Slime
             private DropletSubsystem _dropletSubsystem;
 
             private int _lastParticleRenderUploadFrame = -999999;
-            private int _lastRenderDbgLogFrame = -999999;
             private bool _renderInitErrorLogged;
 
             private NativeParallelMultiHashMap<int, int> _mergeMainBodyLut;
@@ -1591,14 +1730,24 @@ namespace Revive.Slime
 
 		private Vector3 _renderVelocity = Vector3.zero;
 		private Vector3 _prevRenderTransPosition;
-		private bool _renderVelocityInitialized;
 		private bool _deferredPostSimPending;
+		private int _fixedUpdateSerial;
 		private int _fixedUpdateCountFrame = -999999;
 		private int _fixedUpdateCountThisFrame;
 		private int _lastPerformanceProfilerFrame = -999999;
 		private bool _runtimeInitialized;
 		private int _spawnCoalesceRemaining;
 		private float _spawnCoalesceNextBatchTime;
+		private bool _spawnCoalesceLockActive;
+		private float _spawnCoalesceOriginalSlimeGravity;
+		private bool _spawnCoalesceOriginalControllerGravityActive;
+		private bool _spawnCoalesceOriginalFreeMovement;
+		private Character _spawnCoalesceCharacter;
+		private bool _externalCoalesceLockActive;
+		private float _externalCoalesceOriginalSlimeGravity;
+		private bool _externalCoalesceOriginalControllerGravityActive;
+		private bool _externalCoalesceOriginalFreeMovement;
+		private Character _externalCoalesceCharacter;
 		private float _lastMainRadius; // 用于 mainRadius 防抖
 		private float3 _prevMainControllerCenter; // 上一帧主控制器中心，用于正确计算PosOld
 		private int _lastMainMarchingCubesFrame = -999999;
@@ -1974,7 +2123,16 @@ namespace Revive.Slime
                 int core = Mathf.Clamp(spawnCoalesceInitialMainParticles, 1, targetInitialMainCount);
                 initialMainCount = core;
                 _spawnCoalesceRemaining = Mathf.Max(0, targetInitialMainCount - initialMainCount);
-                _spawnCoalesceNextBatchTime = Time.time;
+                _spawnCoalesceNextBatchTime = Time.time + Mathf.Max(0f, spawnCoalesceStartDelaySeconds);
+
+				if (_spawnCoalesceRemaining > 0)
+				{
+					Transform root = _topDownController3D != null ? _topDownController3D.transform : trans;
+					if (root == null)
+						root = transform;
+					root.position += Vector3.up * Mathf.Max(0f, spawnCoalesceHoverHeightWorld);
+					BeginSpawnCoalesceLock();
+				}
             }
             
         // 初始化主体粒子 - 使用简单的线性循环，确保所有粒子都被初始化
@@ -2387,6 +2545,9 @@ namespace Revive.Slime
 
             // 释放 Terrain 高度图缓存
             if (_terrainHeights01.IsCreated) _terrainHeights01.Dispose();
+
+            if (_freeParticleCentroidTemp.IsCreated) _freeParticleCentroidTemp.Dispose();
+            if (_freeParticleCountTemp.IsCreated) _freeParticleCountTemp.Dispose();
         }
 
         void Update()
@@ -2403,7 +2564,6 @@ namespace Revive.Slime
             if (trans != null)
             {
                 _prevRenderTransPosition = trans.position;
-                _renderVelocityInitialized = true;
             }
         }
 
@@ -2411,13 +2571,17 @@ namespace Revive.Slime
         {
             if (!enableSpawnCoalesce)
                 return;
-            if (_spawnCoalesceRemaining <= 0)
-                return;
+
+			if (_spawnCoalesceRemaining <= 0)
+			{
+				EndSpawnCoalesceLock();
+				return;
+			}
             if (Time.time < _spawnCoalesceNextBatchTime)
                 return;
 
             int batch = Mathf.Min(_spawnCoalesceRemaining, Mathf.Max(1, spawnCoalesceParticlesPerBatch));
-            int restored = RestoreMainBodyParticles(batch, spawnCoalesceSpawnRadius);
+            int restored = RestoreMainBodyParticles(batch, spawnCoalesceSpawnRadius, spawnCoalesceVerticalScale, spawnCoalesceInwardVelocityScale);
             _spawnCoalesceRemaining -= restored;
             _spawnCoalesceNextBatchTime = Time.time + Mathf.Max(0f, spawnCoalesceBatchInterval);
 
@@ -2426,6 +2590,43 @@ namespace Revive.Slime
                 _slimeVolume.UpdateFromParticles(_particles, true);
             }
         }
+
+		private void BeginSpawnCoalesceLock()
+		{
+			if (_spawnCoalesceLockActive)
+				return;
+
+			_spawnCoalesceLockActive = true;
+			_spawnCoalesceOriginalSlimeGravity = gravity;
+			gravity = 0f;
+
+			if (_topDownController3D != null)
+			{
+				_spawnCoalesceOriginalControllerGravityActive = _topDownController3D.GravityActive;
+				_spawnCoalesceOriginalFreeMovement = _topDownController3D.FreeMovement;
+				_topDownController3D.GravityActive = false;
+				_topDownController3D.FreeMovement = false;
+			}
+
+			_spawnCoalesceCharacter = GetComponentInParent<Character>();
+			_spawnCoalesceCharacter?.Freeze();
+		}
+
+		private void EndSpawnCoalesceLock()
+		{
+			if (!_spawnCoalesceLockActive)
+				return;
+			_spawnCoalesceLockActive = false;
+
+			gravity = _spawnCoalesceOriginalSlimeGravity;
+			_spawnCoalesceCharacter?.UnFreeze();
+			if (_topDownController3D != null)
+			{
+				_topDownController3D.GravityActive = _spawnCoalesceOriginalControllerGravityActive;
+				_topDownController3D.FreeMovement = _spawnCoalesceOriginalFreeMovement;
+			}
+			_spawnCoalesceCharacter = null;
+		}
 
         private void UpdateCombinedBoundsForParticlesRender()
         {
@@ -2500,6 +2701,8 @@ namespace Revive.Slime
             if (!isActiveAndEnabled)
                 return;
 
+            PerformanceProfiler.CounterAdd("Slime_LateUpdateCalls", 1);
+
             if (_deferredPostSimPending)
             {
                 _deferredPostSimPending = false;
@@ -2533,8 +2736,11 @@ namespace Revive.Slime
 
         private void RunDeferredPostSim()
         {
+            PerformanceProfiler.CounterAdd("Slime_RunDeferredPostSimCalls", 1);
+
             if (renderMode == RenderMode.Surface)
             {
+                PerformanceProfiler.CounterAdd("Slime_SurfaceCalls", 1);
                 PerformanceProfiler.Begin("Surface");
                 Surface();
                 PerformanceProfiler.End("Surface");
@@ -2557,6 +2763,7 @@ namespace Revive.Slime
             PerformanceProfiler.End("Unshuffle");
             
             PerformanceProfiler.Begin("Control");
+            PerformanceProfiler.CounterAdd("Slime_ControlCalls", 1);
             PerformanceProfiler.Begin("Control_Watering");
             ApplyWateringInteraction();
             PerformanceProfiler.End("Control_Watering");
@@ -2603,7 +2810,6 @@ namespace Revive.Slime
             if (_slimeVolume != null)
             {
                 PerformanceProfiler.Begin("Volume_UpdateFromParticles");
-                _slimeVolume.UpdateFromParticles(_particles);
                 PerformanceProfiler.End("Volume_UpdateFromParticles");
             }
         }
@@ -2616,13 +2822,31 @@ namespace Revive.Slime
             if (trans == null)
                 return Vector3.zero;
 
-            if (!_lastFixedTransPosWorldInitialized)
-                return Vector3.zero;
+            if (_lastFixedTransPosWorldInitialized)
+            {
+                Vector3 offset = trans.position - _lastFixedTransPosWorld;
+                if (offset.sqrMagnitude <= 1e-10f)
+                {
+                    float fixedDt = Time.fixedDeltaTime;
+                    float dt = Time.time - Time.fixedTime;
+                    if (fixedDt > 1e-6f)
+                        dt = Mathf.Clamp(dt, 0f, fixedDt);
+                    offset = _renderVelocity * dt;
+                }
+                if (offset.sqrMagnitude > 2500f)
+                    return Vector3.zero;
+                return offset;
+            }
 
-            Vector3 offset = trans.position - _lastFixedTransPosWorld;
-            if (offset.sqrMagnitude > 2500f)
-                return Vector3.zero;
-            return offset;
+            if (_fixedMainBodyCentroidWorldValid)
+            {
+                Vector3 offset = MainBodyCentroidWorldForRender - MainBodyCentroidWorldFixed;
+                if (offset.sqrMagnitude > 2500f)
+                    return Vector3.zero;
+                return offset;
+            }
+
+            return Vector3.zero;
         }
 
         private void EnsureStencilMaterials()
@@ -2779,7 +3003,27 @@ namespace Revive.Slime
             if (mat == null)
                 return;
 
-            MaterialPropertyBlock block = _surfaceTintEnabled ? _surfaceTintBlock : null;
+            bool reduceForCarry = ShouldReduceDistortionForCarry();
+            MaterialPropertyBlock block = null;
+            if (_surfaceTintEnabled || reduceForCarry)
+            {
+                if (_surfaceTintBlock == null)
+                    _surfaceTintBlock = new MaterialPropertyBlock();
+
+                block = _surfaceTintBlock;
+                block.Clear();
+
+                if (_surfaceTintEnabled)
+                    block.SetColor(_surfaceColorId, _surfaceTintColor);
+
+                if (reduceForCarry)
+                {
+                    if (mat.HasProperty(_slimeBlurStrengthId))
+                        block.SetFloat(_slimeBlurStrengthId, carryBlurStrength);
+                    if (mat.HasProperty(_slimeDistortionStrengthId))
+                        block.SetFloat(_slimeDistortionStrengthId, carryDistortionStrength);
+                }
+            }
             int layer = gameObject.layer;
             Vector3 predictOffsetWorld = GetRenderPredictOffsetWorld();
 
@@ -2860,15 +3104,7 @@ namespace Revive.Slime
                 _fixedUpdateCountThisFrame = 0;
             }
             _fixedUpdateCountThisFrame++;
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-            if (_dbgFixedUpdateCountFrame != Time.frameCount)
-            {
-                _dbgFixedUpdateCountFrame = Time.frameCount;
-                _dbgFixedUpdateCountThisFrame = 0;
-            }
-            _dbgFixedUpdateCountThisFrame++;
-#endif
+			_fixedUpdateSerial++;
             if (_lastPerformanceProfilerFrame != Time.frameCount)
             {
                 _lastPerformanceProfilerFrame = Time.frameCount;
@@ -2923,7 +3159,6 @@ namespace Revive.Slime
 
                 _renderVelocity = _velocity;
                 _prevRenderTransPosition = trans.position;
-                _renderVelocityInitialized = true;
 
                 _lastFixedTransPosWorld = trans.position;
                 _lastFixedTransPosWorldInitialized = true;
@@ -2946,7 +3181,6 @@ namespace Revive.Slime
                 PerformanceProfiler.End(i == 0 ? "Simulate_0" : "Simulate_1");
                 Profiler.EndSample();
             }
-
             
             // 水珠独立模拟（独立分区，使用完整 PBF 物理 + 环境碰撞）
             Profiler.BeginSample("Simulate_Droplets");
@@ -3102,15 +3336,16 @@ namespace Revive.Slime
         {
             float t0 = Time.realtimeSinceStartup;
 
-            int mainInterval = math.max(1, mainMarchingCubesIntervalFrames);
-            if (adaptiveMainSurfaceUpdateWhenBacklog && _fixedUpdateCountThisFrame > 1)
-                mainInterval = math.max(mainInterval, mainMarchingCubesIntervalFramesWhenBacklog);
+            bool moving = _renderVelocity.sqrMagnitude > 1e-6f;
 
-            bool shouldUpdateMainMesh = (_mesh == null) || ((Time.frameCount - _lastMainMarchingCubesFrame) >= mainInterval);
+            int mainInterval = math.max(1, mainMarchingCubesIntervalFrames);
+            if (moving)
+                mainInterval = 1;
+            bool shouldUpdateMainMesh = (_mesh == null) || ((_fixedUpdateSerial - _lastMainMarchingCubesFrame) >= mainInterval);
             if (shouldUpdateMainMesh)
             {
                 SurfaceMain();
-                _lastMainMarchingCubesFrame = Time.frameCount;
+                _lastMainMarchingCubesFrame = _fixedUpdateSerial;
             }
 
             SurfaceDroplets();
@@ -3176,8 +3411,6 @@ namespace Revive.Slime
 
             Profiler.EndSample();
 
-            _gridLut.Clear();
-            _gridKeys.Clear();
             float blockSize = PBF_Utils.CellSize * 4;
             minPos = math.floor(_boundsBuffer[0] / blockSize) * blockSize;
             maxPos = math.ceil(_boundsBuffer[1] / blockSize) * blockSize;
@@ -3469,7 +3702,11 @@ namespace Revive.Slime
                 max = dropletMaxPos * SimToWorldScale
             };
 
-            bool shouldUpdateDropletMesh = (Time.frameCount - _lastDropletMarchingCubesFrame) >= dropletMarchingCubesIntervalFrames;
+            bool moving = _renderVelocity.sqrMagnitude > 1e-6f;
+            int dropletInterval = math.max(1, dropletMarchingCubesIntervalFrames);
+            if (moving)
+                dropletInterval = 1;
+            bool shouldUpdateDropletMesh = (_dropletMesh == null) || ((_fixedUpdateSerial - _lastDropletMarchingCubesFrame) >= dropletInterval);
             if (!shouldUpdateDropletMesh)
             {
                 return;
@@ -3526,9 +3763,6 @@ namespace Revive.Slime
             handle.Complete();
             PerformanceProfiler.End("SurfaceDroplet_MeanPos");
 
-            _dropletGridLut.Clear();
-            _dropletGridKeys.Clear();
-
             if (!PrepareSurfaceGridCore(
                 dropletCount,
                 dropletMinPos,
@@ -3567,7 +3801,7 @@ namespace Revive.Slime
                 "SurfaceDroplet_Blur",
                 "SurfaceDroplet_MarchingCubes",
                 out _dropletMeshOriginWorld);
-            _lastDropletMarchingCubesFrame = Time.frameCount;
+            _lastDropletMarchingCubesFrame = _fixedUpdateSerial;
 
             PerformanceProfiler.Begin("SurfaceDroplet_DisposeKeys");
             PerformanceProfiler.End("SurfaceDroplet_DisposeKeys");
@@ -4053,13 +4287,6 @@ namespace Revive.Slime
             _lastMainRadius = mainRadius;
             
             float3 mainVelocity = (float3)_velocity * WorldToSimScale;
-            // 动态 Concentration：速度越高，聚集力越强，保持相对响应时间不变
-            // 推导：响应帧数 N ∝ 1/(1-lerpFactor) ∝ 1/concentration
-            // 要保持 N/speed 不变，需要 concentration ∝ speed
-            float speed = math.length(_velocity);  // 世界坐标速度
-            float speedRatio = math.max(1f, speed / baseSpeed);
-            // 【临时禁用】动态Concentration可能导致过度聚集→爆炸，先用固定值测试
-            // float dynamicConcentration = concentration * speedRatio;
             float dynamicConcentration = concentration; // 固定值
             
             float prevGroundY0 = 0f;
@@ -4543,8 +4770,27 @@ namespace Revive.Slime
             // === 4. 更新自由飞行粒子和保护期粒子的控制器中心 ===
             // 收集每个控制器的自由飞行/保护期粒子质心
             PerformanceProfiler.Begin("Control_FreeParticleCenters");
-            var freeParticleCentroid = new NativeArray<float3>(_controllerBuffer.Length, Allocator.Temp);
-            var freeParticleCount = new NativeArray<int>(_controllerBuffer.Length, Allocator.Temp);
+            int controllerCountForTemp = _controllerBuffer.Length;
+            if (controllerCountForTemp <= 0)
+                controllerCountForTemp = 1;
+            if (!_freeParticleCentroidTemp.IsCreated || _freeParticleCentroidTemp.Length < controllerCountForTemp)
+            {
+                if (_freeParticleCentroidTemp.IsCreated) _freeParticleCentroidTemp.Dispose();
+                _freeParticleCentroidTemp = new NativeArray<float3>(math.max(8, controllerCountForTemp), Allocator.Persistent);
+            }
+            if (!_freeParticleCountTemp.IsCreated || _freeParticleCountTemp.Length < controllerCountForTemp)
+            {
+                if (_freeParticleCountTemp.IsCreated) _freeParticleCountTemp.Dispose();
+                _freeParticleCountTemp = new NativeArray<int>(math.max(8, controllerCountForTemp), Allocator.Persistent);
+            }
+
+            var freeParticleCentroid = _freeParticleCentroidTemp.GetSubArray(0, controllerCountForTemp);
+            var freeParticleCount = _freeParticleCountTemp.GetSubArray(0, controllerCountForTemp);
+            for (int c = 0; c < controllerCountForTemp; c++)
+            {
+                freeParticleCentroid[c] = float3.zero;
+                freeParticleCount[c] = 0;
+            }
 
             if (_controllerFreeFramesCounts == null || _controllerFreeFramesCounts.Length < _controllerBuffer.Length)
                 _controllerFreeFramesCounts = new int[_controllerBuffer.Length];
@@ -4628,9 +4874,6 @@ namespace Revive.Slime
             }
 
             PerformanceProfiler.End("Control_ControllerCounts_ScanParticles");
-            
-            freeParticleCentroid.Dispose();
-            freeParticleCount.Dispose();
 
             PerformanceProfiler.End("Control_ControllerCounts");
 
@@ -5471,7 +5714,40 @@ namespace Revive.Slime
                 }
             }
             PerformanceProfiler.End("MergeContact_UpdateSources");
+
+            if (mergedCount > 0 || dropletMergedCount > 0)
+            {
+                TryPlayMergeSfx();
+            }
             
+        }
+
+        private void TryPlayMergeSfx()
+        {
+            if (mergeSfx == null)
+                return;
+
+            if (_lastMergeSfxFixedSerial == _fixedUpdateSerial)
+                return;
+
+            float now = Time.unscaledTime;
+            if (mergeSfxCooldownSeconds > 0f && (now - _lastMergeSfxUnscaledTime) < mergeSfxCooldownSeconds)
+                return;
+
+            _lastMergeSfxUnscaledTime = now;
+            _lastMergeSfxFixedSerial = _fixedUpdateSerial;
+            MMSfxEvent.Trigger(mergeSfx, null, mergeSfxVolume, 1f);
+        }
+
+        public void PlayEmitSfx(bool isFirstEmitInSequence)
+        {
+            AudioClip clip = isFirstEmitInSequence ? emitFirstSfx : emitRepeatSfx;
+            if (clip == null)
+                clip = isFirstEmitInSequence ? emitRepeatSfx : emitFirstSfx;
+            if (clip == null)
+                return;
+
+            MMSfxEvent.Trigger(clip, null, 1f, 1f);
         }
         
         /// <summary>
@@ -5616,19 +5892,19 @@ namespace Revive.Slime
         /// <summary>
         /// 发射粒子 - 从主体朝向鼠标方向选择粒子并赋予速度
         /// </summary>
-        public void EmitParticles()
+        public bool EmitParticles()
         {
             // SlimeVolume 必须存在
             if (_slimeVolume == null)
             {
                 Debug.LogError("[Emit] SlimeVolume 未绑定，无法发射");
-                return;
+                return false;
             }
             
             // 检查SlimeVolume是否允许发射
             if (!_slimeVolume.CanEmit(emitBatchSize))
             {
-                return;
+                return false;
             }
             
             // 获取主控制器中心（ID=0的粒子所属的控制器）
@@ -5639,7 +5915,7 @@ namespace Revive.Slime
             }
             else
             {
-                return;
+                return false;
             }
             
             // 计算鼠标方向
@@ -5678,7 +5954,7 @@ namespace Revive.Slime
             if (mainParticleCount == 0)
             {
                 distList.Dispose();
-                return;
+                return false;
             }
             
             // 排序并取第95百分位作为实际半径（排除异常值）
@@ -5835,7 +6111,7 @@ namespace Revive.Slime
                 if (candidateCount < minSeparateClusterSize)
                 {
                     candidateMask.Dispose();
-                    return;
+                    return false;
                 }
             }
 
@@ -5884,7 +6160,7 @@ namespace Revive.Slime
                         _velocityBuffer[i] = float3.zero;
                     }
                 }
-                return;
+                return false;
             }
             
             // === 为发射的粒子创建独立控制器 ===
@@ -5947,6 +6223,8 @@ namespace Revive.Slime
             {
                 _slimeVolume.UpdateFromParticles(_particles, true);
             }
+
+            return emitted >= minSeparateClusterSize;
         }
         
         private void RearrangeInstances()
@@ -6226,7 +6504,7 @@ namespace Revive.Slime
                 _mainBodyCentroidWorld = (Vector3)(eyeCenter * SimToWorldScale);
             }
             
-            // 眼睛方向只跟随水平速度，忽略垂直分量（跳跃时保持朝向稳定）
+            // 眼睛方向以水平为主，但允许在一定垂直范围内跟随速度（下落时可朝下）
             float3 horizVel = new float3(controller.Velocity.x, 0, controller.Velocity.z);
             float3 horizDir = new float3(slime.Dir.x, 0, slime.Dir.z);
             if (isControlled && _topDownController3D != null)
@@ -6245,7 +6523,13 @@ namespace Revive.Slime
                     horizDir = math.normalizesafe(horizVel, horizDir);
                 }
             }
-            float3 rayDir = math.normalizesafe(horizDir, new float3(0, 0, 1));
+
+            float3 baseHorizDir = math.normalizesafe(horizDir, new float3(0, 0, 1));
+            const float eyePitchPerVelY = 0.12f;
+            const float eyePitchMaxDownRad = 0.60f;
+            const float eyePitchMaxUpRad = 0.25f;
+            float pitch = math.clamp(controller.Velocity.y * eyePitchPerVelY, -eyePitchMaxDownRad, eyePitchMaxUpRad);
+            float3 rayDir = math.normalizesafe(baseHorizDir * math.cos(pitch) + new float3(0, 1, 0) * math.sin(pitch), baseHorizDir);
             
             // 直接从粒子质心发射射线（质心已经反映真实垂直分布，不需要额外偏移）
             float3 basePos = eyeCenter + rayDir * (controller.Radius * 0.7f);
@@ -6374,6 +6658,9 @@ namespace Revive.Slime
 
         private int ConvertMainToWorldPositionsForRendering()
         {
+            if (activeParticles <= 0)
+                return 0;
+
             for (int i = 0; i < activeParticles; i++)
             {
                 var p = _particles[i];

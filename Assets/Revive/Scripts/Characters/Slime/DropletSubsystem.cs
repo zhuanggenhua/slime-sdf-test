@@ -639,7 +639,6 @@ namespace Revive.Slime
             int dbgColliderChecks = 0;
             int dbgCandidateColliderChecks = 0;
             int dbgFullScanColliderChecks = 0;
-            bool dbgCandidatesOverflow = false;
             int dbgCandidatesTotal = 0;
             
             tStageStart = Stopwatch.GetTimestamp();
@@ -777,7 +776,6 @@ namespace Revive.Slime
                 if (overflow)
                 {
                     canUseSourceColliderCandidates = false;
-                    dbgCandidatesOverflow = true;
                 }
                 else
                 {

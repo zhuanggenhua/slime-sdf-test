@@ -197,6 +197,77 @@ namespace MoreMountains.Feedbacks
 		protected float _randomDurationMultiplier = 1f;
 		protected float _lastOnEnableFrame = -1;
 
+		protected static GameObject _mmFeedbacksRuntimeRoot;
+		protected static readonly Dictionary<int, MMFeedbacks> _mmFeedbacksRuntimeInstances = new Dictionary<int, MMFeedbacks>();
+		protected bool _isRuntimeInstance;
+		protected GameObject _initializationOwner;
+
+		protected virtual bool IsPrefabAsset()
+		{
+			return !this.gameObject.scene.IsValid();
+		}
+
+		protected virtual Vector3 GetDefaultPlayPosition()
+		{
+			if (_isRuntimeInstance && (_initializationOwner != null))
+			{
+				return _initializationOwner.transform.position;
+			}
+			return this.transform.position;
+		}
+
+		protected static GameObject GetOrCreateRuntimeRoot()
+		{
+			if (_mmFeedbacksRuntimeRoot != null)
+			{
+				return _mmFeedbacksRuntimeRoot;
+			}
+
+			_mmFeedbacksRuntimeRoot = new GameObject("MMFeedbacksRuntimeRoot");
+			_mmFeedbacksRuntimeRoot.hideFlags = HideFlags.HideInHierarchy | HideFlags.DontSave;
+			DontDestroyOnLoad(_mmFeedbacksRuntimeRoot);
+			return _mmFeedbacksRuntimeRoot;
+		}
+
+		protected virtual MMFeedbacks GetOrCreateRuntimeInstance()
+		{
+			if (!Application.isPlaying)
+			{
+				return this;
+			}
+
+			if (!IsPrefabAsset())
+			{
+				return this;
+			}
+
+			int sourceId = this.GetInstanceID();
+			if (_mmFeedbacksRuntimeInstances.TryGetValue(sourceId, out MMFeedbacks existing) && (existing != null))
+			{
+				return existing;
+			}
+
+			GameObject tempRoot = new GameObject("MMFeedbacksRuntimeTempRoot");
+			tempRoot.hideFlags = HideFlags.HideInHierarchy | HideFlags.DontSave;
+			tempRoot.SetActive(false);
+
+			GameObject instanceGo = Instantiate(this.gameObject, tempRoot.transform, false);
+			instanceGo.hideFlags = HideFlags.HideInHierarchy | HideFlags.DontSave;
+			instanceGo.name = this.gameObject.name + " (Runtime)";
+			MMFeedbacks instance = instanceGo.GetComponent<MMFeedbacks>();
+			if (instance != null)
+			{
+				instance._isRuntimeInstance = true;
+				instance.AutoPlayOnEnable = false;
+				instance.AutoPlayOnStart = false;
+			}
+
+			instanceGo.transform.SetParent(GetOrCreateRuntimeRoot().transform, false);
+			Destroy(tempRoot);
+
+			_mmFeedbacksRuntimeInstances[sourceId] = instance;
+			return instance;
+		}
 		#region INITIALIZATION
 
 		/// <summary>
@@ -254,6 +325,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void Initialization(bool forceInitIfPlaying = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.Initialization(forceInitIfPlaying);
+				return;
+			}
+
 			Initialization(this.gameObject);
 		}
 
@@ -264,6 +342,15 @@ namespace MoreMountains.Feedbacks
 		/// <param name="feedbacksOwner"></param>
 		public virtual void Initialization(GameObject owner)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.Initialization(owner);
+				return;
+			}
+
+			_initializationOwner = owner;
+
 			if ((SafeMode == MMFeedbacks.SafeModes.RuntimeOnly) || (SafeMode == MMFeedbacks.SafeModes.Full))
 			{
 				AutoRepair();
@@ -291,7 +378,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void PlayFeedbacks()
 		{
-			PlayFeedbacksInternal(this.transform.position, FeedbacksIntensity);
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PlayFeedbacks();
+				return;
+			}
+			PlayFeedbacksInternal(GetDefaultPlayPosition(), FeedbacksIntensity);
 		}
         
 		/// <summary>
@@ -302,6 +395,12 @@ namespace MoreMountains.Feedbacks
 		/// <param name="forceChangeDirection"></param>
 		public virtual async System.Threading.Tasks.Task PlayFeedbacksTask(Vector3 position, float feedbacksIntensity = 1.0f, bool forceChangeDirection = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				await runtime.PlayFeedbacksTask(position, feedbacksIntensity, forceChangeDirection);
+				return;
+			}
 			PlayFeedbacks(position, feedbacksIntensity, forceChangeDirection);
 			while (IsPlaying)
 			{
@@ -314,6 +413,12 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual async System.Threading.Tasks.Task PlayFeedbacksTask()
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				await runtime.PlayFeedbacksTask();
+				return;
+			}
 			PlayFeedbacks();
 			while (IsPlaying)
 			{
@@ -332,6 +437,12 @@ namespace MoreMountains.Feedbacks
 		/// <param name="feedbacksIntensity"></param>
 		public virtual void PlayFeedbacks(Vector3 position, float feedbacksIntensity = 1.0f, bool forceChangeDirection = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PlayFeedbacks(position, feedbacksIntensity, forceChangeDirection);
+				return;
+			}
 			PlayFeedbacksInternal(position, feedbacksIntensity, forceChangeDirection);
 		}
 
@@ -340,7 +451,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void PlayFeedbacksInReverse()
 		{
-			PlayFeedbacksInternal(this.transform.position, FeedbacksIntensity, true);
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PlayFeedbacksInReverse();
+				return;
+			}
+			PlayFeedbacksInternal(GetDefaultPlayPosition(), FeedbacksIntensity, true);
 		}
 
 		/// <summary>
@@ -348,6 +465,12 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void PlayFeedbacksInReverse(Vector3 position, float feedbacksIntensity = 1.0f, bool forceChangeDirection = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PlayFeedbacksInReverse(position, feedbacksIntensity, forceChangeDirection);
+				return;
+			}
 			PlayFeedbacksInternal(position, feedbacksIntensity, forceChangeDirection);
 		}
 
@@ -409,6 +532,13 @@ namespace MoreMountains.Feedbacks
 		/// <returns></returns>
 		public virtual IEnumerator PlayFeedbacksCoroutine(Vector3 position, float feedbacksIntensity = 1.0f, bool forceChangeDirection = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				yield return runtime.PlayFeedbacksCoroutine(position, feedbacksIntensity, forceChangeDirection);
+				yield break;
+			}
+
 			PlayFeedbacks(position, feedbacksIntensity, forceChangeDirection);
 			while (IsPlaying)
 			{
@@ -427,6 +557,18 @@ namespace MoreMountains.Feedbacks
 		/// <param name="feedbacksIntensity"></param>
 		protected virtual void PlayFeedbacksInternal(Vector3 position, float feedbacksIntensity, bool forceChangeDirection = false)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PlayFeedbacksInternal(position, feedbacksIntensity, forceChangeDirection);
+				return;
+			}
+
+			if (_isRuntimeInstance)
+			{
+				this.transform.position = position;
+			}
+
 			if (!CanPlay)
 			{
 				return;
@@ -584,6 +726,12 @@ namespace MoreMountains.Feedbacks
 		/// <returns></returns>
 		public virtual bool HasFeedbackStillPlaying()
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				return runtime.HasFeedbackStillPlaying();
+			}
+
 			int count = Feedbacks.Count;
 			for (int i = 0; i < count; i++)
 			{
@@ -615,6 +763,12 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void StopFeedbacks()
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.StopFeedbacks();
+				return;
+			}
 			StopFeedbacks(true);
 		}
 
@@ -623,7 +777,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void StopFeedbacks(bool stopAllFeedbacks = true)
 		{
-			StopFeedbacks(this.transform.position, 1.0f, stopAllFeedbacks);
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.StopFeedbacks(stopAllFeedbacks);
+				return;
+			}
+			StopFeedbacks(GetDefaultPlayPosition(), 1.0f, stopAllFeedbacks);
 		}
 
 		/// <summary>
@@ -633,6 +793,13 @@ namespace MoreMountains.Feedbacks
 		/// <param name="feedbacksIntensity"></param>
 		public virtual void StopFeedbacks(Vector3 position, float feedbacksIntensity = 1.0f, bool stopAllFeedbacks = true)
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.StopFeedbacks(position, feedbacksIntensity, stopAllFeedbacks);
+				return;
+			}
+
 			if (stopAllFeedbacks)
 			{
 				for (int i = 0; i < Feedbacks.Count; i++)
@@ -689,6 +856,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void PauseFeedbacks()
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.PauseFeedbacks();
+				return;
+			}
+
 			Events.TriggerOnPause(this);
 			InScriptDrivenPause = true;
 		}
@@ -698,6 +872,13 @@ namespace MoreMountains.Feedbacks
 		/// </summary>
 		public virtual void ResumeFeedbacks()
 		{
+			MMFeedbacks runtime = GetOrCreateRuntimeInstance();
+			if (runtime != this)
+			{
+				runtime.ResumeFeedbacks();
+				return;
+			}
+
 			Events.TriggerOnResume(this);
 			InScriptDrivenPause = false;
 		}

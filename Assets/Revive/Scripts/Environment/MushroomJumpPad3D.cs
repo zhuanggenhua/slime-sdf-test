@@ -1,8 +1,9 @@
 using System;
 using System.Collections;
-using UnityEngine;
-using MoreMountains.TopDownEngine;
 using MoreMountains.Feedbacks;
+using MoreMountains.TopDownEngine;
+using Revive.Slime;
+using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -87,10 +88,10 @@ namespace Revive.Environment
         private Transform _triggerZoneTransform;
         private bool _oneShotDestroyQueued;
         private Rigidbody _createdRigidbody;
+        private bool _started;
         
         private void Awake()
         {
-            SetupColliders();
             _bounceFeedback?.Initialization(this.gameObject);
             ResolvePlatformColliderIfNeeded();
             ResolvePlatformFeedbackTargetIfNeeded();
@@ -98,16 +99,116 @@ namespace Revive.Environment
             {
                 _platformBaseScale = _platformFeedbackTarget.localScale;
             }
+
+            if (Application.isPlaying && !enabled)
+            {
+                CleanupTriggerZoneRuntime();
+            }
         }
 
         private void OnEnable()
         {
-            SetupColliders();
+            if (_started)
+            {
+                SetupColliders();
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (!Application.isPlaying)
+            {
+                return;
+            }
+
+            CleanupTriggerZoneRuntime();
         }
 
         public void RebuildTriggerZone()
         {
+            if (!isActiveAndEnabled)
+            {
+                return;
+            }
+
             SetupColliders();
+        }
+
+        private void CleanupTriggerZoneRuntime()
+        {
+            ResolvePlatformColliderIfNeeded();
+
+            Transform rootA = transform;
+            Transform rootB = _resolvedPlatformCollider != null ? _resolvedPlatformCollider.transform : null;
+
+            bool removedAny = false;
+            if (rootA != null)
+            {
+                removedAny |= CleanupTriggerZoneRuntimeUnderRoot(rootA);
+            }
+
+            if (rootB != null && rootB != rootA && (rootA == null || !rootB.IsChildOf(rootA)))
+            {
+                removedAny |= CleanupTriggerZoneRuntimeUnderRoot(rootB);
+            }
+
+            if (removedAny)
+            {
+                _triggerZoneTransform = null;
+            }
+        }
+
+        private bool CleanupTriggerZoneRuntimeUnderRoot(Transform root)
+        {
+            if (root == null)
+            {
+                return false;
+            }
+
+            Transform[] all = root.GetComponentsInChildren<Transform>(includeInactive: true);
+            bool removedAny = false;
+            for (int i = 0; i < all.Length; i++)
+            {
+                Transform t = all[i];
+                if (t == null || t == root)
+                {
+                    continue;
+                }
+
+                if (t.name != "TriggerZone")
+                {
+                    continue;
+                }
+
+                bool looksLikeJumpPadTriggerZone = (t.GetComponent<JumpPadTrigger>() != null) || (t.GetComponent<Collider>() != null);
+                if (!looksLikeJumpPadTriggerZone)
+                {
+                    continue;
+                }
+
+                t.gameObject.SetActive(false);
+                {
+                    Collider c = t.GetComponent<Collider>();
+                    if (c != null)
+                        c.enabled = false;
+                    JumpPadTrigger jpt = t.GetComponent<JumpPadTrigger>();
+                    if (jpt != null)
+                        jpt.enabled = false;
+                }
+
+                if (Application.isPlaying)
+                {
+                    Destroy(t.gameObject);
+                }
+                else
+                {
+                    DestroyImmediate(t.gameObject);
+                }
+
+                removedAny = true;
+            }
+
+            return removedAny;
         }
         
         private void Update()
@@ -232,6 +333,9 @@ namespace Revive.Environment
         
         private void Start()
         {
+            _started = true;
+            SetupColliders();
+
             // 确保有Rigidbody（Trigger检测需要）
             Rigidbody rb = GetComponent<Rigidbody>();
             if (rb == null)
@@ -384,7 +488,7 @@ namespace Revive.Environment
             float startSpeed = Mathf.Max(0.01f, Mathf.Min(_startJumpSpeed, _jumpSpeed));
             controller.AddedForce = new Vector3(0f, startSpeed, 0f);
             
-            _bounceFeedback?.PlayFeedbacks(transform.position, _jumpSpeed);
+            MMFeedbacksHelper.Play(_bounceFeedback, transform.position, _jumpSpeed);
             PlayPlatformScaleFeedback();
 
             Bounced?.Invoke(this, controller);

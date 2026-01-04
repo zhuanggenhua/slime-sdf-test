@@ -171,7 +171,7 @@ namespace Revive.Environment
                 Instantiate(DropVfxPrefab, spawnPos, Quaternion.identity);
             }
 
-            DropFeedbacks?.PlayFeedbacks(spawnPos);
+            MMFeedbacksHelper.Play(DropFeedbacks, spawnPos);
 
             return true;
         }

@@ -15,7 +15,11 @@ namespace Revive.GamePlay.Purification
     /// </summary>
     public class PurificationAtmosphereController : MonoBehaviour, IPurificationListener
     {
-        [Header("后处理效果设置")]
+        [ChineseHeader("启用控制")]
+        [Tooltip("是否启用氛围效果")]
+        public bool EnableAtmosphere = true;
+
+        [ChineseHeader("后处理效果设置")]
         [Tooltip("Volume组件引用")]
         public Volume PostProcessingVolume;
         
@@ -27,7 +31,7 @@ namespace Revive.GamePlay.Purification
         [Range(0f, 1f)]
         public float MinDarknessIntensity = 0f;
         
-        [Header("主光源设置")]
+        [ChineseHeader("主光源设置")]
         
         [Tooltip("主光源组件引用")]
         public Light MainLight;
@@ -40,18 +44,18 @@ namespace Revive.GamePlay.Purification
         [Range(0f, 1f)]
         public float MinLightIntensity = 0.5f;
         
-        [Header("通用")]
+        [ChineseHeader("通用")]
         [Tooltip("平滑过渡速度")]
         public float TransitionSpeed = 2f;
-        
-        [Header("监听者设置")]
+
+        [ChineseHeader("监听者设置")]
         [Tooltip("监听者名称（用于调试）")]
         public string ListenerName = "PostProcessingController";
         
         [Tooltip("是否在Start时自动注册")]
         public bool AutoRegisterOnStart = true;
         
-        [Header("运行时信息")]
+        [ChineseHeader("运行时信息")]
         [SerializeField, MMReadOnly]
         private float _currentPurificationLevel = 0f;
         
@@ -143,10 +147,7 @@ namespace Revive.GamePlay.Purification
         
         public void OnPurificationChanged(float purificationLevel, Vector3 position)
         {
-            _currentPurificationLevel = purificationLevel;
-            
-            // 计算目标强度：净化度越高，灰暗越低
-            _targetIntensity = Mathf.Lerp(MaxDarknessIntensity, MinDarknessIntensity, purificationLevel);
+            SetPurificationLevel(purificationLevel);
         }
         
         public Vector3 GetListenerPosition()
@@ -165,6 +166,12 @@ namespace Revive.GamePlay.Purification
         {
             return ListenerName;
         }
+
+        private void SetPurificationLevel(float purificationLevel)
+        {
+            _currentPurificationLevel = purificationLevel;
+            _targetIntensity = Mathf.Lerp(MaxDarknessIntensity, MinDarknessIntensity, purificationLevel);
+        }
         
         #endregion
         
@@ -176,6 +183,16 @@ namespace Revive.GamePlay.Purification
         /// <param name="intensity">强度值 (0-1)</param>
         private void ApplyIntensity(float intensity)
         {
+            if (!EnableAtmosphere)
+            {
+                // 禁用时重置为默认状态
+                if (PostProcessingVolume != null)
+                    PostProcessingVolume.weight = 0f;
+                if (MainLight != null)
+                    MainLight.intensity = MaxLightIntensity;
+                return;
+            }
+
             // 处理后处理效果
             if (PostProcessingVolume != null)
             {

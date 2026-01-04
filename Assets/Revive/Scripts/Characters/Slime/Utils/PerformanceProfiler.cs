@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
@@ -85,6 +86,11 @@ namespace Revive.Slime
         private const int SummaryMaxStages = 48;
 
         private static readonly System.Text.StringBuilder _sharedStringBuilder = new System.Text.StringBuilder(4096);
+
+        private static int _gc0Begin = 0;
+        private static int _gc1Begin = 0;
+        private static int _gc2Begin = 0;
+        private static long _heapBytesBegin = 0;
         
         // 当前帧的阶段执行顺序
         private static List<string> _currentFrameStages = new List<string>();
@@ -239,6 +245,11 @@ namespace Revive.Slime
             
             _currentFrameStages.Clear();
             _frameTimer.Restart();
+
+            _gc0Begin = GC.CollectionCount(0);
+            _gc1Begin = GC.CollectionCount(1);
+            _gc2Begin = GC.CollectionCount(2);
+            _heapBytesBegin = GC.GetTotalMemory(false);
             
             // 重置当前帧的阶段计时
             for (int i = 0; i < _stageKeys.Count; i++)
@@ -294,6 +305,19 @@ namespace Revive.Slime
             bool isSlowFrame = frameTime > FrameTimeWarningThreshold;
             if (isSlowFrame)
                 _slowFrameCount++;
+
+            if (isSlowFrame || VerboseMode)
+            {
+                int gc0 = GC.CollectionCount(0);
+                int gc1 = GC.CollectionCount(1);
+                int gc2 = GC.CollectionCount(2);
+                CounterSet("GC_Gen0_Delta", gc0 - _gc0Begin);
+                CounterSet("GC_Gen1_Delta", gc1 - _gc1Begin);
+                CounterSet("GC_Gen2_Delta", gc2 - _gc2Begin);
+                long heapBytes = GC.GetTotalMemory(false);
+                CounterSet("GC_HeapKB", heapBytes / 1024);
+                CounterSet("GC_HeapKB_Delta", (heapBytes - _heapBytesBegin) / 1024);
+            }
             
             // 输出详细日志
             if (VerboseMode)
@@ -380,7 +404,7 @@ namespace Revive.Slime
             }
             
             sb.AppendLine("================================================");
-            Debug.Log(sb.ToString());
+            Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", sb.ToString());
         }
 
         private static double CalculateCurrentFrameProfiledTimeMs()
@@ -503,7 +527,8 @@ namespace Revive.Slime
                 string counterName = _counterKeys[i];
                 bool alwaysPrintForWatering = isSlowFrame && counterName.StartsWith("Watering_", StringComparison.Ordinal);
                 bool alwaysPrintForSlime = isSlowFrame && counterName.StartsWith("Slime_", StringComparison.Ordinal);
-                if (_counters.TryGetValue(counterName, out var data) && (data.Current != 0 || alwaysPrintForWatering || alwaysPrintForSlime))
+                bool alwaysPrintForGc = isSlowFrame && counterName.StartsWith("GC_", StringComparison.Ordinal);
+                if (_counters.TryGetValue(counterName, out var data) && (data.Current != 0 || alwaysPrintForWatering || alwaysPrintForSlime || alwaysPrintForGc))
                 {
                     if (!hasAnyCounter)
                     {
@@ -514,7 +539,7 @@ namespace Revive.Slime
                 }
             }
             
-            Debug.Log(sb.ToString());
+            Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", sb.ToString());
         }
         
         #endregion
