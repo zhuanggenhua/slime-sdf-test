@@ -189,6 +189,8 @@ namespace Revive.GamePlay.Purification.Rendering
                             continue;
                         if (!r.enabled)
                             continue;
+                        if (r.forceRenderingOff)
+                            continue;
 
                         var go = r.gameObject;
                         if (go == null || !go.activeInHierarchy)
@@ -234,6 +236,8 @@ namespace Revive.GamePlay.Purification.Rendering
                         if (r == null)
                             continue;
                         if (!r.enabled)
+                            continue;
+                        if (r.forceRenderingOff)
                             continue;
 
                         var go = r.gameObject;
