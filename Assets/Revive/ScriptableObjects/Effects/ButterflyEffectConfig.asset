@@ -12,7 +12,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c404c614f7f8e7e469dccca996da3599, type: 3}
   m_Name: ButterflyEffectConfig
   m_EditorClassIdentifier: 
-  ButterflyPrefabs: []
+  ButterflyPrefabs:
+  - {fileID: 6553351812565585173, guid: c7c9da4022f722247b7f1d553b9887cd, type: 3}
+  - {fileID: 6781985183894172969, guid: d28d7950c70f152499787bea6f89c871, type: 3}
+  - {fileID: 4251143869427134272, guid: c332b94581f26dc4d82a30a735a34e8c, type: 3}
+  - {fileID: 6892948934796494448, guid: ddd2cc2f155183b4c98936943da8b9ab, type: 3}
   SpawnChance: 0.3
   SpawnOffset: {x: 0, y: 1, z: 0}
   SpawnRandomRadius: 0.5
