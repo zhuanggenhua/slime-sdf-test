@@ -11,17 +11,17 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 986430f7ac2523146845eef1bcbbd5ef,
         type: 3}
       propertyPath: m_LocalScale.x
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 986430f7ac2523146845eef1bcbbd5ef,
         type: 3}
       propertyPath: m_LocalScale.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 986430f7ac2523146845eef1bcbbd5ef,
         type: 3}
       propertyPath: m_LocalScale.z
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 986430f7ac2523146845eef1bcbbd5ef,
         type: 3}
@@ -115,7 +115,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 250e27526f57e21478de7aef6ae76d8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  FlowerRoot: {fileID: 0}
+  FlowerRoot: {fileID: 7942435207883132264}
   AutoFindFlowerInChildren: 1
   BloomThreshold: 0.2
   WitherThreshold: 0.3

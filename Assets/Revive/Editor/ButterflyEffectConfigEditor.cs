@@ -8,7 +8,7 @@ namespace Revive.GamePlay.Purification
     /// 提供预设配置快速设置功能
     /// </summary>
     [CustomEditor(typeof(ButterflyEffectConfig))]
-    public class ButterflyEffectConfigEditor : Editor
+    public class ButterflyEffectConfigEditor : UnityEditor.Editor
     {
         public override void OnInspectorGUI()
         {

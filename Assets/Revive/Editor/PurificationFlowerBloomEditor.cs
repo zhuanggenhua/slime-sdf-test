@@ -8,7 +8,7 @@ namespace Revive.GamePlay.Purification
     /// 提供配置源提示和便捷操作
     /// </summary>
     [CustomEditor(typeof(PurificationFlowerBloom))]
-    public class PurificationFlowerBloomEditor : Editor
+    public class PurificationFlowerBloomEditor : UnityEditor.Editor
     {
         public override void OnInspectorGUI()
         {
