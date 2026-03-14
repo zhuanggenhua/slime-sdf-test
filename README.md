@@ -1,3 +1,5 @@
+基于https://github.com/lamp-cap/Unity_Slime
+
 # slime-sdf-test
 
 一个基于 Unity 6 的史莱姆玩法实验仓库，当前公开内容集中在三个模块：
