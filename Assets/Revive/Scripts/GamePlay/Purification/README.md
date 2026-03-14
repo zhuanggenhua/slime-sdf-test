@@ -136,20 +136,7 @@ void OnCharacterMove()
 
 ## 内置监听者示例
 
-### 1. 氛围效果控制器 (PurificationAtmosphereController)
-
-根据净化度调整场景氛围（如灰暗程度）。
-
-**使用方法：**
-1. 在场景相机或主对象上添加 `PurificationAtmosphereController` 组件
-2. 配置参数：
-   - Volume: 后处理Volume组件
-   - MaxDarknessIntensity: 最大灰暗强度（净化度=0时）
-   - MinDarknessIntensity: 最小灰暗强度（净化度=1时）
-   - TransitionSpeed: 过渡速度（默认2.0）
-3. 系统会自动根据净化度调整场景氛围
-
-### 2. 鲜花绽放控制器 (PurificationFlowerBloom)
+### 1. 鲜花绽放控制器 (PurificationFlowerBloom)
 
 根据净化度控制鲜花的生长和绽放。
 
@@ -162,6 +149,8 @@ void OnCharacterMove()
    - BloomedScale: 完全绽放时的缩放
    - WitheredScale: 完全凋谢时的缩放
 3. 净化度达到阈值时，鲜花会自动生长/凋谢
+
+> 注：开源精简版已移除后处理 / 氛围控制相关内容，仅保留净化核心逻辑与可视化示例。
 
 ## 数据持久化
 

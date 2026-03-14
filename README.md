@@ -1,165 +1,157 @@
-# Project Revive - GameJam 项目
+# slime-sdf-test
 
-## 📖 项目简介
+一个基于 Unity 6 的史莱姆玩法实验仓库，当前公开内容集中在三个模块：
 
-**Project Revive** 是一款3D俯视角生态修复游戏，玩家扮演一只可变形的史莱姆，通过吸收不同材质变换形态，治愈生态系统，帮助小岛复苏。
+- `Slime`：基于 PBF 的史莱姆主体、分离、发射、召回与场景水珠系统
+- `World SDF`：静态场景 SDF 烘焙、加载与运行时碰撞采样链路
+- `Purification`：位置驱动的净化度系统，以及场景中的可视化和交互示例
 
-本作参加 **[thatgamejam](https://itch.io/jam/thatgamejam)** 首届在线游戏节，致力于创造具有情感共鸣、跨越年龄界限的游戏体验。
+当前仓库保留一个主演示场景：
 
-### 🎨 设计理念
+- `Assets/Revive/Scenes/SlimeTest.unity`
 
-受 *Journey*、*Flower* 和 *Sky* 启发，我们希望通过生态修复这一主题，探索：
-- **情感表达**: 通过治愈枯萎的生命，传递希望与重生的情感
-- **人际连接**: （待定）可能的多人协作或异步互动元素
-- **永恒性**: 简洁而富有深度的核心玩法，适合所有年龄段玩家
+## 环境
 
-### 核心玩法（部分待定）
-- 🌱 **生态修复**: 激活与治愈干枯的植被、修复破损的结构
-- 💧 **材质变形**: 吸收水/泥土/木材/矿物等材质，变成不同形态完成任务
-- 🔄 **分裂融合**: 分裂成多个小史莱姆提高效率，融合成超级史莱姆完成大型工程
-- 🐾 **帮助生物**: 为小动物搭桥、挖掘家园、搭建巢穴
+- Unity `6000.3.10f1`
+- URP `17.3.0`
+- Input System `1.18.0`
+- Cinemachine `3.1.4`
+- TopDownEngine（仓库内已包含裁剪后的依赖内容）
 
----
+## 功能概览
 
-## 🎮 当前项目状态
+### 1. 史莱姆模拟
 
-**GameJam**: [thatgamejam 2025](https://itch.io/jam/thatgamejam)  
-**开发周期**: 2025.12.20 - 2026.01.04 (16天)  
-**开发阶段**: 前期准备 - 框架搭建中  
-**技术框架**: TopDownEngine  
-**Unity版本**: 6000.1.15f1  
-**渲染管线**: URP (Universal Render Pipeline)
+- 主体史莱姆使用 PBF 粒子模拟
+- 支持分离体、喷射粒子、场景水珠三类粒子状态
+- 支持 CCA 连通组件分析，用于识别分离块并分配控制器
+- 支持主体/分离体回收、接触融合、淡出回收
+- 支持 Terrain 高度场、静态碰撞体和 World SDF 共同参与地面/障碍碰撞
 
----
+主要代码入口：
 
-## 👥 团队成员
+- `Assets/Revive/Scripts/Characters/Slime/Slime_PBF.cs`
+- `Assets/Revive/Scripts/Characters/Slime/Jobs/Jobs_Simulation_PBF.cs`
 
-| 角色 | 人数 | 职责（待定） |
-|------|------|------|
-| **程序** | 2人 | • 框架搭建与技术选型<br>• 角色行为控制系统 |
-| **美术** | 2人 | • 角色/场景建模与动画<br>• UI/特效制作 |
-| **音效** | 1人 | • 音效设计与实现 (Wwise) |
+### 2. World SDF
 
----
+- 提供场景静态碰撞体的 SDF 烘焙工具
+- 运行时从 `WorldSdf.bytes` 加载体积数据
+- 用于史莱姆和水珠的静态碰撞、法线与摩擦计算
+- 与普通 Collider 回退路径共存，可按项目需求切换
 
-## 🛠️ 技术栈
+主要代码入口：
 
-### 核心框架
-- **TopDownEngine**: 俯视角游戏框架
-  - 角色控制、状态机、AI系统
-  - 物品交互、库存管理
-  - 反馈系统 (MMFeedbacks)
+- `Assets/Revive/Scripts/Characters/Slime/Editor/WorldSdfBakerWindow.cs`
+- `Assets/Revive/Scripts/Characters/Slime/Physics/WorldSdfAsset.cs`
 
-### 音频中间件
-- **Wwise**: 音频引擎与交互音效
+编辑器入口：
 
----
+- `Slime/World/Bake SDF`
 
-## 📁 项目结构
+默认输出资源位置：
 
+- `Assets/MMData/SDFData/WorldSdf.bytes`
+
+### 3. Purification 净化系统
+
+- 基于位置和半径累计净化贡献
+- 支持查询、监听、存档和可视化
+- 场景内可用作花朵绽放、区域恢复、世界材质反馈等逻辑驱动
+
+主要代码入口：
+
+- `Assets/Revive/Scripts/GamePlay/Purification/PurificationSystem.cs`
+- `Assets/Revive/Scripts/GamePlay/Purification/README.md`
+
+## 快速开始
+
+### 1. 打开项目
+
+1. 使用 Unity Hub 打开仓库根目录
+2. 确认编辑器版本为 `6000.3.10f1`
+3. 等待包与资源导入完成
+
+### 2. 打开演示场景
+
+打开：
+
+- `Assets/Revive/Scenes/SlimeTest.unity`
+
+### 3. 运行场景
+
+直接进入 Play Mode 即可查看当前公开功能联动：
+
+- 史莱姆主体模拟
+- 分离/回收表现
+- SDF 或普通静态碰撞参与下的地形交互
+- 净化系统相关演示内容
+
+## World SDF 使用方法
+
+### 烘焙
+
+1. 在 Unity 顶部菜单打开 `Slime/World/Bake SDF`
+2. 设置烘焙范围、体素大小、静态层掩码
+3. 需要时可使用“从场景碰撞体自动计算范围”
+4. 点击“烘焙 SDF 资源”
+5. 将生成的 `WorldSdf.bytes` 保存到 `Assets/MMData/SDFData/`
+
+### 挂接
+
+在史莱姆对象的 `Slime_PBF` 组件上确认以下配置：
+
+- `Use World Static Sdf` 已启用
+- `World Static Sdf Bytes` 指向生成的 `WorldSdf.bytes`
+- `World Static Collider Layers` 包含你希望参与静态碰撞/SDF 烘焙的层
+
+### 运行时行为
+
+- 若 SDF 可用，则优先用于静态场景碰撞
+- 若关闭 SDF，或当前路径允许回退，则仍可使用普通静态 Collider
+- Terrain 会在运行时自动读取场景中的 `Terrain` 高度图，不需要手动拖引用
+
+## Purification 使用方法
+
+如果你只想看基础用法，先读：
+
+- `Assets/Revive/Scripts/GamePlay/Purification/README.md`
+
+最常见的使用方式：
+
+- 在场景中放置 `PurificationSystem`
+- 用 `AddIndicator(...)` 或相关组件向系统写入净化贡献
+- 用 `GetPurificationLevel(...)` 查询某个位置的净化程度
+- 用 `IPurificationListener` 响应净化变化
+
+## 目录结构
+
+```text
+project-revive-copy/
+|- Assets/
+|  |- Revive/
+|  |  |- Scenes/
+|  |  |  |- SlimeTest.unity
+|  |  |- Scripts/
+|  |  |  |- Characters/Slime/
+|  |  |  |- GamePlay/Purification/
+|  |- MMData/SDFData/
+|- Packages/
+|- ProjectSettings/
+|- README.md
 ```
-project-revive/
-├── Assets/
-│   ├── Revive/                    # 🌟 我们的游戏内容（主要工作区）
-│   │   ├── Arts/                  # 美术资产 (DCC源文件)
-│   │   ├── Prefabs/               # 预制件
-│   │   ├── Scripts/               # 游戏逻辑脚本
-│   │   ├── Scenes/                # 游戏场景
-│   │   └── Documents/             # 项目文档
-│   │
-│   ├── TopDownEngine/             # TDE框架（精简版）
-│   │   ├── Common/                # 核心脚本与资源
-│   │   ├── ThirdParty/            # 依赖库
-│   │   └── Minimal3D/             # 3D参考演示
-│   │
-│   └── Scenes/                    # 主场景
-│
-├── README.md                      # 本文件
-└── ProjectSettings/               # Unity项目设置
-```
 
----
+## 当前仓库定位
 
-## 🚀 快速开始
+这个仓库不是完整游戏工程归档，而是围绕以下技术点整理出的可运行样例：
 
-### 环境要求
-1. Unity 6000.1.15f1
-2. 已安装 URP 渲染管线
-3. 已导入 TopDownEngine
-4. (音效) 已安装 Wwise Unity Integration
+- 史莱姆粒子体模拟
+- 连通组件分离与回收控制
+- 场景静态 SDF 碰撞
+- 净化度系统与世界反馈
 
-### 首次运行
-1. 克隆或拉取最新代码
-2. 用 Unity Hub 打开项目
-3. 等待导入完成（首次可能较慢）
-4. 打开 `Assets/Revive/Scenes/` 下的主场景
+如果你想继续扩展，建议优先从以下文件读起：
 
----
-
-## 📚 开发文档
-
-详细的开发规范和贡献指南请查看:  
-👉 [贡献指南](Assets/Revive/Documents/CONTRIBUTING.md)
-
----
-
-## 🎯 当前进度
-
-### ✅ 已完成
-- [x] 项目初始化
-- [x] TopDownEngine 集成
-- [x] 基础文件夹结构搭建
-- [x] 主角色脚本框架
-
-### 🔄 进行中
-- [ ] 框架搭建与技术选型
-- [ ] 角色行为控制系统
-- [ ] 材质变形机制设计
-
-### 📋 待开始
-- [ ] 基于GameJam主题调整玩法
-- [ ] 美术资产制作
-- [ ] 音效集成
-- [ ] 情感表达机制设计
-- [ ] 关卡流程设计
-
----
-
-## 🏆 GameJam 信息
-
-### [thatgamejam](https://itch.io/jam/thatgamejam) - 首届在线游戏节
-
-**时间**: 2025年12月20日 - 2026年1月4日  
-**主题**: 情感表达、人际连接、永恒游戏  
-**设计理念**: 创造温馨、包容的游戏体验
-
-**灵感来源**:
-- 🌸 *Flower* - 简单而富有诗意的互动
-- 🌄 *Journey* - 无言的情感交流
-- ☁️ *Sky: Children of the Light* - 治愈系社交体验
-
-**我们的目标**:
-- ✨ 创造具有普适性和情感共鸣的体验
-- 🎮 设计适合各个年龄段的核心玩法
-- 🌍 通过"治愈"与"复苏"传递积极情感
-
----
-
-## 📝 注意事项
-
-1. **分支管理**: 请在功能分支开发，完成后提交 PR
-2. **提交规范**: 提交信息请使用清晰的描述（见贡献文档）
-3. **资产管理**: 大型资产文件请使用 Git LFS
-4. **代码规范**: 遵循 Unity C# 编码规范
-
----
-
-## 📞 联系方式
-
-项目沟通群组: [待补充]
-
----
-
-**最后更新**: 2025-12-20  
-**GameJam**: [thatgamejam](https://itch.io/jam/thatgamejam)  
-**项目状态**: 🚀 开发中 (Day 1/16)
+- `Assets/Revive/Scripts/Characters/Slime/Slime_PBF.cs`
+- `Assets/Revive/Scripts/Characters/Slime/Editor/WorldSdfBakerWindow.cs`
+- `Assets/Revive/Scripts/GamePlay/Purification/PurificationSystem.cs`

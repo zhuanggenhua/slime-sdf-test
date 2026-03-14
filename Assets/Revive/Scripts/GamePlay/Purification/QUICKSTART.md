@@ -9,7 +9,6 @@
 - `PurificationSystem.cs` - 核心管理系统（单例）
 
 ### 监听者示例 (Listeners)
-- `PurificationPostProcessingController.cs` - 后处理效果控制器
 - `PurificationFlowerBloom.cs` - 鲜花绽放控制器
 
 ### 测试工具 (Testing)
@@ -77,11 +76,6 @@ public class MyListener : MonoBehaviour, IPurificationListener
 
 ## 🎨 内置监听者使用
 
-### 氛围效果（灰暗控制）
-在相机或场景对象上添加 `PurificationAtmosphereController`：
-- 净化度高 → 灰暗减少
-- 净化度低 → 灰暗增强
-
 ### 鲜花绽放
 在鲜花GameObject上添加 `PurificationFlowerBloom`：
 - 净化度 ≥ 0.5 → 鲜花生长绽放
@@ -132,8 +126,9 @@ PurificationSystem.Instance.LoadFromFile();
 1. **史莱姆自动净化** - 在史莱姆角色上添加 `SlimePurificationAbility` 组件
 2. **浇水事件** - 在浇水时调用 `AddIndicator(..., "Water")`
 3. **播撒孢子** - 在播撒时调用 `AddIndicator(..., "Spore")`
-4. **场景氛围** - 使用 `PurificationAtmosphereController`
-5. **植被生长** - 模型挂 `PurificationFlowerBloom` 或自定义监听者
+4. **植被生长** - 模型挂 `PurificationFlowerBloom` 或自定义监听者
+
+> 注：开源精简版已移除后处理相关监听者，保留净化系统核心能力与花朵示例。
 
 ## 🔧 配置参数
 

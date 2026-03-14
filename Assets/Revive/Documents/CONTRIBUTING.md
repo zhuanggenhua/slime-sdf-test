@@ -107,15 +107,13 @@ Assets/Revive/Scripts/
 
 ```
 Assets/Revive/Scenes/
-├── MainLevel.unity    # 主关卡场景
-├── TestScenes/        # 测试场景（不提交到主分支）
-└── Prototypes/        # 原型场景
+└── SlimeTest.unity    # 当前开源精简版演示场景
 ```
 
 **使用说明**:
-- 主场景由**技术负责人**负责维护
-- 个人测试场景放在 `TestScenes/` 下，命名格式: `Test_[功能]_[姓名]`
-- 完成功能后合并到主场景
+- 当前仓库仅保留 `SlimeTest.unity`
+- 如需新增个人测试场景，请在开源仓库外或独立分支中维护
+- 对外公开内容以 `Slime`、`SDF`、`Purification` 三个核心模块为准
 
 ---
 

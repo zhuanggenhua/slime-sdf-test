@@ -4240,7 +4240,7 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
+  m_RenderPostProcessing: 0
   m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
@@ -5171,7 +5171,7 @@ MonoBehaviour:
   priority: 0
   blendDistance: 0
   weight: 1
-  sharedProfile: {fileID: 11400000, guid: 9fcea0c0a584c9448a3da6c06fb76ddb, type: 2}
+  sharedProfile: {fileID: 0}
 --- !u!114 &982014962660934780
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6154,7 +6154,7 @@ MonoBehaviour:
   priority: 1
   blendDistance: 0
   weight: 0
-  sharedProfile: {fileID: 11400000, guid: 6fb084d8e8366bc439c6b52ce273d646, type: 2}
+  sharedProfile: {fileID: 0}
 --- !u!1 &7491557312695422697
 GameObject:
   m_ObjectHideFlags: 0

@@ -169,7 +169,10 @@ namespace MoreMountains.Tools
 			Initialization();
 			
 			VisualElement root = new VisualElement();
-			root.styleSheets.Add(EditorStyleSheet);
+			if (EditorStyleSheet != null)
+			{
+				root.styleSheets.Add(EditorStyleSheet);
+			}
 			
 			// Draw the script field
 			SerializedProperty scriptProperty = serializedObject.FindProperty("m_Script");
